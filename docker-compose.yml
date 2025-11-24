@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  # --- 1.2.2 The Ledger (Metadata Store) ---
+  postgres:
+    image: postgres:15
+    container_name: factory_ledger
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret_password
+      POSTGRES_DB: data_factory
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./database_data:/var/lib/postgresql/data
+      # Mount the init script to auto-create tables
+      - ./init_scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d data_factory"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- 1.3 Ingestion Service ---
+  ingestion:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingest
+    container_name: factory_ingestion
+    depends_on:
+      postgres:
+        condition: service_healthy # Wait for DB to be ready before starting
+    volumes:
+      # Bind Mount 1: The Code (so you can edit python files locally and run them inside)
+      - .:/app
+      # Bind Mount 2: The Data (so downloaded files appear on your host disk)
+      - ./data:/app/data
+      # Bind Mount 3: Google Auth (for DVC)
+      - ~/.cache/pydrive2fs:/root/.cache/pydrive2fs 
+    environment:
+      # Connection string for the Python script
+      - DATABASE_URL=postgresql://admin:secret_password@postgres:5432/data_factory
+
+volumes:
+  database_data:

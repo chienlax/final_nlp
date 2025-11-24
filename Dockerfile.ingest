@@ -1,0 +1,27 @@
+# Dockerfile.ingest
+# Base image: Official Python 3.10 Slim (lightweight)
+FROM python:3.10-slim
+
+# 1. Install System Dependencies (FFmpeg is crucial for audio processing)
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Set Working Directory
+WORKDIR /app
+
+# 3. Install Python Dependencies
+# - yt-dlp: For downloading
+# - psycopg2-binary: For connecting to Postgres
+# - dvc[gdrive]: For version control (if running DVC inside container)
+RUN pip install --no-cache-dir \
+    yt-dlp \
+    psycopg2-binary \
+    dvc[gdrive]
+
+# 4. Copy your actual code (we will do this via volume mount in dev, but good for prod)
+# COPY . .
+
+# 5. Default command (keeps container alive for testing)
+CMD ["tail", "-f", "/dev/null"]
