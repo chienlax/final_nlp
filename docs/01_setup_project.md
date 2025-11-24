@@ -1,51 +1,81 @@
 # 01. Project Setup
 
 ## Overview
-This document outlines the initial setup process for the Vietnamese-English Code-Switching Speech Translation project.
+This document outlines the setup process for the Vietnamese-English Code-Switching Speech Translation project. The project uses a **Docker-based** architecture for data ingestion and storage, ensuring a consistent environment.
 
 ## Prerequisites
-- Python 3.8+
-- SQLite3
+- **Docker Desktop** (or Docker Engine + Compose)
+- **Python 3.11+** (for local development and IDE support)
+- **Git**
 
 ## Installation
 
-1.  **Clone the repository** (if applicable).
+### 1. Environment Setup
 
-2.  **Create a Virtual Environment**:
-    It is recommended to use a virtual environment to manage dependencies.
+1.  **Clone the repository**:
     ```bash
-    python -m venv venv
-    # Activate on Windows:
-    .\venv\Scripts\activate
-    # Activate on Linux/Mac:
-    source venv/bin/activate
+    git clone <repo_url>
+    cd final_nlp
     ```
 
-3.  **Install Dependencies**:
+2.  **Create a Local Virtual Environment** (Optional but recommended for IDEs):
     ```bash
-    pip install -r requirements.txt
+    python -m venv .venv
+    .\.venv\Scripts\Activate
     ```
 
-4.  **Initialize Project Structure**:
-    The project structure is now managed via Docker and DVC.
-    - **Database**: Managed by the `database_data` volume in Docker.
-    - **Data**: Managed by DVC in `data/`.
-    
-    Refer to `docker-compose.yml` for service orchestration.
+### 2. Infrastructure (Docker)
+
+We use Docker Compose to manage the PostgreSQL database and the Ingestion service.
+
+1.  **Start the Services**:
+    ```bash
+    docker-compose up -d --build
+    ```
+    *   **`postgres`**: Starts the database on port `5432`.
+    *   **`ingestion`**: Builds the Python environment for data processing.
+
+2.  **Verify Status**:
+    ```bash
+    docker-compose ps
+    ```
+
+### 3. Data Management (DVC)
+
+Large files (audio/raw text) are managed via DVC.
+
+1.  **Pull Data**:
+    ```bash
+    dvc pull
+    ```
 
 ## Project Structure
-The project follows this structure:
+
 ```text
 project_root/
 │
-├── raw_staging/            # Landing zone for crawled data
-├── dataset/
-│   ├── audio/              # Standardized 16kHz mono wav files
-│   └── db/                 # SQLite database
-├── src/
+├── data/                   # DVC-managed data storage
+│   ├── raw/                # Raw downloads
+│   └── raw.dvc             # DVC tracking file
+│
+├── database_data/          # PostgreSQL data volume (Do not commit)
+├── init_scripts/           # SQL scripts for DB initialization
+│   └── 01_schema.sql
+│
+├── src/                    # Source code
 │   ├── preprocessing/      # Cleaning and cutting scripts
 │   ├── training/           # Training scripts
 │   └── utils/              # Helper functions
-├── docs/                   # Project documentation
-└── exports/                # Final export files
+│
+├── docs/                   # Documentation
+├── docker-compose.yml      # Service orchestration
+└── Dockerfile.ingest       # Ingestion container definition
 ```
+
+## Database Access
+
+- **Host**: `localhost` (mapped from container)
+- **Port**: `5432`
+- **User**: `admin`
+- **Password**: `secret_password`
+- **Database**: `data_factory`

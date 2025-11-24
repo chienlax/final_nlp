@@ -10,4 +10,4 @@ This project aims to build an End-to-End (E2E) Speech Translation model for Viet
 
 ## Getting Started
 
-Please refer to `docs/01_setup_project.md` for setup instructions.
+Please refer to the [set up document](docs/01_setup_project.md) for setup instructions.
