@@ -27,14 +27,11 @@ This document outlines the initial setup process for the Vietnamese-English Code
     ```
 
 4.  **Initialize Project Structure**:
-    Run the setup script to create the necessary directories and the SQLite database.
-    ```bash
-    python setup_project.py
-    ```
-    This will create:
-    - `dataset/db/cs_corpus.db`: The main database.
-    - `dataset/audio/`: Directories for train/test/dev audio splits.
-    - `raw_staging/`: Landing zone for raw data.
+    The project structure is now managed via Docker and DVC.
+    - **Database**: Managed by the `database_data` volume in Docker.
+    - **Data**: Managed by DVC in `data/`.
+    
+    Refer to `docker-compose.yml` for service orchestration.
 
 ## Project Structure
 The project follows this structure:
