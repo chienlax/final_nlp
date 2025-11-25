@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from utils.data_utils import (
-    get_db_connection,
+    get_pg_connection,
     get_or_create_source,
     insert_sample,
     insert_transcript_revision,
@@ -232,15 +232,16 @@ def ingest_substack(
         print(f"\nDownloading articles to {download_dir}...")
         for url in urls:
             print(f"  Downloading from: {url}")
-            success = run_downloader(
-                url=url,
+            downloaded = run_downloader(
+                urls=[url],
                 output_dir=download_dir
             )
-            if not success:
+            if not downloaded:
                 print(f"    Warning: Download may have failed for {url}")
 
     # List downloaded articles
-    articles = list_downloaded_articles(download_dir)
+    article_dicts = list_downloaded_articles(download_dir)
+    articles = [Path(a['file_path']) for a in article_dicts]
     print(f"\nFound {len(articles)} articles to process.")
 
     if limit:
@@ -260,7 +261,7 @@ def ingest_substack(
         print("\n[DRY RUN MODE - No database changes will be made]")
 
     try:
-        conn = get_db_connection() if not dry_run else None
+        conn = get_pg_connection() if not dry_run else None
 
         for i, article_path in enumerate(articles):
             print(f"\n[{i + 1}/{len(articles)}] Processing: {article_path.name}")

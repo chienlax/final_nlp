@@ -45,7 +45,10 @@ from utils.data_utils import (
 )
 
 
-def ingest_to_database(metadata_entries: List[Dict[str, Any]]) -> Dict[str, int]:
+def ingest_to_database(
+    metadata_entries: List[Dict[str, Any]],
+    dry_run: bool = False
+) -> Dict[str, int]:
     """
     Ingest metadata entries into the samples table.
 
@@ -54,11 +57,15 @@ def ingest_to_database(metadata_entries: List[Dict[str, Any]]) -> Dict[str, int]
 
     Args:
         metadata_entries: List of metadata dictionaries from metadata.jsonl.
+        dry_run: If True, simulate without database writes.
 
     Returns:
         Dictionary with counts: {'inserted': N, 'skipped': M, 'failed': K}
     """
     stats = {'inserted': 0, 'skipped': 0, 'failed': 0}
+
+    if dry_run:
+        print("\n[DRY RUN MODE - No database changes will be made]")
 
     print(f"\nIngesting {len(metadata_entries)} entries to database...")
 
@@ -124,6 +131,17 @@ def ingest_to_database(metadata_entries: List[Dict[str, Any]]) -> Dict[str, int]
         }
 
         try:
+            if dry_run:
+                # Dry run - just print what would happen
+                print(f"[DRY RUN] Would insert: {video_id}")
+                print(f"  - Pipeline: {pipeline_type}")
+                print(f"  - Audio: {audio_file_path}")
+                print(f"  - Transcript: {'Yes' if transcript_raw else 'No'}")
+                print(f"  - CS Ratio: {cs_ratio:.2f}" if cs_ratio else "  - CS Ratio: N/A")
+                print(f"  - Duration: {entry.get('duration', 'Unknown')}s")
+                stats['inserted'] += 1
+                continue
+
             # Step 1: Get or create source (YouTube channel)
             channel_id = entry.get('channel_id', 'unknown')
             source_id = get_or_create_source(
@@ -171,16 +189,23 @@ def ingest_to_database(metadata_entries: List[Dict[str, Any]]) -> Dict[str, int]
     return stats
 
 
-def run_pipeline(urls: List[str], skip_download: bool = False) -> None:
+def run_pipeline(
+    urls: List[str],
+    skip_download: bool = False,
+    dry_run: bool = False
+) -> None:
     """
     Run the full YouTube ingestion pipeline.
 
     Args:
         urls: List of YouTube channel or video URLs.
         skip_download: If True, skip download and use existing metadata.
+        dry_run: If True, simulate without database writes.
     """
     print("=" * 60)
     print("YouTube Ingestion Pipeline")
+    if dry_run:
+        print("[DRY RUN MODE]")
     print("=" * 60)
 
     # Step 1: Download audio
@@ -216,9 +241,9 @@ def run_pipeline(urls: List[str], skip_download: bool = False) -> None:
     # Step 4: Insert into database
     print("\n[STEP 4/4] Ingesting to database...")
     try:
-        stats = ingest_to_database(metadata_entries)
-        print(f"\nDatabase ingestion complete:")
-        print(f"  - Inserted: {stats['inserted']}")
+        stats = ingest_to_database(metadata_entries, dry_run=dry_run)
+        print(f"\nDatabase ingestion {'simulation' if dry_run else 'complete'}:")
+        print(f"  - {'Would insert' if dry_run else 'Inserted'}: {stats['inserted']}")
         print(f"  - Skipped: {stats['skipped']}")
         print(f"  - Failed: {stats['failed']}")
     except ConnectionError as e:
@@ -257,6 +282,11 @@ Examples:
         action='store_true',
         help='Skip download step and use existing metadata.jsonl'
     )
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Simulate ingestion without database writes'
+    )
 
     args = parser.parse_args()
 
@@ -265,7 +295,7 @@ Examples:
         print("\nError: Provide URLs or use --skip-download flag.")
         sys.exit(1)
 
-    run_pipeline(args.urls, skip_download=args.skip_download)
+    run_pipeline(args.urls, skip_download=args.skip_download, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
