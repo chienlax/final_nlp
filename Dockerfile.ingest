@@ -12,11 +12,13 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # 3. Install Python Dependencies
-# - yt-dlp: For downloading
+# - yt-dlp: For downloading YouTube videos
+# - youtube-transcript-api: For downloading transcripts
 # - psycopg2-binary: For connecting to Postgres
 # - dvc[gdrive]: For version control (if running DVC inside container)
 RUN pip install --no-cache-dir \
     yt-dlp \
+    youtube-transcript-api \
     psycopg2-binary \
     dvc[gdrive]
 

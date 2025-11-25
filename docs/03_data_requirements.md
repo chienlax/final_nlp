@@ -10,7 +10,7 @@ The pipeline expects standardized audio to avoid expensive re-processing later.
   * **Container:** `.wav`
   * **Sample Rate:** `16000 Hz` (16kHz)
   * **Channels:** `1` (Mono)
-  * **Duration Limit:** Keep clips between **2 and 20 minutes**. (Files >20 min crash the segmentation memory; files <2 min lack context).
+  * **Duration Limit:** Keep clips between **2 and 1 hour**. (Files > 1 hour may crash the segmentation memory; files <2 min lack context).
 
 **B. Metadata to Collect**
 For every audio file, they must provide a JSON entry containing:
@@ -78,6 +78,6 @@ This matches your PostgreSQL `source_metadata` JSONB column:
 ### Summary Checklist for Your Friend
 
 1.  [ ] **Audio:** 16kHz Mono `.wav`.
-2.  [ ] **Length:** 2-20 minutes per file.
+2.  [ ] **Length:** 2-60 minutes per file.
 3.  [ ] **Text:** Must mix VN and EN words (don't scrape pure VN news).
 4.  [ ] **Manifest:** Every batch of files comes with a `metadata.jsonl` file.

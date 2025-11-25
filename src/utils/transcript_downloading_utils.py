@@ -1,88 +1,184 @@
-import csv
-import os
+"""
+Transcript downloading utilities for YouTube videos.
+
+Downloads YouTube transcripts with subtitle type detection (Manual vs Auto-generated),
+following the project's data requirements for speech translation.
+"""
+
+import json
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import TextFormatter
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 
-CSV_FILE = 'download_report.csv'
+# Output directories (relative to project root)
+METADATA_FILE = Path("data/raw/metadata.jsonl")
+TEXT_OUTPUT_DIR = Path("data/raw/text")
 
-def download_and_update_csv():
-    # 1. Validation
-    if not os.path.exists(CSV_FILE):
-        print(f"Error: {CSV_FILE} not found. Please run the video downloader script first.")
-        return
 
-    print(f"Reading data from {CSV_FILE}...")
+def get_transcript_info(video_id: str) -> Dict[str, Any]:
+    """
+    Fetch transcript with subtitle type detection.
 
-    # 2. Read the existing CSV into memory
-    rows = []
-    fieldnames = []
-    
-    with open(CSV_FILE, mode='r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        fieldnames = reader.fieldnames
-        # Convert iterator to a list so we can modify it and write it back later
-        rows = list(reader)
+    Checks if the transcript is manually created or auto-generated,
+    and avoids auto-translated tracks as per data requirements.
 
-    # Ensure the new column header exists
-    if 'Transcript Filename' not in fieldnames:
-        fieldnames.append('Transcript Filename')
+    Args:
+        video_id: YouTube video ID.
 
-    # Initialize formatter
-    formatter = TextFormatter()
+    Returns:
+        Dictionary containing:
+            - text: The transcript text (or None if unavailable)
+            - subtitle_type: 'Manual', 'Auto-generated', or 'Not Available'
+            - language: Language code of the transcript
+            - error: Error message if failed (or None)
+    """
+    result = {
+        'text': None,
+        'subtitle_type': 'Not Available',
+        'language': None,
+        'error': None
+    }
 
-    print(f"Processing {len(rows)} videos for transcripts...\n")
+    try:
+        # First, list all available transcripts to detect type
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
 
-    # 3. Process each row
-    for row in rows:
-        channel_id = row.get('Channel ID')
-        video_id = row.get('Video ID')
-        upload_date = row.get('Upload Date')
-        
-        # Construct filenames and paths
-        transcript_filename = f"{channel_id}_{video_id}_{upload_date}_transcript.txt"
-        dir_path = os.path.join(channel_id) # Folder named after Channel ID
-        file_path = os.path.join(dir_path, transcript_filename)
+        # Try to find English transcript (manual first, then auto-generated)
+        transcript = None
 
-        # Create directory if it doesn't exist (safety check)
-        os.makedirs(dir_path, exist_ok=True)
+        # Priority 1: Manual English transcript
+        try:
+            transcript = transcript_list.find_manually_created_transcript(['en'])
+            result['subtitle_type'] = 'Manual'
+        except NoTranscriptFound:
+            pass
 
-        # Check if we already downloaded this transcript to save time
-        if os.path.exists(file_path):
-            print(f"[EXISTS] Skipping download: {transcript_filename}")
-            row['Transcript Filename'] = transcript_filename
+        # Priority 2: Auto-generated English transcript
+        if transcript is None:
+            try:
+                transcript = transcript_list.find_generated_transcript(['en'])
+                result['subtitle_type'] = 'Auto-generated'
+            except NoTranscriptFound:
+                pass
+
+        # Priority 3: Try Vietnamese transcripts
+        if transcript is None:
+            try:
+                transcript = transcript_list.find_manually_created_transcript(['vi'])
+                result['subtitle_type'] = 'Manual'
+            except NoTranscriptFound:
+                pass
+
+        if transcript is None:
+            try:
+                transcript = transcript_list.find_generated_transcript(['vi'])
+                result['subtitle_type'] = 'Auto-generated'
+            except NoTranscriptFound:
+                pass
+
+        if transcript is None:
+            result['error'] = 'No English or Vietnamese transcript found'
+            result['subtitle_type'] = 'Not Available'
+            return result
+
+        # Fetch the transcript content
+        result['language'] = transcript.language_code
+        transcript_data = transcript.fetch()
+
+        # Format as plain text
+        formatter = TextFormatter()
+        result['text'] = formatter.format_transcript(transcript_data)
+
+    except TranscriptsDisabled:
+        result['error'] = 'Transcripts are disabled for this video'
+        result['subtitle_type'] = 'Not Available'
+    except Exception as e:
+        result['error'] = str(e)
+        result['subtitle_type'] = 'Error'
+
+    return result
+
+
+def download_transcripts_from_metadata() -> List[Dict[str, Any]]:
+    """
+    Download transcripts for all videos in metadata.jsonl.
+
+    Reads video IDs from the metadata file, downloads transcripts,
+    and updates the metadata with subtitle type information.
+
+    Returns:
+        List of updated metadata entries with transcript information.
+    """
+    # Validation
+    if not METADATA_FILE.exists():
+        print(f"Error: {METADATA_FILE} not found. Run video downloader first.")
+        return []
+
+    # Ensure text output directory exists
+    TEXT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    print(f"Reading metadata from {METADATA_FILE}...")
+
+    # Load existing metadata
+    metadata_entries: List[Dict[str, Any]] = []
+    with open(METADATA_FILE, 'r', encoding='utf-8') as f:
+        for line in f:
+            if line.strip():
+                metadata_entries.append(json.loads(line))
+
+    print(f"Processing {len(metadata_entries)} videos for transcripts...\n")
+
+    # Process each entry
+    for entry in metadata_entries:
+        video_id = entry.get('id')
+        if not video_id:
             continue
 
-        try:
-            # Fetch Transcript (English or Auto-English)
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-            formatted_text = formatter.format_transcript(transcript_list)
+        transcript_filename = f"{video_id}_transcript.txt"
+        file_path = TEXT_OUTPUT_DIR / transcript_filename
 
-            # Write to text file
+        # Check if we already have this transcript
+        if file_path.exists():
+            print(f"[EXISTS] Skipping: {transcript_filename}")
+            # Ensure metadata has transcript info
+            if 'transcript_file' not in entry:
+                entry['transcript_file'] = str(file_path)
+            continue
+
+        # Fetch transcript with type detection
+        transcript_info = get_transcript_info(video_id)
+
+        # Update entry with transcript metadata
+        entry['subtitle_type'] = transcript_info['subtitle_type']
+        entry['transcript_language'] = transcript_info['language']
+
+        if transcript_info['text']:
+            # Save transcript to file
             with open(file_path, 'w', encoding='utf-8') as text_file:
-                text_file.write(formatted_text)
+                text_file.write(transcript_info['text'])
 
-            print(f"[SUCCESS] Downloaded: {transcript_filename}")
-            row['Transcript Filename'] = transcript_filename
+            entry['transcript_file'] = str(file_path)
+            print(f"[SUCCESS] {transcript_info['subtitle_type']}: {transcript_filename}")
+        else:
+            entry['transcript_file'] = None
+            print(f"[MISSING] {video_id}: {transcript_info['error']}")
 
-        except (TranscriptsDisabled, NoTranscriptFound):
-            print(f"[MISSING] No transcript found for: {video_id}")
-            row['Transcript Filename'] = "Not Available"
-        except Exception as e:
-            print(f"[ERROR] {video_id}: {e}")
-            row['Transcript Filename'] = "Error"
+    # Update metadata file with transcript information
+    print(f"\nUpdating {METADATA_FILE} with transcript metadata...")
 
-    # 4. Overwrite the original CSV file
-    print(f"\nUpdating {CSV_FILE}...")
-    
     try:
-        with open(CSV_FILE, mode='w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
-        print("CSV update complete.")
+        with open(METADATA_FILE, 'w', encoding='utf-8') as f:
+            for entry in metadata_entries:
+                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        print("Metadata update complete.")
     except PermissionError:
-        print(f"Error: Could not write to {CSV_FILE}. Is it open in Excel?")
+        print(f"Error: Could not write to {METADATA_FILE}. Is it open?")
+
+    return metadata_entries
+
 
 if __name__ == "__main__":
-    download_and_update_csv()
+    download_transcripts_from_metadata()
