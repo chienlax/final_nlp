@@ -3,6 +3,8 @@ Transcript downloading utilities for YouTube videos.
 
 Downloads YouTube transcripts with subtitle type detection (Manual vs Auto-generated),
 following the project's data requirements for speech translation.
+
+Saves transcripts in JSON format with timestamps for audio segmentation.
 """
 
 import json
@@ -10,12 +12,15 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api.formatters import TextFormatter
+from youtube_transcript_api.formatters import JSONFormatter
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 
 # Output directories (relative to project root)
 METADATA_FILE = Path("data/raw/metadata.jsonl")
 TEXT_OUTPUT_DIR = Path("data/raw/text")
+
+# Create a single API instance for reuse
+_ytt_api = YouTubeTranscriptApi()
 
 
 def get_transcript_info(video_id: str) -> Dict[str, Any]:
@@ -30,12 +35,14 @@ def get_transcript_info(video_id: str) -> Dict[str, Any]:
 
     Returns:
         Dictionary containing:
-            - text: The transcript text (or None if unavailable)
+            - segments: List of transcript segments with timestamps (for segmentation)
+            - text: The full transcript text (for display/CS detection)
             - subtitle_type: 'Manual', 'Auto-generated', or 'Not Available'
             - language: Language code of the transcript
             - error: Error message if failed (or None)
     """
     result = {
+        'segments': None,
         'text': None,
         'subtitle_type': 'Not Available',
         'language': None,
@@ -44,7 +51,8 @@ def get_transcript_info(video_id: str) -> Dict[str, Any]:
 
     try:
         # First, list all available transcripts to detect type
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        # Note: youtube_transcript_api v1.x uses instance methods
+        transcript_list = _ytt_api.list(video_id)
 
         # Try to find English transcript (manual first, then auto-generated)
         transcript = None
@@ -88,9 +96,20 @@ def get_transcript_info(video_id: str) -> Dict[str, Any]:
         result['language'] = transcript.language_code
         transcript_data = transcript.fetch()
 
-        # Format as plain text
-        formatter = TextFormatter()
-        result['text'] = formatter.format_transcript(transcript_data)
+        # Convert FetchedTranscriptSnippet objects to dictionaries with timestamps
+        # Each segment has: text, start (seconds), duration (seconds)
+        result['segments'] = [
+            {
+                'text': segment.text,
+                'start': segment.start,
+                'duration': segment.duration,
+                'end': segment.start + segment.duration
+            }
+            for segment in transcript_data
+        ]
+
+        # Also store full text for CS detection and display
+        result['text'] = '\n'.join(segment.text for segment in transcript_data)
 
     except TranscriptsDisabled:
         result['error'] = 'Transcripts are disabled for this video'
@@ -108,6 +127,8 @@ def download_transcripts_from_metadata() -> List[Dict[str, Any]]:
 
     Reads video IDs from the metadata file, downloads transcripts,
     and updates the metadata with subtitle type information.
+
+    Saves transcripts as JSON files with timestamps for audio segmentation.
 
     Returns:
         List of updated metadata entries with transcript information.
@@ -137,7 +158,8 @@ def download_transcripts_from_metadata() -> List[Dict[str, Any]]:
         if not video_id:
             continue
 
-        transcript_filename = f"{video_id}_transcript.txt"
+        # Use JSON format for timestamp preservation
+        transcript_filename = f"{video_id}_transcript.json"
         file_path = TEXT_OUTPUT_DIR / transcript_filename
 
         # Check if we already have this transcript
@@ -155,13 +177,22 @@ def download_transcripts_from_metadata() -> List[Dict[str, Any]]:
         entry['subtitle_type'] = transcript_info['subtitle_type']
         entry['transcript_language'] = transcript_info['language']
 
-        if transcript_info['text']:
-            # Save transcript to file
-            with open(file_path, 'w', encoding='utf-8') as text_file:
-                text_file.write(transcript_info['text'])
+        if transcript_info['segments']:
+            # Save transcript as JSON with timestamps for segmentation
+            transcript_data = {
+                'video_id': video_id,
+                'language': transcript_info['language'],
+                'subtitle_type': transcript_info['subtitle_type'],
+                'segments': transcript_info['segments'],
+                'full_text': transcript_info['text']
+            }
+
+            with open(file_path, 'w', encoding='utf-8') as json_file:
+                json.dump(transcript_data, json_file, ensure_ascii=False, indent=2)
 
             entry['transcript_file'] = str(file_path)
-            print(f"[SUCCESS] {transcript_info['subtitle_type']}: {transcript_filename}")
+            segment_count = len(transcript_info['segments'])
+            print(f"[SUCCESS] {transcript_info['subtitle_type']}: {transcript_filename} ({segment_count} segments)")
         else:
             entry['transcript_file'] = None
             print(f"[MISSING] {video_id}: {transcript_info['error']}")
