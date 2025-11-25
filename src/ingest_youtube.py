@@ -9,14 +9,15 @@ Usage:
     python ingest_youtube.py <url1> <url2> ...
 
 Pipeline Steps:
-    1. Download audio as 16kHz mono WAV (2-20 min filter)
+    1. Download audio as 16kHz mono WAV (2-60 min filter)
     2. Download transcripts with subtitle type detection
     3. Calculate linguistic metrics (CS ratio)
-    4. Insert records into dataset_ledger
+    4. Insert records into samples table with transcript revisions
+
+Schema Version: 2.0 (Multi-table design)
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -33,12 +34,12 @@ from utils.video_downloading_utils import (
 )
 from utils.transcript_downloading_utils import (
     download_transcripts_from_metadata,
-    get_transcript_info,
     TEXT_OUTPUT_DIR,
 )
 from utils.data_utils import (
-    get_pg_connection,
-    insert_raw_sample,
+    get_or_create_source,
+    insert_sample,
+    insert_transcript_revision,
     sample_exists,
     calculate_cs_ratio,
 )
@@ -46,7 +47,10 @@ from utils.data_utils import (
 
 def ingest_to_database(metadata_entries: List[Dict[str, Any]]) -> Dict[str, int]:
     """
-    Ingest metadata entries into the dataset_ledger database.
+    Ingest metadata entries into the samples table.
+
+    Creates source records, sample records, and transcript revisions
+    following the new multi-table schema.
 
     Args:
         metadata_entries: List of metadata dictionaries from metadata.jsonl.
@@ -59,65 +63,109 @@ def ingest_to_database(metadata_entries: List[Dict[str, Any]]) -> Dict[str, int]
     print(f"\nIngesting {len(metadata_entries)} entries to database...")
 
     for entry in metadata_entries:
-        file_path = entry.get('file_path')
-        if not file_path:
-            print(f"[SKIP] No file_path for entry: {entry.get('id')}")
+        video_id = entry.get('id')
+        audio_file_path = entry.get('file_path')
+
+        if not audio_file_path:
+            print(f"[SKIP] No file_path for entry: {video_id}")
             stats['skipped'] += 1
             continue
 
         # Check if already in database
-        if sample_exists(file_path):
-            print(f"[EXISTS] {file_path}")
+        if sample_exists(audio_file_path=audio_file_path, external_id=video_id):
+            print(f"[EXISTS] {audio_file_path}")
             stats['skipped'] += 1
             continue
 
-        # Build source_metadata JSONB
+        # Get transcript content
+        transcript_raw: Optional[str] = None
+        text_file_path: Optional[str] = None
+        transcript_file = entry.get('transcript_file')
+
+        if transcript_file:
+            transcript_path = Path(transcript_file)
+            if transcript_path.exists():
+                transcript_raw = transcript_path.read_text(encoding='utf-8')
+                text_file_path = str(transcript_file)
+
+        # Determine pipeline type based on transcript availability
+        has_transcript = transcript_raw is not None
+        subtitle_type = entry.get('subtitle_type', 'Unknown')
+        pipeline_type = (
+            'youtube_with_transcript' if has_transcript
+            else 'youtube_without_transcript'
+        )
+
+        # Calculate CS ratio if transcript available
+        cs_ratio: Optional[float] = None
+        if transcript_raw:
+            cs_ratio = calculate_cs_ratio(transcript_raw)
+
+        # Build metadata dictionaries
         source_metadata = {
             'url': entry.get('url'),
             'channel_id': entry.get('channel_id'),
             'upload_date': entry.get('upload_date'),
             'title': entry.get('title'),
-            'subtitle_type': entry.get('subtitle_type', 'Unknown'),
+            'subtitle_type': subtitle_type,
             'captured_at': entry.get('captured_at'),
         }
 
-        # Build acoustic_meta JSONB
-        acoustic_meta = entry.get('acoustic_meta', {
+        acoustic_metadata = entry.get('acoustic_meta', {
             'sample_rate': 16000,
             'channels': 1,
             'format': 'wav',
         })
-        acoustic_meta['duration'] = entry.get('duration')
+        acoustic_metadata['duration'] = entry.get('duration')
 
-        # Get transcript and calculate CS ratio
-        transcript_raw: Optional[str] = None
-        transcript_file = entry.get('transcript_file')
-        if transcript_file:
-            transcript_path = Path(transcript_file)
-            if transcript_path.exists():
-                transcript_raw = transcript_path.read_text(encoding='utf-8')
-
-        # Build linguistic_meta JSONB
-        linguistic_meta = {
+        linguistic_metadata = {
             'language_tags': entry.get('language_tags', ['vi', 'en']),
             'transcript_language': entry.get('transcript_language'),
         }
-        if transcript_raw:
-            linguistic_meta['cs_ratio'] = calculate_cs_ratio(transcript_raw)
 
-        # Insert into database
         try:
-            sample_id = insert_raw_sample(
-                file_path=file_path,
-                source_metadata=source_metadata,
-                acoustic_meta=acoustic_meta,
-                linguistic_meta=linguistic_meta,
-                transcript_raw=transcript_raw,
+            # Step 1: Get or create source (YouTube channel)
+            channel_id = entry.get('channel_id', 'unknown')
+            source_id = get_or_create_source(
+                source_type=pipeline_type,
+                external_id=channel_id,
+                url=entry.get('url'),
+                metadata={'channel_id': channel_id}
             )
-            print(f"[INSERTED] {file_path} -> {sample_id}")
+
+            # Step 2: Insert sample
+            sample_id = insert_sample(
+                content_type='audio_primary',
+                pipeline_type=pipeline_type,
+                audio_file_path=audio_file_path,
+                text_file_path=text_file_path,
+                external_id=video_id,
+                source_id=source_id,
+                duration_seconds=entry.get('duration'),
+                cs_ratio=cs_ratio,
+                source_metadata=source_metadata,
+                acoustic_metadata=acoustic_metadata,
+                linguistic_metadata=linguistic_metadata
+            )
+
+            # Step 3: Insert transcript revision if available
+            if transcript_raw:
+                revision_source = (
+                    'youtube_manual' if subtitle_type == 'Manual'
+                    else 'youtube_auto'
+                )
+                insert_transcript_revision(
+                    sample_id=sample_id,
+                    transcript_text=transcript_raw,
+                    revision_type='raw',
+                    revision_source=revision_source
+                )
+
+            print(f"[INSERTED] {video_id} -> {sample_id}")
             stats['inserted'] += 1
+
         except Exception as e:
-            print(f"[ERROR] {file_path}: {e}")
+            print(f"[ERROR] {video_id}: {e}")
             stats['failed'] += 1
 
     return stats

@@ -29,7 +29,7 @@ downloaded_videos_log: List[Dict[str, Any]] = []
 
 def _duration_filter(info_dict: Dict[str, Any], *, incomplete: bool) -> Optional[str]:
     """
-    Filter function for yt-dlp to skip videos outside 2-20 minute range.
+    Filter function for yt-dlp to skip videos outside 2-60 minute range.
 
     Args:
         info_dict: Video metadata dictionary from yt-dlp.
@@ -110,7 +110,7 @@ def download_channels(url_list: List[str]) -> None:
         # Format: Best Audio
         'format': 'bestaudio/best',
 
-        # Duration filter: 2-20 minutes
+        # Duration filter: 2-60 minutes
         'match_filter': _duration_filter,
 
         # Post-processing: Extract audio and convert to 16kHz mono WAV
@@ -200,7 +200,7 @@ if __name__ == "__main__":
     if len(input_urls) < 1:
         print("Usage: python video_downloading_utils.py <url1> <url2> ...")
         print("\nDownloads YouTube audio as 16kHz mono WAV files.")
-        print("Only downloads videos between 2-20 minutes in duration.")
+        print("Only downloads videos between 2-60 minutes in duration.")
         sys.exit(1)
 
     print(f"Processing {len(input_urls)} URL(s)...")

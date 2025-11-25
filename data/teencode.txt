@@ -1,0 +1,123 @@
+# Vietnamese Teencode Dictionary
+# Format: teencode<TAB>replacement
+# Lines starting with # are comments
+
+# Common abbreviations
+k	không
+ko	không
+kg	không
+khg	không
+kh	không
+hk	không
+hem	không
+dc	được
+đc	được
+dk	được
+đk	được
+vs	với
+j	gì
+z	vậy
+v	vậy
+vl	vãi
+ng	người
+nguoi	người
+mk	mình
+m	mình
+b	bạn
+bn	bạn
+cx	cũng
+cg	cũng
+ck	chồng
+vk	vợ
+bik	biết
+bít	biết
+bt	bình thường
+tl	trả lời
+rep	trả lời
+ib	nhắn tin
+đt	điện thoại
+dt	điện thoại
+sdt	số điện thoại
+fb	facebook
+nt	nhắn tin
+ntn	như thế nào
+sn	sinh nhật
+ns	nói
+nch	nói chuyện
+lm	làm
+lam	làm
+a	anh
+e	em
+c	chị
+ah	anh
+ak	à
+uk	ừ
+ừa	ừ
+r	rồi
+rl	rồi
+trc	trước
+trog	trong
+trog	trong
+nc	nước
+ht	hiện tại
+hj	hội
+lun	luôn
+lắm	lắm
+lém	lắm
+nyc	người yêu cũ
+ny	người yêu
+dn	dân
+tp	thành phố
+tphcm	thành phố hồ chí minh
+hcm	hồ chí minh
+hn	hà nội
+sg	sài gòn
+vn	việt nam
+ok	được
+oke	được
+okie	được
+okla	được rồi
+fine	được
+gud	tốt
+gút	tốt
+gudt	tốt thật
+wtf	cái quái gì
+omg	trời ơi
+lol	haha
+lmao	haha
+rofl	haha
+hehe	haha
+hihi	haha
+kaka	haha
+huhu	buồn
+hix	buồn
+thik	thích
+thíck	thích
+wá	quá
+wa	quá
+qá	quá
+qaá	quá
+pls	xin hãy
+plz	xin hãy
+ty	cảm ơn
+tks	cảm ơn
+thks	cảm ơn
+thanks	cảm ơn
+sry	xin lỗi
+sorry	xin lỗi
+xory	xin lỗi
+xloi	xin lỗi
+xl	xin lỗi
+ib	inbox
+pm	nhắn tin
+dm	nhắn tin
+msg	tin nhắn
+nma	nhưng mà
+nhma	nhưng mà
+ma	mà
+mà	mà
+đag	đang
+dang	đang
+dag	đang
+dg	đang
+đg	đang
