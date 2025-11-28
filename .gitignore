@@ -45,3 +45,4 @@ exports/*.zip
 
 # Docker / Database
 database_data/
+.env
