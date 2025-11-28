@@ -4,6 +4,10 @@
 
 This document describes the complete data ingestion and processing workflow for the Vietnamese-English Code-Switching Speech Translation project. The system supports two primary data pipelines based on the input modality.
 
+**Related Documentation:**
+- [07. Label Studio Integration](07_label_studio.md) - Detailed annotation workflow
+- [06. Database Design](06_database_design.md) - Schema and versioning
+
 ---
 
 ## 1. High-Level Architecture
@@ -27,18 +31,20 @@ This document describes the complete data ingestion and processing workflow for 
 │  data/raw/metadata.jsonl - Batch metadata                                   │
 └─────────────────────────────────┬───────────────────────────────────────────┘
                                   │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         POSTGRESQL DATABASE                                  │
-│  - sources: Origin tracking                                                  │
-│  - samples: Central sample registry                                          │
-│  - transcript_revisions: Versioned transcripts                              │
-│  - translation_revisions: Versioned translations                            │
-│  - annotations: Label Studio integration                                    │
-│  - processing_logs: Audit trail                                             │
-└─────────────────────────────────┬───────────────────────────────────────────┘
-                                  │
-                                  ▼
+            ┌─────────────────────┴─────────────────────┐
+            │                                           │
+            ▼                                           ▼
+┌───────────────────────────────┐     ┌───────────────────────────────────────┐
+│      POSTGRESQL DATABASE       │     │          DVC SYNC DAEMON              │
+│  - sources: Origin tracking    │     │  - Auto-sync every 5 minutes          │
+│  - samples: Central registry   │     │  - Pulls new data from Google Drive   │
+│  - transcript_revisions        │     │  - Pushes local changes upstream      │
+│  - translation_revisions       │     │  - Records commit hashes              │
+│  - annotations: Label Studio   │     │                                       │
+│  - processing_logs: Audit      │     │  Script: src/sync_daemon.py           │
+└───────────────────┬───────────┘     └───────────────────────────────────────┘
+                    │
+                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                      PROCESSING PIPELINES                                    │
 │  (Future: MFA alignment, VAD segmentation, DeepFilterNet, TTS)              │
@@ -46,11 +52,22 @@ This document describes the complete data ingestion and processing workflow for 
                                   │
                                   ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                       LABEL STUDIO                                           │
-│  - Transcript verification                                                  │
-│  - Timestamp alignment                                                      │
-│  - Translation review                                                       │
-│  - Quality assessment                                                       │
+│                       LABEL STUDIO ANNOTATION                                │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────────┐        │
+│  │ Transcript      │  │ Translation     │  │ Audio Segmentation   │        │
+│  │ Correction      │  │ Review          │  │ (Future)             │        │
+│  └────────┬────────┘  └────────┬────────┘  └──────────┬───────────┘        │
+│           │                    │                      │                     │
+│           └────────────────────┴──────────────────────┘                     │
+│                                │                                            │
+│                       ┌────────▼────────┐                                   │
+│                       │ Webhook Server   │                                  │
+│                       │ (Conflict Check) │                                  │
+│                       └────────┬────────┘                                   │
+│                                │                                            │
+│                       ┌────────▼────────┐                                   │
+│                       │ Export Pipeline  │                                  │
+│                       └─────────────────┘                                   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -250,7 +267,35 @@ Related Script: src/utils/text_utils.py
 
 ## 4. Data Versioning Workflow (DVC)
 
-### 4.1 Adding New Data
+### 4.1 DVC Sync Daemon (Automated)
+
+The sync daemon automatically synchronizes data every 5 minutes with Google Drive.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          SYNC DAEMON WORKFLOW                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│    ┌─────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────┐    │
+│    │  WAIT   │────▶│  DVC PULL   │────▶│  DVC PUSH   │────▶│  LOG    │    │
+│    │ 5 min   │     │ (Fetch new) │     │ (Upload)    │     │ Result  │    │
+│    └────▲────┘     └─────────────┘     └─────────────┘     └────┬────┘    │
+│         │                                                       │          │
+│         └───────────────────────────────────────────────────────┘          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Automatic sync via Docker:
+- Runs as sync_service container
+- Pulls new data from Google Drive remote
+- Pushes local changes upstream
+- Records DVC commit hashes in database
+
+Script: src/sync_daemon.py
+```
+
+### 4.2 Manual DVC Operations
+
 ```bash
 # After downloading new files
 dvc add data/raw
@@ -263,13 +308,13 @@ git commit -m "Add new batch of data"
 dvc push
 ```
 
-### 4.2 Pulling Existing Data
+### 4.3 Pulling Existing Data
 ```bash
 # After cloning the repository
 dvc pull
 ```
 
-### 4.3 Checking Status
+### 4.4 Checking Status
 ```bash
 # See what's changed
 dvc status
@@ -280,13 +325,129 @@ dvc diff
 
 ---
 
-## 5. Quick Reference: Script → Task Mapping
+## 5. Label Studio Annotation Workflow
+
+### 5.1 Complete Annotation Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      LABEL STUDIO WORKFLOW                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. PUSH SAMPLES        2. ANNOTATE           3. WEBHOOK CALLBACK           │
+│  ┌─────────────┐        ┌─────────────┐       ┌─────────────────┐          │
+│  │ Select RAW  │        │ Label Studio│       │ FastAPI Server  │          │
+│  │ samples     │───────▶│ UI          │──────▶│ (port 8000)     │          │
+│  │             │        │             │       │                 │          │
+│  │ Lock sample │        │ Audio +     │       │ Check conflict  │          │
+│  │ in database │        │ Transcript  │       │ Record result   │          │
+│  └─────────────┘        └─────────────┘       └────────┬────────┘          │
+│                                                        │                    │
+│  6. EXPORT              5. UPDATE DB           4. CONFLICT?                │
+│  ┌─────────────┐        ┌─────────────┐       ┌────────▼────────┐          │
+│  │ Export      │        │ Create new  │       │ Compare version │          │
+│  │ reviewed    │◀───────│ revision    │◀──YES─│ sync_version    │          │
+│  │ data        │        │             │       │                 │          │
+│  │             │        │ Unlock      │  NO   │ Flag for        │          │
+│  │ DVC push    │        │ sample      │◀──────│ re-review       │          │
+│  └─────────────┘        └─────────────┘       └─────────────────┘          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 5.2 Task Types
+
+| Task Type | Template | Input | Output |
+|-----------|----------|-------|--------|
+| `transcript_correction` | Audio waveform + editable text | RAW samples | Corrected transcripts |
+| `translation_review` | Side-by-side view | TRANSLATED samples | Verified translations |
+| `audio_segmentation` | Waveform regions | Audio files | Segment boundaries |
+
+### 5.3 Conflict Resolution
+
+When a sample is updated during annotation:
+
+1. **Detection**: Webhook compares `sync_version` at annotation start vs current
+2. **Conflict Creation**: New sample created with `_conflict_{timestamp}` suffix
+3. **Flagging**: Original marked for re-review
+4. **Resolution Options**:
+   - Keep annotated version
+   - Keep updated version
+   - Merge changes manually
+
+### 5.4 Gold Standard Samples
+
+Quality control using pre-verified samples:
+
+```bash
+# Set a sample as gold standard
+# (via database function)
+SELECT set_gold_standard('sample_uuid', expected_score);
+
+# View annotator accuracy
+SELECT * FROM v_annotator_accuracy;
+```
+
+---
+
+## 6. Export Pipeline
+
+### 6.1 Export Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         EXPORT REVIEWED DATA                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Input: REVIEWED samples from database                                      │
+│                                                                             │
+│  Output Structure:                                                          │
+│  data/reviewed/                                                             │
+│  └── {task_type}/                                                           │
+│      └── {sample_id}/                                                       │
+│          ├── audio.wav          # Original audio file                       │
+│          ├── transcript.json    # Final corrected transcript                │
+│          ├── translation.json   # Verified translation                      │
+│          └── metadata.json      # Sample metadata + revision history        │
+│                                                                             │
+│  Script: src/export_reviewed.py                                             │
+│  DVC Pipeline: dvc repro export_reviewed                                    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 6.2 DVC Pipeline Stages
+
+```yaml
+# dvc.yaml stages
+stages:
+  export_reviewed:
+    cmd: python src/export_reviewed.py --output-dir data/reviewed
+    deps:
+      - src/export_reviewed.py
+    outs:
+      - data/reviewed
+
+  generate_manifest:
+    cmd: python -c "..."  # Generate manifest.json
+    deps:
+      - data/reviewed
+    outs:
+      - data/reviewed/manifest.json
+```
+
+---
+
+## 7. Quick Reference: Script → Task Mapping
 
 | Script | Primary Task | Key Functions |
 |--------|--------------|---------------|
 | `ingest_youtube.py` | YouTube ingestion orchestrator | `run_pipeline()`, `ingest_to_database()` |
 | `ingest_substack.py` | Substack ingestion orchestrator | `ingest_substack()`, `process_article()` |
 | `label_studio_sync.py` | Label Studio integration | `push()`, `pull()`, `status()` |
+| `sync_daemon.py` | DVC auto-sync service | `run_dvc_pull()`, `run_dvc_push()`, `run_sync_loop()` |
+| `export_reviewed.py` | Export reviewed data | `export_sample()`, `export_all_reviewed()` |
+| `webhook_server.py` | Annotation webhooks | `handle_annotation_created()`, `check_conflict()` |
 | `video_downloading_utils.py` | Audio download | `download_channels()`, `save_jsonl()` |
 | `transcript_downloading_utils.py` | Transcript download | `get_transcript_info()`, `download_transcripts_from_metadata()` |
 | `substack_utils.py` | Article download | `run_downloader()`, `list_downloaded_articles()` |
@@ -295,7 +456,7 @@ dvc diff
 
 ---
 
-## 6. Environment Variables
+## 8. Environment Variables
 
 ```bash
 # Database connection
@@ -307,11 +468,18 @@ LABEL_STUDIO_API_KEY=your_api_key
 LS_PROJECT_TRANSCRIPT=1
 LS_PROJECT_TRANSLATION=2
 LS_PROJECT_SEGMENTATION=3
+
+# Audio serving
+AUDIO_SERVER_URL=http://localhost:8081
+
+# DVC sync configuration
+DVC_REMOTE=gdrive
+SYNC_INTERVAL_MINUTES=5
 ```
 
 ---
 
-## 7. Command Reference
+## 9. Command Reference
 
 ### YouTube Ingestion
 ```bash
@@ -347,4 +515,40 @@ python src/label_studio_sync.py pull --task-type transcript_correction
 
 # Check connection
 python src/label_studio_sync.py status
+```
+
+### DVC Sync Daemon
+```bash
+# Run continuous sync (every 5 minutes by default)
+python src/sync_daemon.py
+
+# Single sync operation
+python src/sync_daemon.py --once
+
+# Custom interval
+python src/sync_daemon.py --interval 10
+
+# Push-only mode
+python src/sync_daemon.py --once --push
+```
+
+### Export Reviewed Data
+```bash
+# Export all reviewed samples
+python src/export_reviewed.py --output-dir data/reviewed
+
+# Export specific task type
+python src/export_reviewed.py --task-type transcript_correction
+
+# Dry run
+python src/export_reviewed.py --dry-run
+```
+
+### Webhook Server
+```bash
+# Start webhook server
+uvicorn src.webhook_server:app --host 0.0.0.0 --port 8000
+
+# Or via docker-compose
+docker-compose up webhook_server
 ```

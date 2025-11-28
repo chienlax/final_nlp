@@ -15,6 +15,8 @@ This document explains the database design rationale and schema structure for th
 7. [Views](#7-views)
 8. [Functions](#8-functions)
 9. [Query Patterns](#9-query-patterns)
+10. [Label Studio Integration Schema (V3)](#10-label-studio-integration-schema-v3)
+11. [Schema File Locations](#11-schema-file-locations)
 
 ---
 
@@ -758,20 +760,210 @@ GROUP BY s.sample_id;
 
 ---
 
-## 10. Schema File Location
+## 10. Label Studio Integration Schema (V3)
 
-The complete schema is defined in:
+The Label Studio integration adds versioning and conflict resolution capabilities. This schema is defined in `init_scripts/03_schema_label_studio_v1.sql`.
 
+### 10.1 New Columns on `samples` Table
+
+```sql
+-- DVC versioning for conflict detection
+ALTER TABLE samples ADD COLUMN dvc_commit_hash VARCHAR(64);
+ALTER TABLE samples ADD COLUMN audio_file_md5 VARCHAR(32);
+ALTER TABLE samples ADD COLUMN sync_version INTEGER DEFAULT 1;
+
+-- Locking for concurrent annotation
+ALTER TABLE samples ADD COLUMN locked_at TIMESTAMPTZ;
+ALTER TABLE samples ADD COLUMN locked_by VARCHAR(255);
+
+-- Quality control / Gold standard
+ALTER TABLE samples ADD COLUMN is_gold_standard BOOLEAN DEFAULT FALSE;
+ALTER TABLE samples ADD COLUMN gold_score NUMERIC(5,4);
 ```
-init_scripts/02_schema_v2.sql
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `dvc_commit_hash` | VARCHAR(64) | DVC commit at time of sync |
+| `audio_file_md5` | VARCHAR(32) | File checksum for change detection |
+| `sync_version` | INTEGER | Incremented when sample is updated |
+| `locked_at` | TIMESTAMPTZ | When sample was locked for annotation |
+| `locked_by` | VARCHAR(255) | Who locked the sample |
+| `is_gold_standard` | BOOLEAN | Mark as quality control sample |
+| `gold_score` | NUMERIC(5,4) | Expected score for gold samples |
+
+### 10.2 Locking Functions
+
+```sql
+-- Lock a sample for annotation
+CREATE OR REPLACE FUNCTION lock_sample_for_annotation(
+    p_sample_id UUID,
+    p_annotator VARCHAR(255)
+) RETURNS TABLE(
+    success BOOLEAN,
+    current_sync_version INTEGER,
+    message TEXT
+);
+
+-- Unlock a sample after annotation
+CREATE OR REPLACE FUNCTION unlock_sample(
+    p_sample_id UUID,
+    p_annotator VARCHAR(255)
+) RETURNS BOOLEAN;
 ```
+
+**Usage:**
+```sql
+-- Lock before annotation
+SELECT * FROM lock_sample_for_annotation('uuid-here', 'annotator_1');
+-- Returns: success=true, current_sync_version=5, message='Sample locked'
+
+-- Unlock after completion
+SELECT unlock_sample('uuid-here', 'annotator_1');
+```
+
+### 10.3 Conflict Detection Functions
+
+```sql
+-- Check if sample was modified during annotation
+CREATE OR REPLACE FUNCTION check_annotation_conflict(
+    p_sample_id UUID,
+    p_annotation_sync_version INTEGER
+) RETURNS TABLE(
+    has_conflict BOOLEAN,
+    current_version INTEGER,
+    annotation_version INTEGER,
+    message TEXT
+);
+
+-- Create conflict sample when discrepancy detected
+CREATE OR REPLACE FUNCTION create_conflict_sample(
+    p_original_sample_id UUID,
+    p_annotation_data JSONB,
+    p_annotator VARCHAR(255)
+) RETURNS UUID;
+```
+
+**Usage:**
+```sql
+-- Check for conflict before recording annotation
+SELECT * FROM check_annotation_conflict('uuid-here', 5);
+-- Returns: has_conflict=true if sync_version > 5
+
+-- Create conflict sample if needed
+SELECT create_conflict_sample(
+    'original-uuid',
+    '{"transcript": "annotated text"}'::jsonb,
+    'annotator_1'
+);
+```
+
+### 10.4 Gold Standard Functions
+
+```sql
+-- Mark a sample as gold standard
+CREATE OR REPLACE FUNCTION set_gold_standard(
+    p_sample_id UUID,
+    p_expected_score NUMERIC(5,4) DEFAULT NULL
+) RETURNS BOOLEAN;
+```
+
+**Usage:**
+```sql
+-- Set sample as gold standard with expected score
+SELECT set_gold_standard('uuid-here', 0.95);
+```
+
+### 10.5 New Views
+
+#### v_annotator_accuracy
+
+Track annotator performance against gold standard samples:
+
+```sql
+CREATE VIEW v_annotator_accuracy AS
+SELECT 
+    a.assigned_to AS annotator,
+    COUNT(*) AS total_annotations,
+    COUNT(CASE WHEN s.is_gold_standard THEN 1 END) AS gold_annotations,
+    AVG(CASE WHEN s.is_gold_standard THEN a.confidence_score END) AS avg_gold_score,
+    AVG(CASE WHEN s.is_gold_standard 
+        THEN ABS(a.confidence_score - s.gold_score) END) AS avg_gold_deviation
+FROM annotations a
+JOIN samples s ON a.sample_id = s.sample_id
+WHERE a.status = 'completed'
+GROUP BY a.assigned_to;
+```
+
+#### v_gold_standard_samples
+
+List all gold standard samples:
+
+```sql
+CREATE VIEW v_gold_standard_samples AS
+SELECT 
+    s.sample_id,
+    s.external_id,
+    s.gold_score,
+    s.processing_state,
+    COUNT(a.annotation_id) AS annotation_count,
+    AVG(a.confidence_score) AS avg_annotator_score
+FROM samples s
+LEFT JOIN annotations a ON s.sample_id = a.sample_id
+WHERE s.is_gold_standard = TRUE
+GROUP BY s.sample_id;
+```
+
+#### v_sync_status
+
+Monitor DVC synchronization status:
+
+```sql
+CREATE VIEW v_sync_status AS
+SELECT 
+    dvc_commit_hash,
+    COUNT(*) AS sample_count,
+    MAX(updated_at) AS last_updated,
+    COUNT(CASE WHEN locked_at IS NOT NULL THEN 1 END) AS locked_count
+FROM samples
+WHERE is_deleted = FALSE
+GROUP BY dvc_commit_hash
+ORDER BY last_updated DESC;
+```
+
+### 10.6 Updated Indexes
+
+```sql
+-- Fast lookup for locked samples
+CREATE INDEX idx_samples_locked ON samples(locked_at)
+WHERE locked_at IS NOT NULL;
+
+-- Gold standard queries
+CREATE INDEX idx_samples_gold ON samples(is_gold_standard)
+WHERE is_gold_standard = TRUE;
+
+-- Sync version for conflict detection
+CREATE INDEX idx_samples_sync_version ON samples(sync_version);
+```
+
+---
+
+## 11. Schema File Locations
+
+The complete schema is defined in multiple files:
+
+| File | Purpose |
+|------|---------|
+| `init_scripts/01_schema.sql` | Legacy V1 schema (deprecated) |
+| `init_scripts/02_schema_v2.sql` | Core multi-table schema |
+| `init_scripts/03_schema_label_studio_v1.sql` | Label Studio integration additions |
 
 To initialize the database:
 
 ```bash
-# Via Docker Compose (recommended)
+# Via Docker Compose (recommended - runs all init scripts)
 docker-compose up -d postgres
 
-# Or manually
+# Or manually (run in order)
 psql -h localhost -U admin -d data_factory -f init_scripts/02_schema_v2.sql
+psql -h localhost -U admin -d data_factory -f init_scripts/03_schema_label_studio_v1.sql
 ```

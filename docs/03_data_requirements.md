@@ -1,5 +1,9 @@
 # 03. Data Requirements & Handover Specifications
 
+**Related Documentation:**
+- [04. Workflow Documentation](04_workflow.md) - Data processing pipelines
+- [07. Label Studio Integration](07_label_studio.md) - Annotation and review workflow
+
 ## 1. Audio-First Requirements (YouTube/Vlogs)
 
 *Target: Capturing real-world acoustic code-switching.*

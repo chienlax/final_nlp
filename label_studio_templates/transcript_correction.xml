@@ -1,0 +1,85 @@
+<!--
+Label Studio Template: Transcript Correction
+Task: Review and correct ASR-generated transcripts for Vietnamese-English code-switched audio
+
+Interface:
+- Audio player with waveform visualization
+- Editable text area with original transcript
+- Metadata display (duration, CS ratio, source)
+-->
+<View>
+  <Header value="Transcript Correction Task"/>
+  
+  <!-- Audio Player with Waveform -->
+  <View style="padding: 10px; background: #f5f5f5; border-radius: 8px; margin-bottom: 15px;">
+    <Header value="Audio" size="4"/>
+    <Audio name="audio" value="$audio" hotkey="space"/>
+  </View>
+  
+  <!-- Metadata Display -->
+  <View style="display: flex; gap: 20px; margin-bottom: 15px; padding: 10px; background: #e8f4f8; border-radius: 8px;">
+    <View>
+      <Header value="Sample ID" size="5"/>
+      <Text name="sample_id_display" value="$sample_id"/>
+    </View>
+  </View>
+  
+  <!-- Instructions -->
+  <View style="background: #fff3cd; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+    <Header value="Instructions" size="4"/>
+    <Text name="instructions" value="Listen to the audio and correct the transcript below. Pay attention to:"/>
+    <View style="margin-left: 20px;">
+      <Text value="• Code-switching between Vietnamese and English"/>
+      <Text value="• Proper spelling of Vietnamese words (with diacritics)"/>
+      <Text value="• English words and phrases"/>
+      <Text value="• Speaker hesitations and filler words (um, uh, à, ờ)"/>
+    </View>
+  </View>
+  
+  <!-- Original Transcript (Read-only reference) -->
+  <View style="margin-bottom: 15px;">
+    <Header value="Original Transcript (Reference)" size="4"/>
+    <View style="background: #f0f0f0; padding: 10px; border-radius: 4px; font-family: monospace;">
+      <Text name="original_text" value="$text"/>
+    </View>
+  </View>
+  
+  <!-- Corrected Transcript Input -->
+  <View style="margin-bottom: 15px;">
+    <Header value="Corrected Transcript" size="4"/>
+    <TextArea name="corrected_transcript" 
+              toName="audio" 
+              value="$text"
+              rows="6"
+              placeholder="Enter corrected transcript here..."
+              maxSubmissions="1"
+              editable="true"/>
+  </View>
+  
+  <!-- Quality Flags -->
+  <View style="margin-bottom: 15px;">
+    <Header value="Quality Flags" size="4"/>
+    <Choices name="quality_flags" toName="audio" choice="multiple">
+      <Choice value="audio_quality_poor" hint="Background noise, unclear speech"/>
+      <Choice value="heavy_code_switching" hint="Frequent language switching"/>
+      <Choice value="unclear_speech" hint="Mumbling, fast speech"/>
+      <Choice value="multiple_speakers" hint="More than one speaker"/>
+      <Choice value="needs_review" hint="Uncertain about corrections"/>
+    </Choices>
+  </View>
+  
+  <!-- Confidence Rating -->
+  <View style="margin-bottom: 15px;">
+    <Header value="Confidence in Correction" size="4"/>
+    <Rating name="confidence" toName="audio" maxRating="5" icon="star" size="medium"/>
+  </View>
+  
+  <!-- Notes -->
+  <View>
+    <Header value="Additional Notes (Optional)" size="4"/>
+    <TextArea name="notes" 
+              toName="audio"
+              rows="2"
+              placeholder="Any additional notes about this sample..."/>
+  </View>
+</View>

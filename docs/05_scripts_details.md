@@ -10,12 +10,15 @@ This document provides detailed documentation for all scripts in the `src/` dire
    - [5.1 ingest_youtube.py](#51-ingest_youtubepy)
    - [5.2 ingest_substack.py](#52-ingest_substackpy)
    - [5.3 label_studio_sync.py](#53-label_studio_syncpy)
+   - [5.4 sync_daemon.py](#54-sync_daemonpy)
+   - [5.5 export_reviewed.py](#55-export_reviewedpy)
+   - [5.6 webhook_server.py](#56-webhook_serverpy)
 2. [Utility Modules](#2-utility-modules)
-   - [5.4 video_downloading_utils.py](#54-video_downloading_utilspy)
-   - [5.5 transcript_downloading_utils.py](#55-transcript_downloading_utilspy)
-   - [5.6 substack_utils.py](#56-substack_utilspy)
-   - [5.7 text_utils.py](#57-text_utilspy)
-   - [5.8 data_utils.py](#58-data_utilspy)
+   - [5.7 video_downloading_utils.py](#57-video_downloading_utilspy)
+   - [5.8 transcript_downloading_utils.py](#58-transcript_downloading_utilspy)
+   - [5.9 substack_utils.py](#59-substack_utilspy)
+   - [5.10 text_utils.py](#510-text_utilspy)
+   - [5.11 data_utils.py](#511-data_utilspy)
 
 ---
 
@@ -210,9 +213,359 @@ LS_PROJECT_SEGMENTATION=3
 
 ---
 
+### 5.4 sync_daemon.py
+
+**Location:** `src/sync_daemon.py`
+
+**Purpose:** Automatic DVC synchronization daemon that runs every 5 minutes to keep data in sync between local storage and Google Drive remote.
+
+#### Usage
+
+```bash
+# Run continuous sync (default: every 5 minutes)
+python src/sync_daemon.py
+
+# Single sync operation
+python src/sync_daemon.py --once
+
+# Custom interval (10 minutes)
+python src/sync_daemon.py --interval 10
+
+# Push-only mode (upload local changes)
+python src/sync_daemon.py --once --push
+```
+
+#### Command Line Arguments
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--once` | flag | - | Run single sync and exit |
+| `--interval` | int | 5 | Sync interval in minutes |
+| `--push` | flag | - | Push-only mode (upload changes) |
+
+#### Key Functions
+
+```python
+def run_dvc_pull() -> Dict[str, Any]:
+    """
+    Execute DVC pull to fetch new data from remote.
+    
+    Returns:
+        {
+            'success': bool,
+            'files_updated': int,
+            'commit_hash': str,
+            'message': str
+        }
+    """
+
+def run_dvc_push() -> Dict[str, Any]:
+    """
+    Execute DVC push to upload local changes.
+    
+    Returns:
+        {
+            'success': bool,
+            'files_pushed': int,
+            'commit_hash': str,
+            'message': str
+        }
+    """
+
+def run_sync_loop(interval_minutes: int = 5) -> None:
+    """
+    Run continuous sync loop.
+    
+    - Executes pull → push every interval
+    - Logs results to console
+    - Records commit hashes in database
+    - Handles interrupts gracefully
+    """
+
+def run_once(push_only: bool = False) -> Dict[str, Any]:
+    """
+    Run single sync operation.
+    
+    Args:
+        push_only: If True, only push (no pull)
+    
+    Returns:
+        Sync result dictionary
+    """
+```
+
+#### Environment Variables
+
+```bash
+DVC_REMOTE=gdrive               # Remote name (configured in .dvc/config)
+SYNC_INTERVAL_MINUTES=5         # Default interval
+DATABASE_URL=postgresql://...   # For logging sync results
+```
+
+#### Docker Integration
+
+Runs as `sync_service` container:
+```yaml
+sync_service:
+  build:
+    context: .
+    dockerfile: Dockerfile.ingest
+  command: python src/sync_daemon.py --interval 5
+  volumes:
+    - ./data:/app/data
+```
+
+---
+
+### 5.5 export_reviewed.py
+
+**Location:** `src/export_reviewed.py`
+
+**Purpose:** Export reviewed and verified samples from the database to a structured output directory for downstream processing.
+
+#### Usage
+
+```bash
+# Export all reviewed samples
+python src/export_reviewed.py --output-dir data/reviewed
+
+# Export specific task type
+python src/export_reviewed.py --task-type transcript_correction
+
+# Dry run (preview only)
+python src/export_reviewed.py --dry-run
+
+# Limit number of exports
+python src/export_reviewed.py --limit 100
+```
+
+#### Command Line Arguments
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--output-dir` | path | `data/reviewed` | Output directory |
+| `--task-type` | str | - | Filter by task type |
+| `--dry-run` | flag | - | Preview without writing |
+| `--limit` | int | - | Maximum samples to export |
+
+#### Output Structure
+
+```
+data/reviewed/
+└── {task_type}/
+    └── {sample_id}/
+        ├── audio.wav           # Original audio file
+        ├── transcript.json     # Final corrected transcript
+        ├── translation.json    # Verified translation (if available)
+        └── metadata.json       # Sample metadata + revision history
+```
+
+#### Key Functions
+
+```python
+def export_sample(
+    sample_id: str,
+    output_dir: Path,
+    include_audio: bool = True
+) -> Dict[str, Any]:
+    """
+    Export a single reviewed sample.
+    
+    Returns:
+        {
+            'sample_id': str,
+            'files_exported': List[str],
+            'total_size_bytes': int,
+            'success': bool
+        }
+    """
+
+def export_all_reviewed(
+    output_dir: Path,
+    task_type: Optional[str] = None,
+    limit: Optional[int] = None,
+    dry_run: bool = False
+) -> Dict[str, Any]:
+    """
+    Export all reviewed samples to output directory.
+    
+    Returns:
+        {
+            'total_samples': int,
+            'exported': int,
+            'skipped': int,
+            'errors': int,
+            'total_size_mb': float
+        }
+    """
+
+def generate_manifest(output_dir: Path) -> Dict[str, Any]:
+    """
+    Generate manifest.json with metadata for all exported samples.
+    
+    Returns:
+        Manifest dictionary with sample list and statistics
+    """
+```
+
+#### DVC Pipeline Integration
+
+```yaml
+# dvc.yaml
+stages:
+  export_reviewed:
+    cmd: python src/export_reviewed.py --output-dir data/reviewed
+    deps:
+      - src/export_reviewed.py
+    outs:
+      - data/reviewed
+```
+
+---
+
+### 5.6 webhook_server.py
+
+**Location:** `src/webhook_server.py`
+
+**Purpose:** FastAPI server that receives webhook callbacks from Label Studio when annotations are created or updated. Handles conflict detection and database recording.
+
+#### Usage
+
+```bash
+# Start webhook server (development)
+uvicorn src.webhook_server:app --host 0.0.0.0 --port 8000 --reload
+
+# Start webhook server (production)
+uvicorn src.webhook_server:app --host 0.0.0.0 --port 8000 --workers 4
+
+# Via Docker Compose
+docker-compose up webhook_server
+```
+
+#### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/webhook` | Receive Label Studio annotation callbacks |
+| GET | `/api/conflicts` | List all detected conflicts |
+| POST | `/api/resolve-conflict/{id}` | Resolve a conflict |
+| GET | `/api/stats` | Get annotation statistics |
+| GET | `/health` | Health check endpoint |
+
+#### Webhook Payload Format
+
+```json
+{
+  "action": "ANNOTATION_CREATED",
+  "annotation": {
+    "id": 123,
+    "completed_by": 1,
+    "result": [...],
+    "created_at": "2024-01-01T12:00:00Z"
+  },
+  "task": {
+    "id": 456,
+    "data": {
+      "sample_id": "uuid-here",
+      "sync_version": 5
+    }
+  },
+  "project": {
+    "id": 1,
+    "title": "Transcript Correction"
+  }
+}
+```
+
+#### Key Functions
+
+```python
+@app.post("/webhook")
+async def handle_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Handle Label Studio webhook callbacks.
+    
+    Processes:
+    - ANNOTATION_CREATED: Check conflict, record result
+    - ANNOTATION_UPDATED: Update existing annotation
+    - TASK_COMPLETED: Mark sample as reviewed
+    
+    Returns:
+        {'status': 'success' | 'conflict_detected', 'message': str}
+    """
+
+def check_conflict(sample_id: str, annotation_sync_version: int) -> bool:
+    """
+    Check if sample was modified during annotation.
+    
+    Compares sync_version at annotation start vs current database value.
+    
+    Returns:
+        True if conflict detected
+    """
+
+def record_annotation_to_db(
+    sample_id: str,
+    annotation_result: Dict,
+    annotator_id: int,
+    task_type: str
+) -> str:
+    """
+    Record completed annotation to database.
+    
+    - Creates new transcript/translation revision
+    - Updates sample processing state
+    - Unlocks sample
+    
+    Returns:
+        UUID of created revision
+    """
+
+def create_conflict_sample(
+    original_sample_id: str,
+    annotation_result: Dict
+) -> str:
+    """
+    Create new sample from conflict annotation.
+    
+    - Clones original sample with '_conflict_{timestamp}' suffix
+    - Stores annotation result
+    - Flags both for re-review
+    
+    Returns:
+        UUID of conflict sample
+    """
+```
+
+#### Environment Variables
+
+```bash
+WEBHOOK_SECRET=your_secret_key    # For payload validation (optional)
+DATABASE_URL=postgresql://...     # Database connection
+LABEL_STUDIO_URL=http://...       # For API callbacks
+```
+
+#### Conflict Resolution API
+
+```bash
+# List conflicts
+curl http://localhost:8000/api/conflicts
+
+# Resolve conflict (keep annotated version)
+curl -X POST http://localhost:8000/api/resolve-conflict/123 \
+  -H "Content-Type: application/json" \
+  -d '{"resolution": "keep_annotated"}'
+
+# Resolve conflict (keep updated version)
+curl -X POST http://localhost:8000/api/resolve-conflict/123 \
+  -d '{"resolution": "keep_updated"}'
+```
+
+---
+
 ## 2. Utility Modules
 
-### 5.4 video_downloading_utils.py
+### 5.7 video_downloading_utils.py
 
 **Location:** `src/utils/video_downloading_utils.py`
 
@@ -278,7 +631,7 @@ ydl_opts = {
 
 ---
 
-### 5.5 transcript_downloading_utils.py
+### 5.8 transcript_downloading_utils.py
 
 **Location:** `src/utils/transcript_downloading_utils.py`
 
@@ -338,7 +691,7 @@ def download_transcripts_from_metadata() -> List[Dict[str, Any]]:
 
 ---
 
-### 5.6 substack_utils.py
+### 5.9 substack_utils.py
 
 **Location:** `src/utils/substack_utils.py`
 
@@ -399,7 +752,7 @@ def list_downloaded_articles(output_dir: Optional[Path] = None) -> List[Dict[str
 
 ---
 
-### 5.7 text_utils.py
+### 5.10 text_utils.py
 
 **Location:** `src/utils/text_utils.py`
 
@@ -479,7 +832,7 @@ def extract_cs_chunks(
 
 ---
 
-### 5.8 data_utils.py
+### 5.11 data_utils.py
 
 **Location:** `src/utils/data_utils.py`
 
@@ -666,6 +1019,9 @@ src/
 ├── ingest_youtube.py           # YouTube ingestion orchestrator
 ├── ingest_substack.py          # Substack ingestion orchestrator
 ├── label_studio_sync.py        # Label Studio integration
+├── sync_daemon.py              # DVC auto-sync service
+├── export_reviewed.py          # Export reviewed data
+├── webhook_server.py           # FastAPI webhook handler
 └── utils/
     ├── __init__.py
     ├── data_utils.py           # Database operations
@@ -687,7 +1043,11 @@ src/
 | `beautifulsoup4` | HTML parsing |
 | `lxml` | XML/HTML parser |
 | `psycopg2-binary` | PostgreSQL driver |
-| `dvc` | Data version control |
+| `dvc[gdrive]` | Data version control with Google Drive |
+| `fastapi` | Webhook server framework |
+| `uvicorn[standard]` | ASGI server for FastAPI |
+| `pydantic` | Data validation |
+| `python-multipart` | Form data handling |
 
 ---
 

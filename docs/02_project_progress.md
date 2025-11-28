@@ -91,7 +91,10 @@ LLM Translation → TRANSLATED
 |--------|---------|--------|
 | `ingest_youtube.py` | YouTube audio ingestion orchestrator | ✅ Updated for V2 schema |
 | `ingest_substack.py` | Substack article ingestion orchestrator | ✅ New |
-| `label_studio_sync.py` | Push/pull annotations from Label Studio | ✅ New |
+| `label_studio_sync.py` | Push/pull annotations from Label Studio | ✅ Updated with HTTP audio URLs |
+| `sync_daemon.py` | DVC sync service (5-min interval) | ✅ New |
+| `export_reviewed.py` | Export reviewed samples to DVC | ✅ New |
+| `webhook_server.py` | FastAPI webhook handler for Label Studio | ✅ New |
 
 ### Utilities (`src/utils/`)
 | Module | Functions | Status |
@@ -104,14 +107,32 @@ LLM Translation → TRANSLATED
 
 ## 5. Label Studio Integration
 
+Full Label Studio integration is now operational. See [07_label_studio.md](07_label_studio.md) for details.
+
+### Docker Services
+| Service | Port | Purpose |
+|---------|------|---------|
+| `label_studio` | 8080 | Annotation interface |
+| `audio_server` | 8081 | nginx audio file server |
+| `sync_service` | - | DVC sync (5-min interval) |
+
 ### Environment Variables
 ```bash
 LABEL_STUDIO_URL=http://localhost:8080
 LABEL_STUDIO_API_KEY=your_api_key
+AUDIO_SERVER_URL=http://localhost:8081
+SYNC_INTERVAL_MINUTES=5
 LS_PROJECT_TRANSCRIPT=1
 LS_PROJECT_TRANSLATION=2
 LS_PROJECT_SEGMENTATION=3
 ```
+
+### Labeling Templates
+| Template | Location |
+|----------|----------|
+| Transcript Correction | `label_studio_templates/transcript_correction.xml` |
+| Translation Review | `label_studio_templates/translation_review.xml` |
+| Audio Segmentation | `label_studio_templates/audio_segmentation.xml` |
 
 ### Commands
 ```bash
@@ -121,6 +142,9 @@ python src/label_studio_sync.py push --task-type transcript_correction
 # Pull completed annotations back to database
 python src/label_studio_sync.py pull --task-type transcript_correction
 
+# Export reviewed data
+python src/export_reviewed.py --task-type transcript_verification
+
 # Check connection status
 python src/label_studio_sync.py status
 ```
@@ -129,8 +153,8 @@ python src/label_studio_sync.py status
 
 ### YouTube Ingestion
 ```bash
-# Start database
-docker-compose up -d postgres
+# Start all services (including Label Studio)
+docker-compose up -d
 
 # Ingest YouTube videos
 python src/ingest_youtube.py "https://youtube.com/watch?v=VIDEO_ID"
@@ -148,10 +172,22 @@ python src/ingest_substack.py --urls-file data/substack_urls.txt
 python src/ingest_substack.py --skip-download
 ```
 
+### Label Studio Setup
+```bash
+# Apply schema migration
+docker exec -i factory_ledger psql -U admin -d data_factory < init_scripts/03_schema_label_studio_v1.sql
+
+# Access Label Studio at http://localhost:8080
+# Get API key from Settings → Account & Settings
+# Update .env with LABEL_STUDIO_API_KEY
+```
+
 ## 7. Next Steps
 - [ ] Implement MFA alignment processor (`processing_state` → ALIGNED)
 - [ ] Implement Silero VAD segmentation (`processing_state` → VAD_SEGMENTED)
 - [ ] Implement DeepFilterNet enhancement (`processing_state` → ENHANCED)
-- [ ] Set up Label Studio projects with annotation templates
+- [x] Set up Label Studio projects with annotation templates
 - [ ] Implement TTS generation for text-first pipeline
-- [ ] Add webhook handlers for real-time Label Studio sync
+- [x] Add webhook handlers for real-time Label Studio sync
+- [ ] Migrate to Google Cloud Service Account for DVC (production)
+

@@ -20,17 +20,23 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from utils.data_utils import (
-    get_db_connection,
+    get_pg_connection,
     get_review_queue,
     insert_annotation,
+    update_annotation_status,
     transition_state,
     log_processing,
+    insert_transcript_revision,
+    insert_translation_revision,
 )
 
 
 # Label Studio configuration from environment
 LABEL_STUDIO_URL = os.getenv("LABEL_STUDIO_URL", "http://localhost:8080")
 LABEL_STUDIO_API_KEY = os.getenv("LABEL_STUDIO_API_KEY", "")
+
+# Audio server URL for serving audio files to Label Studio
+AUDIO_SERVER_URL = os.getenv("AUDIO_SERVER_URL", "http://localhost:8081")
 
 # Task type to Label Studio project mapping
 PROJECT_MAPPING = {
@@ -247,21 +253,28 @@ def push_to_label_studio(
         return stats
 
     try:
-        conn = get_db_connection()
-
-        # Get samples ready for review
-        samples = get_review_queue(conn, task_type=task_type, limit=limit)
+        # Get samples ready for review (function creates its own connection)
+        samples = get_review_queue(task_type=task_type, limit=limit)
         print(f"Found {len(samples)} samples ready for {task_type}")
 
         for sample in samples:
             sample_id = sample['sample_id']
+
+            # Generate HTTP URL for audio file
+            file_path = sample.get('audio_file_path', '')
+            if file_path:
+                # Extract filename from path (e.g., "data/raw/audio/xyz.wav" -> "xyz.wav")
+                audio_filename = Path(file_path).name
+                audio_url = f"{AUDIO_SERVER_URL}/audio/{audio_filename}"
+            else:
+                audio_url = ''
 
             # Prepare task data based on task type
             if task_type == 'transcript_correction':
                 task_data = {
                     'sample_id': sample_id,
                     'text': sample.get('transcript', ''),
-                    'audio_url': sample.get('file_path', ''),
+                    'audio': audio_url,
                     'metadata': json.dumps(sample.get('metadata', {})),
                 }
             elif task_type == 'translation_review':
@@ -288,18 +301,15 @@ def push_to_label_studio(
             if task_id:
                 # Record annotation task in database
                 insert_annotation(
-                    conn=conn,
                     sample_id=sample_id,
                     task_type=task_type,
-                    external_task_id=str(task_id),
-                    status='pending'
+                    label_studio_project_id=int(project_id),
+                    label_studio_task_id=task_id,
                 )
                 print(f"  Pushed sample {sample_id} -> Task {task_id}")
                 stats['pushed'] += 1
             else:
                 stats['errors'] += 1
-
-        conn.close()
 
     except Exception as e:
         print(f"Error: {e}")
@@ -336,8 +346,6 @@ def pull_from_label_studio(
         return stats
 
     try:
-        conn = get_db_connection()
-
         # Get completed tasks from Label Studio
         completed_tasks = client.get_completed_tasks(project_id)
         print(f"Found {len(completed_tasks)} completed tasks")
@@ -376,17 +384,11 @@ def pull_from_label_studio(
 
                 if corrected_text:
                     # Update database with correction
-                    from utils.data_utils import insert_transcript_revision
                     insert_transcript_revision(
-                        conn=conn,
                         sample_id=sample_id,
                         transcript_text=corrected_text,
                         revision_type='human_corrected',
-                        confidence_score=1.0,
-                        metadata={
-                            'annotator': latest_annotation.get('completed_by'),
-                            'task_id': task_id,
-                        }
+                        created_by=str(latest_annotation.get('completed_by', 'annotator')),
                     )
 
             elif task_type == 'translation_review':
@@ -398,44 +400,45 @@ def pull_from_label_studio(
                         break
 
                 if corrected_translation:
-                    from utils.data_utils import insert_translation_revision
                     insert_translation_revision(
-                        conn=conn,
                         sample_id=sample_id,
-                        source_transcript_id=task_data.get('transcript_id'),
+                        transcript_revision_id=task_data.get('transcript_id'),
                         translation_text=corrected_translation,
                         revision_type='human_corrected',
                         translator='human',
-                        confidence_score=1.0,
-                        metadata={
-                            'annotator': latest_annotation.get('completed_by'),
-                            'task_id': task_id,
-                        }
+                        created_by=str(latest_annotation.get('completed_by', 'annotator')),
                     )
 
             # Update annotation status
-            insert_annotation(
-                conn=conn,
-                sample_id=sample_id,
-                task_type=task_type,
-                external_task_id=str(task_id),
+            update_annotation_status(
+                annotation_id=str(task_id),  # Note: Need to look up annotation_id by task_id
                 status='completed',
-                result_data=result,
-                annotator_id=str(latest_annotation.get('completed_by', '')),
+                result=result,
             )
 
             # Transition sample state
             transition_state(
-                conn=conn,
                 sample_id=sample_id,
-                new_state='reviewed',
-                reason=f'{task_type} completed',
+                new_state='REVIEWED',
+                executor=f'label_studio_{task_type}',
+            )
+
+            # Log the operation
+            log_processing(
+                operation='annotation_completed',
+                success=True,
+                sample_id=sample_id,
+                new_state='REVIEWED',
+                executor='label_studio_sync',
+                output_summary={
+                    'task_type': task_type,
+                    'task_id': task_id,
+                    'annotator': latest_annotation.get('completed_by'),
+                },
             )
 
             print(f"  Pulled task {task_id} -> sample {sample_id}")
             stats['pulled'] += 1
-
-        conn.close()
 
     except Exception as e:
         print(f"Error: {e}")
