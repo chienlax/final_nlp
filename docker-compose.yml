@@ -28,19 +28,20 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - label_studio_data:/label-studio/data
       # Mount templates for labeling interfaces
       - ./label_studio_templates:/label-studio/templates:ro
+      # Mount audio data for local file serving
+      - ./data/raw/audio:/label-studio/files/audio:ro
     environment:
       - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
       - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/files
-      # PostgreSQL backend for Label Studio (optional, uses SQLite by default)
-      # - DJANGO_DB=default
-      # - POSTGRE_NAME=label_studio
-      # - POSTGRE_USER=admin
-      # - POSTGRE_PASSWORD=secret_password
-      # - POSTGRE_HOST=postgres
-      # - POSTGRE_PORT=5432
+      # PostgreSQL backend for Label Studio (uses same postgres container)
+      - DJANGO_DB=default
+      - POSTGRE_NAME=label_studio
+      - POSTGRE_USER=admin
+      - POSTGRE_PASSWORD=secret_password
+      - POSTGRE_HOST=postgres
+      - POSTGRE_PORT=5432
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,6 +110,4 @@ services:
       - LABEL_STUDIO_URL=http://label_studio:8080
       - LABEL_STUDIO_API_KEY=${LABEL_STUDIO_API_KEY:-}
 
-volumes:
-  database_data:
-  label_studio_data:
+# Named volumes (database_data is unused - postgres uses bind mount ./database_data)

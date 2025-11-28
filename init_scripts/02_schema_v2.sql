@@ -156,6 +156,19 @@ CREATE TABLE IF NOT EXISTS samples (
     label_studio_project_id INTEGER,
     label_studio_task_id INTEGER,
     
+    -- DVC version tracking (for conflict detection with crawlers)
+    dvc_commit_hash VARCHAR(40),        -- Git-like hash from DVC
+    audio_file_md5 VARCHAR(32),         -- MD5 checksum of audio file
+    sync_version INTEGER DEFAULT 1,     -- Incremented on each update (optimistic locking)
+    
+    -- Annotation locking (prevent concurrent edits)
+    locked_at TIMESTAMPTZ,              -- When sample was locked for annotation
+    locked_by VARCHAR(255),             -- Who locked it (annotator ID/email)
+    
+    -- Gold standard for quality control
+    is_gold_standard BOOLEAN DEFAULT FALSE,  -- Mark as QC sample
+    gold_score NUMERIC(3, 2),           -- Expected score for gold samples
+    
     -- Audit
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -206,6 +219,18 @@ CREATE INDEX idx_samples_external_id ON samples(external_id);
 -- Full-text search on metadata (GIN index for JSONB)
 CREATE INDEX idx_samples_source_meta ON samples USING GIN (source_metadata);
 CREATE INDEX idx_samples_linguistic_meta ON samples USING GIN (linguistic_metadata);
+
+-- Gold standard samples lookup
+CREATE INDEX idx_samples_gold_standard ON samples(is_gold_standard, processing_state)
+WHERE is_gold_standard = TRUE;
+
+-- Locked samples lookup
+CREATE INDEX idx_samples_locked ON samples(locked_at)
+WHERE locked_at IS NOT NULL;
+
+-- DVC commit hash lookup (for sync operations)
+CREATE INDEX idx_samples_dvc_commit ON samples(dvc_commit_hash)
+WHERE dvc_commit_hash IS NOT NULL;
 
 -- =============================================================================
 -- TABLE: transcript_revisions
@@ -364,6 +389,11 @@ CREATE TABLE IF NOT EXISTS annotations (
     reviewer_id VARCHAR(255),
     review_result JSONB,
     reviewed_at TIMESTAMPTZ,
+    
+    -- Conflict tracking (when sample modified during annotation)
+    sample_sync_version_at_start INTEGER,  -- sync_version when annotation began
+    conflict_detected BOOLEAN DEFAULT FALSE,
+    conflict_resolution VARCHAR(50),        -- 'human_wins', 'crawler_wins', 'merged', 'pending_review'
     
     -- Audit
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -755,3 +785,270 @@ COMMENT ON FUNCTION add_transcript_revision IS 'Add new transcript revision and 
 COMMENT ON FUNCTION add_translation_revision IS 'Add new translation revision and update sample version';
 COMMENT ON FUNCTION get_sample_lineage IS 'Get full derivation chain for a sample';
 COMMENT ON FUNCTION get_or_create_source IS 'Get existing source or create new one';
+
+-- =============================================================================
+-- LABEL STUDIO INTEGRATION FUNCTIONS
+-- =============================================================================
+
+-- Function: Lock a sample for annotation (optimistic locking)
+CREATE OR REPLACE FUNCTION lock_sample_for_annotation(
+    p_sample_id UUID,
+    p_locked_by VARCHAR(255)
+) RETURNS TABLE(
+    success BOOLEAN,
+    current_sync_version INTEGER,
+    message TEXT
+) AS $$
+DECLARE
+    v_current_version INTEGER;
+    v_locked_at TIMESTAMPTZ;
+BEGIN
+    SELECT s.sync_version, s.locked_at
+    INTO v_current_version, v_locked_at
+    FROM samples s
+    WHERE s.sample_id = p_sample_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT FALSE, NULL::INTEGER, 'Sample not found'::TEXT;
+        RETURN;
+    END IF;
+
+    -- Check if already locked (lock expires after 30 minutes)
+    IF v_locked_at IS NOT NULL AND v_locked_at > NOW() - INTERVAL '30 minutes' THEN
+        RETURN QUERY SELECT FALSE, v_current_version, 'Sample is already locked'::TEXT;
+        RETURN;
+    END IF;
+
+    UPDATE samples
+    SET locked_at = NOW(),
+        locked_by = p_locked_by,
+        updated_at = NOW()
+    WHERE sample_id = p_sample_id;
+
+    RETURN QUERY SELECT TRUE, v_current_version, 'Sample locked successfully'::TEXT;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function: Unlock a sample after annotation
+CREATE OR REPLACE FUNCTION unlock_sample(
+    p_sample_id UUID,
+    p_increment_version BOOLEAN DEFAULT FALSE
+) RETURNS BOOLEAN AS $$
+BEGIN
+    UPDATE samples
+    SET locked_at = NULL,
+        locked_by = NULL,
+        sync_version = CASE WHEN p_increment_version THEN sync_version + 1 ELSE sync_version END,
+        updated_at = NOW()
+    WHERE sample_id = p_sample_id;
+    
+    RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function: Check if sample was modified during annotation
+CREATE OR REPLACE FUNCTION check_annotation_conflict(
+    p_sample_id UUID,
+    p_expected_sync_version INTEGER
+) RETURNS TABLE(
+    has_conflict BOOLEAN,
+    current_version INTEGER,
+    expected_version INTEGER
+) AS $$
+DECLARE
+    v_current_version INTEGER;
+BEGIN
+    SELECT s.sync_version INTO v_current_version
+    FROM samples s
+    WHERE s.sample_id = p_sample_id;
+
+    IF v_current_version IS NULL THEN
+        RETURN QUERY SELECT TRUE, NULL::INTEGER, p_expected_sync_version;
+        RETURN;
+    END IF;
+
+    RETURN QUERY SELECT 
+        v_current_version > p_expected_sync_version,
+        v_current_version,
+        p_expected_sync_version;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function: Create conflict sample when crawler updated during annotation
+CREATE OR REPLACE FUNCTION create_conflict_sample(
+    p_original_sample_id UUID,
+    p_reason TEXT DEFAULT 'Crawler updated during annotation'
+) RETURNS UUID AS $$
+DECLARE
+    v_new_sample_id UUID;
+BEGIN
+    INSERT INTO samples (
+        source_id, parent_sample_id, external_id, content_type,
+        audio_file_path, text_file_path, pipeline_type, processing_state,
+        duration_seconds, sample_rate, cs_ratio,
+        source_metadata, acoustic_metadata, linguistic_metadata, processing_metadata,
+        priority, dvc_commit_hash, audio_file_md5
+    )
+    SELECT
+        source_id,
+        p_original_sample_id,
+        external_id || '_reflow_' || TO_CHAR(NOW(), 'YYYYMMDD_HH24MISS'),
+        content_type,
+        audio_file_path, text_file_path, pipeline_type,
+        'RAW',  -- Reset to RAW for re-review
+        duration_seconds, sample_rate, cs_ratio,
+        source_metadata, acoustic_metadata, linguistic_metadata,
+        processing_metadata || jsonb_build_object(
+            'conflict_reason', p_reason,
+            'original_sample_id', p_original_sample_id::TEXT,
+            'created_from_conflict', TRUE
+        ),
+        priority + 10,  -- Increase priority for re-review
+        dvc_commit_hash, audio_file_md5
+    FROM samples
+    WHERE sample_id = p_original_sample_id
+    RETURNING sample_id INTO v_new_sample_id;
+
+    INSERT INTO processing_logs (
+        sample_id, operation, previous_state, new_state, executor,
+        input_params, output_summary, success
+    ) VALUES (
+        p_original_sample_id, 'conflict_resolution', NULL, 'RAW', 'system',
+        jsonb_build_object('original_sample_id', p_original_sample_id),
+        jsonb_build_object('new_sample_id', v_new_sample_id, 'reason', p_reason),
+        TRUE
+    );
+
+    RETURN v_new_sample_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function: Mark sample as gold standard for QC
+CREATE OR REPLACE FUNCTION set_gold_standard(
+    p_sample_id UUID,
+    p_gold_score NUMERIC(3, 2),
+    p_executor VARCHAR(255) DEFAULT 'system'
+) RETURNS BOOLEAN AS $$
+BEGIN
+    IF p_gold_score < 0 OR p_gold_score > 1 THEN
+        RAISE EXCEPTION 'Gold score must be between 0.00 and 1.00';
+    END IF;
+
+    UPDATE samples
+    SET is_gold_standard = TRUE,
+        gold_score = p_gold_score,
+        updated_at = NOW()
+    WHERE sample_id = p_sample_id;
+
+    INSERT INTO processing_logs (
+        sample_id, operation, executor, output_summary, success
+    ) VALUES (
+        p_sample_id, 'set_gold_standard', p_executor,
+        jsonb_build_object('gold_score', p_gold_score), TRUE
+    );
+
+    RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =============================================================================
+-- LABEL STUDIO VIEWS
+-- =============================================================================
+
+-- View: Annotator accuracy against gold standard samples
+CREATE OR REPLACE VIEW v_annotator_accuracy AS
+WITH gold_annotations AS (
+    SELECT 
+        a.annotation_id, a.sample_id, a.task_type,
+        a.assigned_to AS annotator_id, a.result AS annotator_result,
+        a.completed_at, s.gold_score AS expected_score
+    FROM annotations a
+    JOIN samples s ON a.sample_id = s.sample_id
+    WHERE s.is_gold_standard = TRUE AND a.status = 'completed'
+),
+annotator_stats AS (
+    SELECT
+        annotator_id, task_type,
+        COUNT(*) AS total_gold_annotations,
+        AVG(expected_score) AS avg_expected_score,
+        COUNT(*) FILTER (WHERE annotator_result IS NOT NULL) AS completed_count
+    FROM gold_annotations
+    GROUP BY annotator_id, task_type
+)
+SELECT
+    annotator_id, task_type, total_gold_annotations,
+    avg_expected_score, completed_count,
+    CASE 
+        WHEN total_gold_annotations > 0 
+        THEN ROUND((completed_count::NUMERIC / total_gold_annotations) * 100, 2)
+        ELSE 0 
+    END AS completion_rate_pct,
+    NOW() AS calculated_at
+FROM annotator_stats
+ORDER BY annotator_id, task_type;
+
+-- View: Gold standard samples for QC
+CREATE OR REPLACE VIEW v_gold_standard_samples AS
+SELECT
+    s.sample_id, s.external_id, s.content_type, s.pipeline_type,
+    s.processing_state, s.gold_score, s.audio_file_path, s.created_at,
+    COUNT(a.annotation_id) AS annotation_count,
+    COUNT(a.annotation_id) FILTER (WHERE a.status = 'completed') AS completed_count
+FROM samples s
+LEFT JOIN annotations a ON s.sample_id = a.sample_id
+WHERE s.is_gold_standard = TRUE AND s.is_deleted = FALSE
+GROUP BY s.sample_id
+ORDER BY s.created_at DESC;
+
+-- View: DVC sync and lock status
+CREATE OR REPLACE VIEW v_sync_status AS
+SELECT
+    s.sample_id, s.external_id, s.processing_state, s.sync_version,
+    s.dvc_commit_hash, s.audio_file_md5, s.locked_at, s.locked_by,
+    CASE 
+        WHEN s.locked_at IS NULL THEN 'unlocked'
+        WHEN s.locked_at > NOW() - INTERVAL '30 minutes' THEN 'locked'
+        ELSE 'lock_expired'
+    END AS lock_status,
+    s.updated_at,
+    EXISTS (
+        SELECT 1 FROM annotations a 
+        WHERE a.sample_id = s.sample_id AND a.status IN ('pending', 'in_progress')
+    ) AS has_pending_annotation
+FROM samples s
+WHERE s.is_deleted = FALSE
+ORDER BY s.updated_at DESC;
+
+-- =============================================================================
+-- SYNC VERSION TRIGGER
+-- =============================================================================
+
+-- Auto-increment sync_version when file paths change (crawler update)
+CREATE OR REPLACE FUNCTION trigger_increment_sync_version()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (OLD.audio_file_path IS DISTINCT FROM NEW.audio_file_path) OR
+       (OLD.text_file_path IS DISTINCT FROM NEW.text_file_path) OR
+       (OLD.audio_file_md5 IS DISTINCT FROM NEW.audio_file_md5) OR
+       (OLD.dvc_commit_hash IS DISTINCT FROM NEW.dvc_commit_hash) THEN
+        NEW.sync_version := COALESCE(OLD.sync_version, 0) + 1;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_increment_sync_version
+    BEFORE UPDATE ON samples
+    FOR EACH ROW
+    EXECUTE FUNCTION trigger_increment_sync_version();
+
+-- Add comments for new functions
+COMMENT ON FUNCTION lock_sample_for_annotation IS 'Lock sample for annotation with 30-minute expiry';
+COMMENT ON FUNCTION unlock_sample IS 'Unlock sample after annotation, optionally increment version';
+COMMENT ON FUNCTION check_annotation_conflict IS 'Check if sample modified during annotation';
+COMMENT ON FUNCTION create_conflict_sample IS 'Create new sample when conflict detected';
+COMMENT ON FUNCTION set_gold_standard IS 'Mark sample as gold standard for QC';
+COMMENT ON VIEW v_annotator_accuracy IS 'Annotator accuracy against gold standard samples';
+COMMENT ON VIEW v_gold_standard_samples IS 'List of gold standard samples';
+COMMENT ON VIEW v_sync_status IS 'DVC sync and lock status for all samples';
