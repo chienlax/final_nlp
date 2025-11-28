@@ -11,7 +11,9 @@ This document catalogs all known challenges in the preprocessing pipeline for Vi
 3. [TTS Synthesis Problems](#3-tts-synthesis-problems)
 4. [Cross-Cutting Infrastructure Problems](#4-cross-cutting-infrastructure-problems)
 5. [Data Quality & Validation Problems](#5-data-quality--validation-problems)
-6. [Decision Matrix](#6-decision-matrix)
+6. [Additional Workflow Problems](#6-additional-workflow-problems)
+7. [Decision Matrix](#7-decision-matrix)
+8. [Next Steps](#8-next-steps)
 
 ---
 
@@ -191,18 +193,19 @@ This document catalogs all known challenges in the preprocessing pipeline for Vi
 
 ---
 
-### 3.3 VALL-E X Availability and Stability
+### 3.3 TTS Model Availability and Access
 
 | Aspect | Details |
 |--------|---------|
-| **Problem** | VALL-E X is a research paper from Microsoft with no official open-source release. Available implementations are unofficial, may not reproduce paper results, and lack Vietnamese language support. |
-| **Impact** | Cannot reliably use VALL-E X as proposed in the original plan. |
+| **Problem** | High-quality CS-capable TTS models have limited availability: (1) **VALL-E X** is a research paper from Microsoft with no official open-source release; unofficial implementations lack Vietnamese support. (2) **F5-TTS** is a promising diffusion-based model with excellent zero-shot voice cloning and potential CS capabilities, but we currently **do not have access** to the model weights. |
+| **Impact** | Cannot reliably use VALL-E X or F5-TTS as proposed. Limited to XTTS v2 and MMS-TTS, which have CS stitching limitations. |
 | **Proposed Solutions** | |
-| Option A | **Drop VALL-E X**: Focus solely on XTTS v2, which has official support and active maintenance. |
-| Option B | **Substitute with Bark**: Suno's Bark model supports multilingual generation and has unofficial CS capabilities. Quality is variable but it's accessible. |
-| Option C | **Substitute with MMS-TTS**: Meta's Massively Multilingual Speech TTS supports Vietnamese (`vie`) and English (`eng`). Simpler API, consistent quality, but less expressive than XTTS. |
-| Option D | **Wait for Official Release**: Monitor for official VALL-E X release or equivalent (e.g., VoiceCraft, which has similar capabilities). |
-| **Recommendation** | **Option A** (XTTS v2 only) for production. Experiment with **Option C** (MMS-TTS) as a faster fallback. |
+| Option A | **Drop VALL-E X, Use XTTS v2 Only**: Focus solely on XTTS v2, which has official support and active maintenance. Accept CS stitching artifacts. |
+| Option B | **Substitute with MMS-TTS**: Meta's Massively Multilingual Speech TTS supports Vietnamese (`vie`) and English (`eng`). Simpler API, consistent quality, but less expressive than XTTS. |
+| Option C | **Contact F5-TTS Authors**: Email the research team to request model access for academic/research use. F5-TTS's flow-matching approach may handle CS better than autoregressive models. |
+| Option D | **Fine-tune F5-TTS on YouTube Data**: If base F5-TTS becomes available (or using open checkpoints), fine-tune on our segmented YouTube CS audio to create a Vietnamese-English CS-native TTS. Requires significant compute and aligned data. |
+| Option E | **Abandon Text-First Pipeline**: If TTS quality is insufficient, **drop Substack ingestion entirely** and focus only on YouTube (Audio-First pipeline). Avoids TTS complexity at the cost of losing text-sourced CS data diversity. |
+| **Recommendation** | Short-term: **Option A** (XTTS v2) + **Option B** (MMS fallback). Parallel: Pursue **Option C** (contact F5-TTS authors). Fallback: **Option E** (drop Substack) if TTS proves intractable. |
 
 ---
 
@@ -378,7 +381,153 @@ This document catalogs all known challenges in the preprocessing pipeline for Vi
 
 ---
 
-## 6. Decision Matrix
+## 6. Additional Workflow Problems
+
+### 6.1 Data Licensing and Copyright
+
+| Aspect | Details |
+|--------|---------|
+| **Problem** | YouTube videos and Substack articles are copyrighted content. Using them for model training may violate terms of service or copyright law depending on jurisdiction and intended use (research vs. commercial). |
+| **Impact** | Legal risk. Inability to release trained models or datasets publicly. |
+| **Proposed Solutions** | |
+| Option A | **Research-Only Use**: Restrict dataset and models to internal research. Do not publish dataset; only publish model trained on it with appropriate disclaimers. |
+| Option B | **Fair Use Documentation**: Document that usage falls under fair use/research exemption. Keep records of sources for potential takedown requests. |
+| Option C | **Seek Explicit Permission**: For high-value channels, contact creators for permission to use their content. |
+| Option D | **Synthetic-Only Public Release**: Train on real data, but only release models fine-tuned on fully synthetic data for public use. |
+| **Recommendation** | **Option A** (research-only) + **Option B** (fair use docs). Consider **Option D** for any public release. |
+
+---
+
+### 6.2 YouTube API Rate Limits and Account Bans
+
+| Aspect | Details |
+|--------|---------|
+| **Problem** | Bulk downloading videos with `yt-dlp` and transcripts with `youtube-transcript-api` can trigger rate limiting or account/IP bans from YouTube. This disrupts data collection and may permanently block access. |
+| **Impact** | Data collection halts. Need to rotate IPs or wait for cooldown. |
+| **Proposed Solutions** | |
+| Option A | **Throttling**: Add random delays (5-30s) between downloads. Limit to 50-100 videos per day per IP. |
+| Option B | **Proxy Rotation**: Use rotating residential proxies to distribute requests across IPs. |
+| Option C | **Batch Scheduling**: Download in small batches overnight during off-peak hours. |
+| Option D | **Archive.org Fallback**: Check if target videos exist on Internet Archive before hitting YouTube. |
+| **Recommendation** | **Option A** (throttling) + **Option C** (batch scheduling) for sustainable collection. |
+
+---
+
+### 6.3 Model Dependency Version Conflicts
+
+| Aspect | Details |
+|--------|---------|
+| **Problem** | The preprocessing pipeline uses multiple ML models (Whisper, MFA, DeepFilterNet, Demucs, XTTS, pyannote) with conflicting dependencies. For example, XTTS requires specific PyTorch versions; MFA requires Conda; pyannote requires `pyannote.audio` with its own dependency tree. |
+| **Impact** | Dependency hell. Installation failures. Runtime errors from version mismatches. |
+| **Proposed Solutions** | |
+| Option A | **Separate Virtual Environments**: Use different venvs/conda envs for each tool. Orchestrate via subprocess calls. |
+| Option B | **Containerization**: Create separate Docker containers for each tool. Pipeline calls containers via CLI or API. |
+| Option C | **Careful Pinning**: Exhaustively test compatible versions and pin in `requirements.txt`. May not always be possible. |
+| Option D | **Microservice Architecture**: Deploy heavy models (TTS, Demucs) as separate services with REST APIs. Main pipeline calls APIs. |
+| **Recommendation** | **Option B** (Docker containers) for isolation. Start with **Option A** (separate envs) for local development. |
+
+---
+
+### 6.4 Transcript Language Mismatch
+
+| Aspect | Details |
+|--------|---------|
+| **Problem** | YouTube transcript language metadata can be wrong. A video marked as "Vietnamese" transcript may actually be in English, or vice versa. Auto-translated transcripts are especially unreliable. |
+| **Impact** | Wrong transcript language breaks downstream processing (MFA dictionary selection, LID assumptions). |
+| **Proposed Solutions** | |
+| Option A | **LID Verification**: Run language detection on the full transcript text. If detected language differs from metadata, flag for review or reassign. |
+| Option B | **Prefer Manual Over Auto**: Already implemented—prioritize manual captions. Auto-generated captions are more likely to have language issues. |
+| Option C | **Multi-Language Detection**: For CS content, expect mixed results from LID. Accept if LID returns both `vi` and `en` with significant confidence. |
+| **Recommendation** | **Option A** (LID verify) + **Option B** (prefer manual). |
+
+---
+
+### 6.5 Audio-Transcript Temporal Alignment for Long Videos
+
+| Aspect | Details |
+|--------|---------|
+| **Problem** | For videos >30 minutes, cumulative drift between audio and transcript timestamps can exceed 5-10 seconds by the end. MFA may fail to recover from such large offsets. |
+| **Impact** | Later portions of long videos have unusable alignments. |
+| **Proposed Solutions** | |
+| Option A | **Anchor Point Detection**: Identify clear alignment anchors (e.g., chapter markers, scene changes, distinct phrases) and re-sync at these points. |
+| Option B | **Sliding Window Alignment**: Process in 2-3 minute windows with overlap. Stitch results, using overlap to detect and correct drift. |
+| Option C | **Limit Video Length**: Only process videos <20 minutes where drift is manageable. Skip or split longer videos. |
+| **Recommendation** | **Option B** (sliding window) is most robust. Apply **Option C** (length limit) as initial filter. |
+
+---
+
+### 6.6 Handling Incomplete or Corrupted Downloads
+
+| Aspect | Details |
+|--------|---------|
+| **Problem** | Network interruptions can leave partial audio files or truncated transcripts. These corrupt files may not fail obviously—they might load but have missing data at the end. |
+| **Impact** | Silent data corruption. Downstream processing produces incorrect results without error. |
+| **Proposed Solutions** | |
+| Option A | **Checksum Validation**: After download, verify file integrity (check audio duration matches metadata, transcript segment count is reasonable). |
+| Option B | **Re-download on Mismatch**: If validation fails, delete and re-download with retry logic. |
+| Option C | **Quarantine Directory**: Move suspicious files to a quarantine folder for manual review rather than processing them. |
+| **Recommendation** | **Option A** (validation) + **Option B** (retry) + **Option C** (quarantine) for defense in depth. |
+
+---
+
+### 6.7 Teencode and Slang Evolution
+
+| Aspect | Details |
+|--------|---------|
+| **Problem** | Vietnamese internet slang (teencode) evolves rapidly. The static `teencode.txt` dictionary will become outdated. New slang terms won't be normalized, affecting TTS pronunciation and text consistency. |
+| **Impact** | Degraded text normalization over time. TTS mispronounces new slang. |
+| **Proposed Solutions** | |
+| Option A | **Periodic Dictionary Updates**: Schedule quarterly reviews of teencode dictionary. Add new terms from recent data. |
+| Option B | **Crowdsourced Updates**: Allow annotators in Label Studio to flag unknown slang terms. Batch add to dictionary. |
+| Option C | **LLM-Based Normalization**: Use an LLM to detect and expand unknown slang contextually. More robust to new terms but slower. |
+| **Recommendation** | **Option B** (crowdsourced) for ongoing maintenance. **Option A** (periodic review) as baseline. |
+
+---
+
+### 6.8 Voice Prompt Quality for TTS
+
+| Aspect | Details |
+|--------|---------|
+| **Problem** | XTTS v2 voice cloning requires a 6-second clean audio prompt. If prompts are noisy, have background music, or contain multiple speakers, the cloned voice quality degrades significantly. |
+| **Impact** | Synthetic audio has artifacts, wrong speaker characteristics, or unintelligible output. |
+| **Proposed Solutions** | |
+| Option A | **Curated Prompt Bank**: Manually select and validate high-quality 6-second clips from our YouTube data. Filter for: single speaker, low noise, clear speech. |
+| Option B | **Enhancement Before Prompting**: Run DeepFilterNet on candidate prompts before using them for voice cloning. |
+| Option C | **Synthetic Prompt Verification**: Generate a test phrase with each prompt, manually verify quality before adding to bank. |
+| **Recommendation** | **Option A** (curated bank) + **Option C** (verification) for quality assurance. |
+
+---
+
+### 6.9 GPU Memory Management for Batch Processing
+
+| Aspect | Details |
+|--------|---------|
+| **Problem** | Models like XTTS, Demucs, and Whisper have high GPU memory requirements (8-16GB). Processing long audio files or large batches causes OOM errors. Memory leaks from repeated model loads can accumulate. |
+| **Impact** | Crashes mid-batch. Wasted compute time. |
+| **Proposed Solutions** | |
+| Option A | **Chunk Long Audio**: Split audio >30s into smaller chunks for GPU processing. Concatenate results. |
+| Option B | **Explicit Memory Management**: Call `torch.cuda.empty_cache()` between batches. Use context managers to ensure model unloading. |
+| Option C | **Process Isolation**: Run each GPU task in a subprocess that terminates after completion, ensuring full memory release. |
+| Option D | **Batch Size Tuning**: Dynamically adjust batch size based on available GPU memory. |
+| **Recommendation** | **Option A** (chunking) + **Option B** (cache clearing) + **Option C** (subprocess isolation for long-running jobs). |
+
+---
+
+### 6.10 Reproducibility of Preprocessing Results
+
+| Aspect | Details |
+|--------|---------|
+| **Problem** | Some preprocessing steps have non-deterministic behavior: VAD thresholds can produce slightly different segments on re-runs, TTS generation varies with random seeds, model inference can differ across GPU architectures. |
+| **Impact** | Cannot exactly reproduce a dataset. Experiments are not fully repeatable. |
+| **Proposed Solutions** | |
+| Option A | **Fixed Random Seeds**: Set `torch.manual_seed()`, `numpy.random.seed()`, etc., for all stochastic operations. Document seeds in metadata. |
+| Option B | **Snapshot Outputs**: Store preprocessing outputs with DVC. Re-run only regenerates if code/config changes, not on every run. |
+| Option C | **Hash-Based Caching**: Hash inputs + config; if hash matches cached result, skip reprocessing. |
+| **Recommendation** | **Option A** (fixed seeds) + **Option B** (DVC snapshots) for reproducibility. |
+
+---
+
+## 7. Decision Matrix
 
 Summary of key decisions to make before implementation:
 
@@ -390,16 +539,22 @@ Summary of key decisions to make before implementation:
 | Demucs Usage | Music-detect / Category-tag / Always | Med / Low / High | High / Med / Low | Music-detect |
 | LID Tagging | Word / Phrase / Manual | Low / Med / High | Low / Med / High | Phrase + heuristics |
 | TTS Stitching | Crossfade / Prosody / E2E CS | Low / High / VHigh | Low / High / VHigh | Crossfade short-term |
-| TTS Model | XTTS only / MMS fallback / Multi | Low / Low / Med | Med / Med / High | XTTS + MMS fallback |
+| TTS Model | XTTS / MMS / F5-TTS / Drop Substack | Low / Low / High / None | Med / Med / High / N/A | XTTS + MMS; pursue F5-TTS |
+| **Substack Pipeline** | **Keep / Drop / Defer** | **High / None / Low** | **Med / None / None** | **Defer until TTS solved** |
 | Pipeline Orchestration | DB State / DVC / Task Queue | Low / Med / High | - | DB State + DVC |
 | Validation | ASR check / Confidence / Human | Med / Low / High | High / Med / VHigh | All three layered |
+| Dependency Management | Separate envs / Docker / Pin | Med / High / Low | - | Docker for isolation |
+| Data Licensing | Research-only / Fair use / Permission | Low / Low / High | - | Research-only + docs |
 
 ---
 
-## Next Steps
+## 8. Next Steps
 
 1. **Team Review**: Discuss this document and mark decisions in the matrix.
 2. **Priority Ordering**: Decide which problems to solve in v1 vs. defer to v2.
-3. **Spike/POC**: For uncertain areas (MFA+CS, TTS stitching), run small experiments before full implementation.
-4. **Schema Updates**: Add any new fields identified (e.g., `alignment_confidence`, `snr_db`, `is_cs`) to `02_schema_v2.sql`.
-5. **Implementation**: Proceed with `src/preprocessing/` module creation per the agreed plan.
+3. **Critical Decision: Substack Pipeline**: Decide whether to keep, drop, or defer the Text-First (Substack → TTS) pipeline based on TTS model availability.
+4. **F5-TTS Outreach**: If pursuing TTS, email F5-TTS authors for model access in parallel with other work.
+5. **Spike/POC**: For uncertain areas (MFA+CS, TTS stitching quality), run small experiments before full implementation.
+6. **Schema Updates**: Add any new fields identified (e.g., `alignment_confidence`, `snr_db`, `is_cs`, `content_warning`) to `02_schema_v2.sql`.
+7. **Dependency Audit**: Test dependency compatibility for MFA + Whisper + XTTS stack. Document working versions or containerization strategy.
+8. **Implementation**: Proceed with `src/preprocessing/` module creation per the agreed plan.
