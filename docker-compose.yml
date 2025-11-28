@@ -35,7 +35,7 @@ services:
     environment:
       - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
       - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/files
-      # PostgreSQL backend for Label Studio (uses same postgres container)
+      # PostgreSQL backend for Label Studio
       - DJANGO_DB=default
       - POSTGRE_NAME=label_studio
       - POSTGRE_USER=admin
@@ -109,5 +109,3 @@ services:
       - AUDIO_SERVER_URL=http://audio_server:80
       - LABEL_STUDIO_URL=http://label_studio:8080
       - LABEL_STUDIO_API_KEY=${LABEL_STUDIO_API_KEY:-}
-
-# Named volumes (database_data is unused - postgres uses bind mount ./database_data)
