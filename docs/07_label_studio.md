@@ -65,7 +65,7 @@ Label Studio provides the human annotation interface for:
     ┌──────┴──────┐         ┌──────────────┐   │    ┌──────────────┐
     │  Webhook    │◄────────│  Label       │───┘    │  nginx       │
     │  Server     │ callback│  Studio      │◄──────►│  Audio       │
-    │  (FastAPI)  │         │  :8080       │  audio │  Server :8081│
+    │  (FastAPI)  │         │  :8085       │  audio │  Server :8081│
     └─────────────┘         └──────────────┘        └──────────────┘
 ```
 
@@ -74,7 +74,7 @@ Label Studio provides the human annotation interface for:
 | Service | Container | Port | Database |
 |---------|-----------|------|----------|
 | `postgres` | factory_ledger | 5432 | data_factory + label_studio |
-| `label_studio` | label_studio | 8080 | Uses label_studio DB |
+| `label_studio` | label_studio | 8085 | Uses label_studio DB |
 | `audio_server` | audio_server | 8081 | - |
 | `sync_service` | sync_service | - | Uses data_factory DB |
 | `ingestion` | factory_ingestion | - | Uses data_factory DB |
@@ -95,7 +95,7 @@ Key variables:
 
 ```bash
 # Label Studio
-LABEL_STUDIO_URL=http://localhost:8080
+LABEL_STUDIO_URL=http://localhost:8085
 LABEL_STUDIO_API_KEY=your_api_key_here
 LS_PROJECT_TRANSCRIPT=1
 LS_PROJECT_TRANSLATION=2
@@ -128,7 +128,7 @@ docker-compose logs -f sync_service
 
 ### 3.3 Initial Label Studio Setup
 
-1. **Access Label Studio**: http://localhost:8080
+1. **Access Label Studio**: http://localhost:8085
 2. **Create admin account** on first launch
 3. **Get API key**: Settings → Account & Settings → Access Token
 4. **Update `.env`** with your API key

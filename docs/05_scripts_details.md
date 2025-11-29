@@ -195,7 +195,7 @@ python src/label_studio_sync.py status
 #### Environment Variables
 
 ```bash
-LABEL_STUDIO_URL=http://localhost:8080
+LABEL_STUDIO_URL=http://localhost:8085
 LABEL_STUDIO_API_KEY=your_api_key
 LS_PROJECT_TRANSCRIPT=1
 LS_PROJECT_TRANSLATION=2

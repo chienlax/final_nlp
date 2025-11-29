@@ -26,7 +26,7 @@ services:
     container_name: label_studio
     restart: always
     ports:
-      - "8080:8080"
+      - "8085:8080"
     volumes:
       # Mount templates for labeling interfaces
       - ./label_studio_templates:/label-studio/templates:ro
@@ -78,6 +78,7 @@ services:
     volumes:
       - .:/app
       - ./data:/app/data
+      - ./.secrets:/app/.secrets:ro
       - ~/.cache/pydrive2fs:/root/.cache/pydrive2fs
     environment:
       - DATABASE_URL=postgresql://admin:secret_password@postgres:5432/data_factory
@@ -85,6 +86,7 @@ services:
       - AUDIO_SERVER_URL=http://audio_server:80
       - LABEL_STUDIO_URL=http://label_studio:8080
       - LABEL_STUDIO_API_KEY=${LABEL_STUDIO_API_KEY:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/.secrets/client_secret_952625721816-dc9kkk15i2leugvjl8f885rqkut975bo.apps.googleusercontent.com.json
     command: python src/sync_daemon.py
 
   # --- 1.3 Ingestion Service ---
@@ -101,11 +103,14 @@ services:
       - .:/app
       # Bind Mount 2: The Data (so downloaded files appear on your host disk)
       - ./data:/app/data
-      # Bind Mount 3: Google Auth (for DVC)
-      - ~/.cache/pydrive2fs:/root/.cache/pydrive2fs 
+      # Bind Mount 3: Secrets (for DVC/Google Drive OAuth)
+      - ./.secrets:/app/.secrets:ro
+      # Bind Mount 4: Google Auth (for DVC)
+      - ~/.cache/pydrive2fs:/root/.cache/pydrive2fs
     environment:
       # Connection string for the Python script
       - DATABASE_URL=postgresql://admin:secret_password@postgres:5432/data_factory
       - AUDIO_SERVER_URL=http://audio_server:80
       - LABEL_STUDIO_URL=http://label_studio:8080
       - LABEL_STUDIO_API_KEY=${LABEL_STUDIO_API_KEY:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/.secrets/client_secret_952625721816-dc9kkk15i2leugvjl8f885rqkut975bo.apps.googleusercontent.com.json

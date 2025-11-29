@@ -79,7 +79,7 @@ We use Docker Compose to manage PostgreSQL, Label Studio, and supporting service
 
 ### 3. Label Studio Setup
 
-1.  **Access Label Studio**: http://localhost:8080
+1.  **Access Label Studio**: http://localhost:8085
 2.  **Create admin account** on first launch
 3.  **Get API key**: Settings → Account & Settings → Access Token
 4.  **Update `.env`** with `LABEL_STUDIO_API_KEY=your_key`
@@ -144,7 +144,7 @@ project_root/
 | Service | Port | Purpose |
 |---------|------|---------|
 | PostgreSQL | 5432 | Database (data_factory + label_studio) |
-| Label Studio | 8080 | Annotation UI |
+| Label Studio | 8085 | Annotation UI |
 | Audio Server | 8081 | Serve audio files |
 | Webhook Server | 8000 | Label Studio callbacks (if running locally) |
 
@@ -233,7 +233,7 @@ For new team members:
 - [ ] Copy `.env.example` to `.env`
 - [ ] Run `docker-compose up -d --build`
 - [ ] Wait for all services to be healthy
-- [ ] Create Label Studio account at http://localhost:8080
+- [ ] Create Label Studio account at http://localhost:8085
 - [ ] Get API key and update `.env`
 - [ ] Run `dvc pull` to get data
 

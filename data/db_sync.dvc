@@ -1,0 +1,6 @@
+outs:
+- md5: 78ea108300fba8f4caad4f06c1a11985.dir
+  size: 27474
+  nfiles: 5
+  hash: md5
+  path: db_sync

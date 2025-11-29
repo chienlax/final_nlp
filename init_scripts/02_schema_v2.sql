@@ -1052,3 +1052,77 @@ COMMENT ON FUNCTION set_gold_standard IS 'Mark sample as gold standard for QC';
 COMMENT ON VIEW v_annotator_accuracy IS 'Annotator accuracy against gold standard samples';
 COMMENT ON VIEW v_gold_standard_samples IS 'List of gold standard samples';
 COMMENT ON VIEW v_sync_status IS 'DVC sync and lock status for all samples';
+
+-- =============================================================================
+-- TABLE: sync_conflicts
+-- Purpose: Track sync conflicts for review (last-write-wins with audit trail)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+    conflict_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- Reference to affected sample (nullable for non-sample conflicts)
+    sample_id UUID REFERENCES samples(sample_id) ON DELETE SET NULL,
+    
+    -- Conflict details
+    table_name VARCHAR(100) NOT NULL,     -- Which table had the conflict
+    local_data JSONB NOT NULL,            -- Local version before overwrite
+    remote_data JSONB NOT NULL,           -- Remote version that won
+    winner VARCHAR(20) NOT NULL DEFAULT 'remote', -- 'local' or 'remote'
+    
+    -- Resolution tracking
+    reviewed_at TIMESTAMPTZ,              -- When conflict was reviewed
+    reviewed_by VARCHAR(255),             -- Who reviewed it
+    resolution_notes TEXT,                -- Notes from reviewer
+    
+    -- Audit
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Index for finding unresolved conflicts
+CREATE INDEX idx_sync_conflicts_unresolved ON sync_conflicts(created_at DESC)
+WHERE reviewed_at IS NULL;
+
+-- Index for finding conflicts by sample
+CREATE INDEX idx_sync_conflicts_sample ON sync_conflicts(sample_id, created_at DESC)
+WHERE sample_id IS NOT NULL;
+
+-- View: Unresolved sync conflicts for review
+CREATE OR REPLACE VIEW v_unresolved_conflicts AS
+SELECT
+    sc.conflict_id,
+    sc.sample_id,
+    sc.table_name,
+    sc.local_data,
+    sc.remote_data,
+    sc.winner,
+    sc.created_at,
+    s.external_id AS sample_external_id,
+    s.audio_file_path,
+    s.processing_state
+FROM sync_conflicts sc
+LEFT JOIN samples s ON sc.sample_id = s.sample_id
+WHERE sc.reviewed_at IS NULL
+ORDER BY sc.created_at DESC;
+
+-- Function: Mark conflict as reviewed
+CREATE OR REPLACE FUNCTION resolve_sync_conflict(
+    p_conflict_id UUID,
+    p_reviewed_by VARCHAR(255),
+    p_resolution_notes TEXT DEFAULT NULL
+) RETURNS BOOLEAN AS $$
+BEGIN
+    UPDATE sync_conflicts
+    SET reviewed_at = NOW(),
+        reviewed_by = p_reviewed_by,
+        resolution_notes = p_resolution_notes
+    WHERE conflict_id = p_conflict_id
+      AND reviewed_at IS NULL;
+    
+    RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON TABLE sync_conflicts IS 'Tracks DVC sync conflicts for audit and review';
+COMMENT ON VIEW v_unresolved_conflicts IS 'Unresolved sync conflicts pending review';
+COMMENT ON FUNCTION resolve_sync_conflict IS 'Mark a sync conflict as reviewed';

@@ -57,22 +57,7 @@ def get_transcript_info(video_id: str) -> Dict[str, Any]:
         # Try to find English transcript (manual first, then auto-generated)
         transcript = None
 
-        # Priority 1: Manual English transcript
-        try:
-            transcript = transcript_list.find_manually_created_transcript(['en'])
-            result['subtitle_type'] = 'Manual'
-        except NoTranscriptFound:
-            pass
-
-        # Priority 2: Auto-generated English transcript
-        if transcript is None:
-            try:
-                transcript = transcript_list.find_generated_transcript(['en'])
-                result['subtitle_type'] = 'Auto-generated'
-            except NoTranscriptFound:
-                pass
-
-        # Priority 3: Try Vietnamese transcripts
+        # Priority 1: Try Vietnamese transcripts
         if transcript is None:
             try:
                 transcript = transcript_list.find_manually_created_transcript(['vi'])
@@ -83,6 +68,21 @@ def get_transcript_info(video_id: str) -> Dict[str, Any]:
         if transcript is None:
             try:
                 transcript = transcript_list.find_generated_transcript(['vi'])
+                result['subtitle_type'] = 'Auto-generated'
+            except NoTranscriptFound:
+                pass
+
+        # Priority 2: Manual English transcript
+        try:
+            transcript = transcript_list.find_manually_created_transcript(['en'])
+            result['subtitle_type'] = 'Manual'
+        except NoTranscriptFound:
+            pass
+
+        # Priority 3: Auto-generated English transcript
+        if transcript is None:
+            try:
+                transcript = transcript_list.find_generated_transcript(['en'])
                 result['subtitle_type'] = 'Auto-generated'
             except NoTranscriptFound:
                 pass
