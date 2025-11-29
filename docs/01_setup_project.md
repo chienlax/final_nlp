@@ -1,245 +1,230 @@
 # 01. Project Setup
 
 ## Overview
-This document outlines the setup process for the Vietnamese-English Code-Switching Speech Translation project. The project uses a **Docker-based** architecture for data ingestion, storage, and annotation.
+
+This document outlines the setup process for the Vietnamese-English Code-Switching Speech Translation project. The project uses a **Docker-based** architecture for data ingestion, preprocessing, and annotation.
 
 **Key Features:**
-- PostgreSQL backend for both `data_factory` (samples) and `label_studio` (annotations)
-- All data persists in `./database_data/` - survives container restarts
+- YouTube-only pipeline with mandatory transcripts
+- 3-stage human review: Transcript → Segment → Translation
+- WhisperX alignment, Gemini translation, DeepFilterNet denoising
+- PostgreSQL backend for both `data_factory` and `label_studio`
 - DVC with Google Drive for large file synchronization
 
 ## Prerequisites
+
 - **Docker Desktop** (or Docker Engine + Compose)
-- **Python 3.11+** (for local development and IDE support)
-- **Git**
-- **DVC credentials** (Google Drive service account - get from project owner)
+- **Python 3.10+** (for local development)
+- **NVIDIA GPU** with CUDA 12.4+ (for preprocessing)
+- **Git** and **DVC**
+- **DVC credentials** (Google Drive service account)
 
 ## Installation
 
 ### 1. Environment Setup
 
-1.  **Clone the repository**:
-    ```bash
-    git clone <repo_url>
-    cd final_nlp
-    ```
+1. **Clone the repository**:
+   ```bash
+   git clone <repo_url>
+   cd final_nlp
+   ```
 
-2.  **Create a Local Virtual Environment** (Optional but recommended for IDEs):
-    ```bash
-    python -m venv .venv
-    .venv\Scripts\Activate
-    pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
-    ```
+2. **Create a Local Virtual Environment**:
+   ```bash
+   python -m venv .venv
+   .venv\Scripts\Activate  # Windows
+   # source .venv/bin/activate  # Linux/Mac
+   pip install -r requirements.txt
+   ```
 
-3.  **Copy environment configuration**:
-    ```bash
-    cp .env.example .env
-    # Edit .env with your settings (Label Studio API key, etc.)
-    ```
+3. **Copy environment configuration**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your settings
+   ```
 
-4.  **Set up DVC credentials** (for team members):
-    ```powershell
-    # Create the credentials directory
-    mkdir -Force "$HOME\.cache\pydrive2fs"
-    
-    # Copy credentials from project owner
-    Copy-Item "path\to\shared\credentials.json" "$HOME\.cache\pydrive2fs\credentials.json"
-    ```
+4. **Set up DVC credentials**:
+   ```powershell
+   mkdir -Force "$HOME\.cache\pydrive2fs"
+   Copy-Item "path\to\shared\credentials.json" "$HOME\.cache\pydrive2fs\credentials.json"
+   ```
 
 ### 2. Infrastructure (Docker)
 
-We use Docker Compose to manage PostgreSQL, Label Studio, and supporting services.
+1. **Start Core Services**:
+   ```bash
+   docker-compose up -d postgres label_studio audio_server
+   ```
+   
+   Services:
+   - **`postgres`**: PostgreSQL on port `5432`
+   - **`label_studio`**: Annotation UI on port `8085`
+   - **`audio_server`**: nginx audio server on port `8081`
 
-1.  **Start the Services**:
-    ```bash
-    docker-compose up -d --build
-    ```
-    
-    Services started:
-    - **`postgres`**: PostgreSQL database on port `5432` (hosts both `data_factory` and `label_studio` databases)
-    - **`label_studio`**: Annotation interface on port `8080` (uses PostgreSQL backend)
-    - **`audio_server`**: nginx audio file server on port `8081`
-    - **`sync_service`**: DVC sync daemon (5-minute interval)
-    - **`ingestion`**: Python environment for data processing
+2. **Verify Status**:
+   ```bash
+   docker-compose ps
+   ```
 
-2.  **Verify Status**:
-    ```bash
-    docker-compose ps
-    ```
-    
-    All services should show "healthy" or "running" status.
+3. **Database Initialization**:
+   Schemas are applied automatically on first start:
+   - `00_create_label_studio_db.sql` - Creates Label Studio database
+   - `01_schema.sql` - Current schema with segments and translations
 
-3.  **Database Initialization**:
-    The database schemas are applied **automatically** on first start:
-    - `00_create_label_studio_db.sql` - Creates Label Studio database
-    - `01_schema.sql` - Legacy schema (deprecated)
-    - `02_schema_v2.sql` - Complete schema with Label Studio integration
-    
-    > **Note:** No manual schema application needed! All schemas run automatically when `database_data/` is empty.
+### 3. GPU Preprocessing Container
 
-### 3. Label Studio Setup
+For WhisperX alignment and DeepFilterNet denoising:
 
-1.  **Access Label Studio**: http://localhost:8085
-2.  **Create admin account** on first launch
-3.  **Get API key**: Settings → Account & Settings → Access Token
-4.  **Update `.env`** with `LABEL_STUDIO_API_KEY=your_key`
-5.  **Create projects** using templates from `label_studio_templates/`
+```bash
+# Build preprocessing container
+docker build -f Dockerfile.preprocess -t nlp-preprocess .
 
-See [07_label_studio.md](07_label_studio.md) for detailed setup instructions.
+# Run with GPU
+docker run --gpus all -v $(pwd):/app nlp-preprocess python src/preprocessing/whisperx_align.py --batch
+```
 
-### 4. Data Management (DVC)
+### 4. Label Studio Setup
 
-Large files (audio/raw text) are managed via DVC with Google Drive as remote.
+1. **Access Label Studio**: http://localhost:8085
+2. **Create admin account** on first launch
+3. **Get API key**: Settings → Account & Settings → Access Token
+4. **Update `.env`** with `LABEL_STUDIO_API_KEY=your_key`
+5. **Create 3 projects** using templates from `label_studio_templates/`:
+   - Transcript Correction (Round 1)
+   - Segment Review (Round 2)
+   - Translation Review (Round 3)
 
-1.  **Pull Data**:
-    ```bash
-    dvc pull
-    ```
+See [07_label_studio.md](07_label_studio.md) for detailed setup.
 
-2.  **Automatic Sync**: The `sync_service` container pulls every 5 minutes.
+### 5. Data Management (DVC)
+
+```bash
+# Pull existing data
+dvc pull
+
+# After adding new data
+dvc add data/raw
+git add data/raw.dvc
+git commit -m "Add new data"
+dvc push
+```
 
 ## Project Structure
 
-```text
-project_root/
-│
-├── data/                   # DVC-managed data storage
-│   ├── raw/                # Raw downloads (audio, text)
-│   ├── reviewed/           # Human-reviewed exports
-│   └── raw.dvc             # DVC tracking file
-│
-├── database_data/          # PostgreSQL data volume (Do not commit)
-│                           # Contains both data_factory and label_studio DBs
-│
-├── init_scripts/           # SQL scripts for DB initialization (run alphabetically)
-│   ├── 00_create_label_studio_db.sql  # Creates label_studio database
-│   ├── 01_schema.sql                  # Legacy schema (deprecated)
-│   └── 02_schema_v2.sql               # Complete schema with Label Studio integration
-│
-├── src/                    # Source code
-│   ├── ingest_youtube.py   # YouTube ingestion
-│   ├── ingest_substack.py  # Substack ingestion
-│   ├── label_studio_sync.py # Label Studio sync
-│   ├── sync_daemon.py      # DVC sync service
-│   ├── export_reviewed.py  # Export reviewed data
-│   ├── webhook_server.py   # FastAPI webhook handler
-│   └── utils/              # Helper functions
-│
-├── label_studio_templates/ # Labeling interface XML configs
-│   ├── transcript_correction.xml
-│   ├── translation_review.xml
-│   └── audio_segmentation.xml
-│
-├── docs/                   # Documentation
-├── docker-compose.yml      # Service orchestration
-├── Dockerfile.ingest       # Ingestion container definition
-├── nginx.conf              # Audio server configuration
-├── dvc.yaml                # DVC pipeline definition
-├── .env.example            # Environment template
-└── requirements.txt        # Python dependencies
+```
+final_nlp/
+├── data/
+│   ├── raw/                    # DVC-tracked raw data
+│   │   ├── audio/              # Full video audio (16kHz mono WAV)
+│   │   ├── text/               # Transcripts (JSON with timestamps)
+│   │   └── metadata.jsonl
+│   ├── segments/               # Segmented audio chunks
+│   │   └── {sample_id}/
+│   └── teencode.txt            # Vietnamese teencode dictionary
+├── src/
+│   ├── ingest_youtube.py       # YouTube ingestion
+│   ├── label_studio_sync.py    # Label Studio integration
+│   ├── preprocessing/          # Audio processing pipeline
+│   │   ├── whisperx_align.py   # WhisperX forced alignment
+│   │   ├── segment_audio.py    # Audio segmentation (10-30s)
+│   │   ├── translate.py        # Gemini translation
+│   │   └── denoise_audio.py    # DeepFilterNet denoising
+│   └── utils/
+│       ├── data_utils.py       # Database utilities
+│       ├── video_downloading_utils.py
+│       ├── transcript_downloading_utils.py
+│       └── text_utils.py
+├── init_scripts/
+│   ├── 00_create_label_studio_db.sql
+│   └── 01_schema.sql           # Current schema
+├── label_studio_templates/
+│   ├── transcript_correction.xml   # Round 1
+│   ├── segment_review.xml          # Round 2
+│   └── translation_review.xml      # Round 3
+├── Dockerfile.preprocess       # GPU preprocessing container
+├── docker-compose.yml
+└── requirements.txt
 ```
 
 ## Service Ports
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| PostgreSQL | 5432 | Database (data_factory + label_studio) |
+| PostgreSQL | 5432 | Database |
 | Label Studio | 8085 | Annotation UI |
 | Audio Server | 8081 | Serve audio files |
-| Webhook Server | 8000 | Label Studio callbacks (if running locally) |
 
 ## Database Access
 
-Two databases in the same PostgreSQL instance:
+```bash
+# Connect to database
+docker exec -it postgres_nlp psql -U admin -d data_factory
 
-| Database | Purpose | User |
-|----------|---------|------|
-| `data_factory` | Samples, transcripts, translations | `admin` |
-| `label_studio` | Label Studio internal data | `admin` |
+# View pipeline stats
+SELECT * FROM v_pipeline_stats;
 
-**Connection details:**
-- **Host**: `localhost` (mapped from container)
-- **Port**: `5432`
-- **User**: `admin`
-- **Password**: `secret_password`
-
-## ⚠️ Important: Data Persistence
-
-### What persists where:
-| Data | Location | Persists after `docker-compose down`? |
-|------|----------|--------------------------------------|
-| PostgreSQL (samples + Label Studio) | `./database_data/` | ✅ Yes |
-| Audio/text files | `./data/` | ✅ Yes |
-| DVC cache | `~/.cache/pydrive2fs/` | ✅ Yes |
-
-### Clean Reset (DANGER!)
-If you need to completely reset the database:
-
-```powershell
-# WARNING: This deletes ALL data including Label Studio accounts/projects!
-docker-compose down
-Remove-Item -Recurse -Force .\database_data\*
-docker-compose up -d
+# View sample overview
+SELECT * FROM v_sample_overview LIMIT 10;
 ```
 
-After a clean reset, you'll need to:
-1. Re-create your Label Studio account
-2. Re-create Label Studio projects
-3. Re-import any projects/tasks
+## Environment Variables
 
-### Safe Restart (preserves data)
-```powershell
-docker-compose down
-docker-compose up -d
+```bash
+# Database
+DATABASE_URL=postgresql://admin:secret_password@localhost:5432/data_factory
+
+# Label Studio
+LABEL_STUDIO_URL=http://localhost:8085
+LABEL_STUDIO_API_KEY=your_api_key
+
+# Gemini API (multiple keys for rotation)
+GEMINI_API_KEY_1=your_first_key
+GEMINI_API_KEY_2=your_second_key
+GEMINI_API_KEY_3=your_third_key
+
+# Audio Server
+AUDIO_SERVER_URL=http://localhost:8081
+```
+
+## Quick Start Commands
+
+```bash
+# 1. Start services
+docker-compose up -d postgres label_studio audio_server
+
+# 2. Ingest YouTube videos
+python src/ingest_youtube.py https://www.youtube.com/@SomeChannel
+
+# 3. Run preprocessing (requires GPU)
+docker run --gpus all -v $(pwd):/app nlp-preprocess \
+    python src/preprocessing/whisperx_align.py --batch --limit 10
+
+# 4. Push to Label Studio for review
+python src/label_studio_sync.py push --task-type transcript_correction
 ```
 
 ## Troubleshooting
 
 ### PowerShell: Running SQL scripts manually
 
-PowerShell doesn't support `<` redirection. Use one of these methods:
-
-**Method 1: Get-Content pipe (recommended)**
 ```powershell
-Get-Content init_scripts\02_schema_v2.sql | docker exec -i factory_ledger psql -U admin -d data_factory
-```
-
-**Method 2: Copy and execute**
-```powershell
-docker cp init_scripts\02_schema_v2.sql factory_ledger:/tmp/schema.sql
-docker exec factory_ledger psql -U admin -d data_factory -f /tmp/schema.sql
-```
-
-### Label Studio not connecting to PostgreSQL
-Check that the postgres container is healthy first:
-```powershell
-docker-compose ps
-docker logs factory_ledger
+Get-Content init_scripts\01_schema.sql | docker exec -i postgres_nlp psql -U admin -d data_factory
 ```
 
 ### DVC pull fails
-Ensure credentials are in place:
+
 ```powershell
 Test-Path "$HOME\.cache\pydrive2fs\credentials.json"
 ```
 
-## Team Onboarding Checklist
+### GPU not detected
 
-For new team members:
-
-- [ ] Clone repository
-- [ ] Get DVC credentials from project owner
-- [ ] Place credentials at `~/.cache/pydrive2fs/credentials.json`
-- [ ] Copy `.env.example` to `.env`
-- [ ] Run `docker-compose up -d --build`
-- [ ] Wait for all services to be healthy
-- [ ] Create Label Studio account at http://localhost:8085
-- [ ] Get API key and update `.env`
-- [ ] Run `dvc pull` to get data
+```bash
+docker run --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+```
 
 ## Related Documentation
 
-- [02. Project Progress](02_project_progress.md) - Current implementation status
-- [04. Workflow](04_workflow.md) - Pipeline workflows
-- [06. Database Design](06_database_design.md) - Schema reference
-- [07. Label Studio](07_label_studio.md) - Annotation setup and PostgreSQL backend
+- [04_workflow.md](04_workflow.md) - Pipeline workflow
+- [06_database_design.md](06_database_design.md) - Schema reference
+- [07_label_studio.md](07_label_studio.md) - Annotation setup

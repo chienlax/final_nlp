@@ -1,193 +1,206 @@
-# 02. Project Progress & Architecture Status
+# 02. Project Progress
 
-**Update:** December 2025 (Schema V2)
+**Last Updated:** November 2024
 
-## 1. Infrastructure & Environment
+## Current Status: YouTube-Only Pipeline with Human Review
 
-### Containerization
-Docker-based workflow for consistent environments:
-- **`docker-compose.yml`**: Orchestrates PostgreSQL + ingestion container.
-- **`Dockerfile.ingest`**: Environment for data ingestion tasks.
-    - Includes: `ffmpeg`, `yt-dlp`, `youtube-transcript-api`, `psycopg2-binary`, `dvc[gdrive]`.
+The project has been simplified to focus exclusively on YouTube videos with transcripts, implementing a human-in-the-loop workflow for quality assurance.
 
-### Database Architecture (V2)
+---
+
+## 1. Architecture Overview
+
+### Pipeline Flow
+
+```
+RAW → TRANSCRIPT_REVIEW → TRANSCRIPT_VERIFIED → ALIGNED → SEGMENTED
+    → SEGMENT_REVIEW → SEGMENT_VERIFIED → TRANSLATED
+    → TRANSLATION_REVIEW → DENOISED → FINAL
+```
+
+### Key Design Decisions
+
+1. **YouTube-only source** - Removed Substack/TTS pipeline for simplicity
+2. **Transcript required** - Only process videos with manual or auto-generated subtitles
+3. **Segment-level processing** - 10-30s audio chunks for training
+4. **3-stage human review** - Transcript → Segment → Translation verification
+5. **Deferred augmentation** - Apply at training time, not preprocessing
+
+---
+
+## 2. Infrastructure Status
+
+### Containerization ✅
+
+| Container | Purpose | Status |
+|-----------|---------|--------|
+| `Dockerfile.ingest` | Data ingestion | ✅ Complete |
+| `Dockerfile.preprocess` | GPU preprocessing | ✅ Complete |
+| `docker-compose.yml` | Service orchestration | ✅ Complete |
+
+### Database ✅
+
 - **Engine:** PostgreSQL 15
-- **Schema:** Multi-table design supporting dual-modality pipelines
-- **Init Scripts:** `init_scripts/02_schema_v2.sql`
+- **Schema:** `init_scripts/01_schema.sql`
+- **Key tables:** `samples`, `segments`, `transcript_revisions`, `translation_revisions`, `segment_translations`
 
-#### Core Tables
-| Table | Purpose |
-|-------|---------|
-| `sources` | Origin tracking (YouTube channels, Substack blogs) |
-| `samples` | Central sample registry with processing state |
-| `transcript_revisions` | Versioned transcripts (original → MFA → human-corrected) |
-| `translation_revisions` | Versioned translations (LLM → human-corrected) |
-| `annotations` | Label Studio task tracking |
-| `sample_lineage` | Parent-child relationships (segments from full audio) |
-| `processing_logs` | Audit trail for all processing steps |
+### Data Management ✅
 
-#### ENUMs
-- `source_type`: youtube, substack, podcast, other
-- `processing_state`: RAW, ALIGNED, SEGMENTED, VAD_SEGMENTED, ENHANCED, TRANSLATED, REVIEWED
-- `content_type`: audio, text, audio_text
-- `annotation_task`: transcript_correction, translation_review, audio_segmentation, quality_check
-- `annotation_status`: pending, in_progress, completed, rejected
+- **DVC:** Google Drive remote for raw data
+- **Audio format:** 16kHz mono WAV
+- **Segment storage:** `data/segments/{sample_id}/`
 
-#### Key Views
-- `v_sample_current_state`: Latest transcript/translation for each sample
-- `v_review_queue`: Samples ready for human review
-- `v_pipeline_stats`: Processing statistics by state and type
+---
 
-## 2. Data Management (DVC)
+## 3. Scripts Status
 
-- **`data/raw.dvc`**: Tracks the raw data directory.
-- **`data/raw/`**: Local storage for raw audio/text data.
-    - `data/raw/audio/` - 16kHz mono WAV files
-    - `data/raw/text/` - Transcript text files
-    - `data/raw/metadata.jsonl` - Batch metadata file
-- **`data/teencode.txt`**: Vietnamese teencode dictionary for text normalization
-- **`data/substack_downloads/`**: Downloaded Substack articles (Markdown)
+### Ingestion ✅
 
-## 3. Pipeline Architecture
-
-### Audio-First Pipeline (YouTube)
-```
-YouTube URL → Download Audio (16kHz WAV) → Download Transcript
-    ↓
-samples (content_type='audio', pipeline_type='youtube')
-    ↓
-[If has transcript] → MFA Alignment → ALIGNED
-    ↓
-Silero VAD Segmentation → VAD_SEGMENTED
-    ↓
-DeepFilterNet Enhancement → ENHANCED
-    ↓
-Label Studio Review → REVIEWED
-    ↓
-LLM Translation → TRANSLATED
-```
-
-### Text-First Pipeline (Substack)
-```
-Substack URL → sbstck-dl Download → Markdown Files
-    ↓
-samples (content_type='text', pipeline_type='substack')
-    ↓
-Teencode Normalization → NORMALIZED (via transcript_revisions)
-    ↓
-CS Chunk Extraction → CS_CHUNKED
-    ↓
-TTS Generation (XTTS v2) → TTS_GENERATED
-    ↓
-Label Studio Review → REVIEWED
-    ↓
-LLM Translation → TRANSLATED
-```
-
-## 4. Codebase Status
-
-### Ingestion Scripts (`src/`)
 | Script | Purpose | Status |
 |--------|---------|--------|
-| `ingest_youtube.py` | YouTube audio ingestion orchestrator | ✅ Updated for V2 schema |
-| `ingest_substack.py` | Substack article ingestion orchestrator | ✅ New |
-| `label_studio_sync.py` | Push/pull annotations from Label Studio | ✅ Updated with HTTP audio URLs |
-| `sync_daemon.py` | DVC sync service (5-min interval) | ✅ New |
-| `export_reviewed.py` | Export reviewed samples to DVC | ✅ New |
-| `webhook_server.py` | FastAPI webhook handler for Label Studio | ✅ New |
+| `ingest_youtube.py` | YouTube video ingestion | ✅ Complete |
 
-### Utilities (`src/utils/`)
-| Module | Functions | Status |
-|--------|-----------|--------|
-| `data_utils.py` | `insert_sample()`, `insert_transcript_revision()`, `insert_translation_revision()`, `get_review_queue()`, `transition_state()`, `log_processing()` | ✅ Rewritten for V2 |
-| `video_downloading_utils.py` | YouTube audio download (16kHz WAV) | ✅ Existing |
-| `transcript_downloading_utils.py` | YouTube transcript download | ✅ Existing |
-| `substack_utils.py` | `run_downloader()`, `list_downloaded_articles()`, `extract_blog_slug()` | ✅ New |
-| `text_utils.py` | `load_teencode_dict()`, `normalize_text()`, `extract_cs_chunks()`, `contains_code_switching()` | ✅ New |
+### Preprocessing ✅
 
-## 5. Label Studio Integration
+| Script | Purpose | Status |
+|--------|---------|--------|
+| `preprocessing/whisperx_align.py` | WhisperX forced alignment | ✅ Complete |
+| `preprocessing/segment_audio.py` | Audio segmentation (10-30s) | ✅ Complete |
+| `preprocessing/translate.py` | Gemini translation with key rotation | ✅ Complete |
+| `preprocessing/denoise_audio.py` | DeepFilterNet noise removal | ✅ Complete |
 
-Full Label Studio integration is now operational. See [07_label_studio.md](07_label_studio.md) for details.
+### Utilities ✅
 
-### Docker Services
-| Service | Port | Purpose |
-|---------|------|---------|
-| `label_studio` | 8080 | Annotation interface |
-| `audio_server` | 8081 | nginx audio file server |
-| `sync_service` | - | DVC sync (5-min interval) |
+| Module | Purpose | Status |
+|--------|---------|--------|
+| `utils/data_utils.py` | Database operations | ✅ Complete |
+| `utils/video_downloading_utils.py` | YouTube audio download | ✅ Complete |
+| `utils/transcript_downloading_utils.py` | YouTube transcript download | ✅ Complete |
+| `utils/text_utils.py` | Text processing | ✅ Complete |
 
-### Environment Variables
+### Label Studio Integration ⚠️
+
+| Script | Purpose | Status |
+|--------|---------|--------|
+| `label_studio_sync.py` | Push/pull annotations | ⚠️ Needs update for segments |
+
+---
+
+## 4. Label Studio Templates
+
+| Template | Purpose | Status |
+|----------|---------|--------|
+| `transcript_correction.xml` | Round 1: Transcript review | ✅ Complete |
+| `segment_review.xml` | Round 2: Segment verification | ✅ Complete |
+| `translation_review.xml` | Round 3: Translation review | ✅ Complete |
+
+---
+
+## 5. Processing States
+
+| State | Description | Human Review? |
+|-------|-------------|---------------|
+| RAW | Just ingested | No |
+| TRANSCRIPT_REVIEW | In Label Studio for transcript correction | **Yes** |
+| TRANSCRIPT_VERIFIED | Transcript reviewed | No |
+| ALIGNED | WhisperX alignment complete | No |
+| SEGMENTED | Audio segmented into chunks | No |
+| SEGMENT_REVIEW | In Label Studio for segment verification | **Yes** |
+| SEGMENT_VERIFIED | Segments verified | No |
+| TRANSLATED | Gemini translation complete | No |
+| TRANSLATION_REVIEW | In Label Studio for translation review | **Yes** |
+| DENOISED | DeepFilterNet processing complete | No |
+| FINAL | Ready for training export | No |
+| REJECTED | Failed QC | No |
+
+---
+
+## 6. Technical Stack
+
+### Preprocessing
+
+| Tool | Purpose | Version |
+|------|---------|---------|
+| WhisperX | Forced alignment | 3.7.4 |
+| DeepFilterNet | Noise removal | Latest |
+| Gemini API | Translation | gemini-1.5-flash |
+
+### Vietnamese Alignment
+
+- **Model:** `nguyenvulebinh/wav2vec2-base-vi-vlsp2020`
+- **Framework:** WhisperX with HuggingFace backend
+
+### GPU Requirements
+
+| Script | Min VRAM | Recommended |
+|--------|----------|-------------|
+| whisperx_align.py | 4GB | 8GB |
+| denoise_audio.py | 2GB | 4GB |
+
+---
+
+## 7. Database Views
+
+| View | Purpose |
+|------|---------|
+| `v_pipeline_stats` | Processing statistics by state |
+| `v_sample_overview` | Sample details with current state |
+| `v_api_key_status` | Gemini API key rotation status |
+| `v_export_ready_segments` | Segments ready for training |
+
+---
+
+## 8. Next Steps
+
+### Immediate
+
+- [ ] Update `label_studio_sync.py` for segment-level tasks
+- [ ] Create training data export script
+- [ ] Test full pipeline end-to-end
+
+### Future
+
+- [ ] Implement training pipeline
+- [ ] Add data augmentation at training time
+- [ ] Evaluation metrics and monitoring
+
+---
+
+## 9. Quick Reference
+
+### Ingest Videos
+
 ```bash
-LABEL_STUDIO_URL=http://localhost:8080
-LABEL_STUDIO_API_KEY=your_api_key
-AUDIO_SERVER_URL=http://localhost:8081
-SYNC_INTERVAL_MINUTES=5
-LS_PROJECT_TRANSCRIPT=1
-LS_PROJECT_TRANSLATION=2
-LS_PROJECT_SEGMENTATION=3
+python src/ingest_youtube.py https://www.youtube.com/@SomeChannel
 ```
 
-### Labeling Templates
-| Template | Location |
-|----------|----------|
-| Transcript Correction | `label_studio_templates/transcript_correction.xml` |
-| Translation Review | `label_studio_templates/translation_review.xml` |
-| Audio Segmentation | `label_studio_templates/audio_segmentation.xml` |
+### Run Preprocessing
 
-### Commands
 ```bash
-# Push samples to Label Studio for annotation
-python src/label_studio_sync.py push --task-type transcript_correction
+# WhisperX alignment
+python src/preprocessing/whisperx_align.py --batch --limit 10
 
-# Pull completed annotations back to database
-python src/label_studio_sync.py pull --task-type transcript_correction
+# Segmentation
+python src/preprocessing/segment_audio.py --batch --limit 10
 
-# Export reviewed data
-python src/export_reviewed.py --task-type transcript_verification
+# Translation
+python src/preprocessing/translate.py --batch --limit 10
 
-# Check connection status
-python src/label_studio_sync.py status
+# Denoising
+python src/preprocessing/denoise_audio.py --batch --limit 10
 ```
 
-## 6. Quick Start
+### Check Pipeline Stats
 
-### YouTube Ingestion
-```bash
-# Start all services (including Label Studio)
-docker-compose up -d
-
-# Ingest YouTube videos
-python src/ingest_youtube.py "https://youtube.com/watch?v=VIDEO_ID"
+```sql
+SELECT * FROM v_pipeline_stats;
 ```
 
-### Substack Ingestion
-```bash
-# Create URLs file
-echo "https://example.substack.com" > data/substack_urls.txt
+---
 
-# Run ingestion (requires sbstck-dl installed)
-python src/ingest_substack.py --urls-file data/substack_urls.txt
+## Related Documentation
 
-# Or process existing downloads
-python src/ingest_substack.py --skip-download
-```
-
-### Label Studio Setup
-```bash
-# Apply schema migration
-docker exec -i factory_ledger psql -U admin -d data_factory < init_scripts/03_schema_label_studio_v1.sql
-
-# Access Label Studio at http://localhost:8080
-# Get API key from Settings → Account & Settings
-# Update .env with LABEL_STUDIO_API_KEY
-```
-
-## 7. Next Steps
-- [ ] Implement MFA alignment processor (`processing_state` → ALIGNED)
-- [ ] Implement Silero VAD segmentation (`processing_state` → VAD_SEGMENTED)
-- [ ] Implement DeepFilterNet enhancement (`processing_state` → ENHANCED)
-- [x] Set up Label Studio projects with annotation templates
-- [ ] Implement TTS generation for text-first pipeline
-- [x] Add webhook handlers for real-time Label Studio sync
-- [ ] Migrate to Google Cloud Service Account for DVC (production)
+- [01_setup_project.md](01_setup_project.md) - Environment setup
+- [04_workflow.md](04_workflow.md) - Detailed workflow
+- [05_scripts_details.md](05_scripts_details.md) - Script reference
 

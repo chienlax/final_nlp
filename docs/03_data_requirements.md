@@ -1,72 +1,166 @@
-# 03. Data Requirements & Handover Specifications
+# 03. Data Requirements
 
-**Related Documentation:**
-- [04. Workflow Documentation](04_workflow.md) - Data processing pipelines
-- [07. Label Studio Integration](07_label_studio.md) - Annotation and review workflow
+## Overview
 
-## 1. Audio-First Requirements (YouTube/Vlogs)
+This document defines the data specifications for the Vietnamese-English Code-Switching Speech Translation pipeline.
 
-*Target: Capturing real-world acoustic code-switching.*
+---
 
-**A. Technical Format (Crucial)**
-The pipeline expects standardized audio to avoid expensive re-processing later.
+## 1. Audio Requirements
 
-  * **Container:** `.wav`
-  * **Sample Rate:** `16000 Hz` (16kHz)
-  * **Channels:** `1` (Mono)
-  * **Duration Limit:** Keep clips between **2 and 1 hour**. (Files > 1 hour may crash the segmentation memory; files <2 min lack context).
+### Technical Format
 
-**B. Metadata to Collect**
-For every audio file, they must provide a JSON entry containing:
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| Container | `.wav` | Lossless, universal support |
+| Sample Rate | `16000 Hz` | Standard for speech recognition |
+| Channels | `1` (Mono) | Single speaker focus |
+| Bit Depth | 16-bit PCM | Standard quality |
 
-  * **Source URL:** (To trace lineage)
-  * **Channel ID:** (To detect speaker overlap across splits)
-  * **Upload Date:** (For versioning)
-  * **Subtitle Track:** They **must** verify if subtitles are "Auto-generated" (ASR) or "Manual" (Human). *Warning: Do not download "Auto-translated" tracks.*
+### Duration Limits
 
-**C. Filtering Heuristic**
-Do not blindly download everything. They should check video titles/descriptions for keywords like: `"EngSub"`, `"Vietnamese/English"`, `"Reaction"`, or `"Vlog"`.
+| Type | Min | Max | Rationale |
+|------|-----|-----|-----------|
+| Full Video | 2 min | 60 min | Processing efficiency |
+| Segment | 10 sec | 30 sec | Training optimization |
 
------
+### Quality Criteria
 
-## 2. Text-First Requirements (Blogs/Forums)
+- Clear speech (minimal background noise)
+- Single primary speaker (no overlapping voices)
+- Code-switching content (Vietnamese + English mix)
 
-*Target: High-quality text to generate synthetic audio later.*
+---
 
-**A. Content Structure**
-They cannot just dump paragraphs. The data must be structured as **Sentence Trios** or a **Sliding Window**:
+## 2. Source Requirements
 
-  * **The Core CS Sentence:** The sentence containing the code-switching.
-  * **The Context:** The sentence immediately *before* and *after* it. (Translation often depends on the previous sentence).
+### YouTube Videos
 
-**B. Quality Gate (The "Intersection" Rule)**
-To filter out pure Vietnamese or pure English text, they should apply this check before saving:
+**Required:**
+- Video must have transcript (manual or auto-generated)
+- Manual transcripts preferred over auto-generated
+- Videos without transcripts are **rejected**
 
-  * Does the sentence contain at least **one Vietnamese particle** (e.g., *và, là, của, những*)?
-  * **AND** at least **one English stop word** (e.g., *the, and, so, is*)?
-  * *If yes -> Save it.*
+**Subtitle Type Detection:**
 
------
+| Type | Priority | Quality |
+|------|----------|---------|
+| Manual | High | Usually accurate |
+| Auto-generated | Low | May need correction |
+| None | Rejected | Cannot process |
 
-## 3. Delivery Format (The Handover)
+### Content Criteria
 
-To feed directly into your `ingestion` container, they should organize files like this:
+Look for videos with:
+- `"EngSub"`, `"Vietnamese/English"` in title
+- `"Reaction"`, `"Vlog"` content types
+- Mixed language conversations
 
-**Directory Structure:**
+---
 
-```text
-delivery_batch_01/
-├── metadata.jsonl         # One JSON object per video/article
-├── audio/
-│   ├── {video_id}.wav     # 16kHz mono audio
-│   └── ...
-└── text/
-    ├── {article_id}.txt   # Raw text content
-    └── ...
+## 3. Transcript Requirements
+
+### Format
+
+Transcripts are stored as JSON with timestamps:
+
+```json
+{
+  "video_id": "OXPQQIREOzk",
+  "language": "en",
+  "subtitle_type": "Manual",
+  "segments": [
+    {
+      "text": "Xin chào everyone",
+      "start": 0.47,
+      "end": 1.42
+    }
+  ],
+  "full_text": "Xin chào everyone..."
+}
 ```
 
-**Metadata Schema (`metadata.jsonl`):**
-This matches your PostgreSQL `source_metadata` JSONB column:
+### Code-Switching Detection
+
+The "Intersection Rule" for CS content:
+- Must contain ≥1 Vietnamese particle (e.g., `và`, `là`, `của`)
+- **AND** ≥1 English stop word (e.g., `the`, `and`, `is`)
+
+---
+
+## 4. Segment Requirements
+
+### Target Duration
+
+| Metric | Value |
+|--------|-------|
+| Target | 10-30 seconds |
+| Minimum | 5 seconds |
+| Maximum | 45 seconds |
+
+### Boundary Rules
+
+1. **Prefer sentence boundaries** - Clean cuts at sentence ends
+2. **No cut words** - Never split in the middle of a word
+3. **Context preservation** - Keep semantic units together
+
+### Segment Output
+
+Each segment produces:
+- Audio file: `data/segments/{sample_id}/0000.wav`
+- Database record with:
+  - `transcript_text` - Segment transcript
+  - `word_timestamps` - Word-level timing
+  - `alignment_score` - Average confidence
+
+---
+
+## 5. Translation Requirements
+
+### Target Language
+
+- Source: Vietnamese-English code-switched text
+- Target: Pure Vietnamese translation
+
+### Translation Quality
+
+Translations must:
+- Preserve meaning accurately
+- Use natural Vietnamese phrasing
+- Translate English portions appropriately
+- Maintain proper Vietnamese diacritics
+
+### Storage
+
+- Full translation stored in `translation_revisions`
+- Per-segment translations in `segment_translations`
+
+---
+
+## 6. File Organization
+
+### Directory Structure
+
+```
+data/
+├── raw/
+│   ├── audio/              # Full video audio
+│   │   └── {video_id}.wav
+│   ├── text/               # Raw transcripts
+│   │   └── {video_id}_transcript.json
+│   └── metadata.jsonl      # Ingestion metadata
+├── segments/               # Segmented audio
+│   └── {sample_id}/
+│       ├── 0000.wav
+│       ├── 0001.wav
+│       └── ...
+└── exports/                # Training exports
+    └── {export_name}/
+```
+
+### Metadata Schema
+
+`metadata.jsonl` format:
 
 ```json
 {
@@ -74,14 +168,40 @@ This matches your PostgreSQL `source_metadata` JSONB column:
   "type": "youtube",
   "url": "https://...",
   "duration": 340,
-  "language_tags": ["vi", "en"],
-  "captured_at": "2025-11-24"
+  "subtitle_type": "Manual",
+  "cs_ratio": 0.35,
+  "captured_at": "2024-11-24"
 }
 ```
 
-### Summary Checklist for Your Friend
+---
 
-1.  [ ] **Audio:** 16kHz Mono `.wav`.
-2.  [ ] **Length:** 2-60 minutes per file.
-3.  [ ] **Text:** Must mix VN and EN words (don't scrape pure VN news).
-4.  [ ] **Manifest:** Every batch of files comes with a `metadata.jsonl` file.
+## 7. Quality Checklist
+
+### Ingestion
+
+- [ ] Audio is 16kHz mono WAV
+- [ ] Duration between 2-60 minutes
+- [ ] Transcript available (manual or auto-generated)
+- [ ] Code-switching content detected
+
+### Segmentation
+
+- [ ] Segments are 10-30 seconds
+- [ ] No words cut at boundaries
+- [ ] Word-level timestamps present
+- [ ] Alignment score > 0.7
+
+### Translation
+
+- [ ] Full transcript translated
+- [ ] Per-segment translations aligned
+- [ ] Vietnamese diacritics correct
+- [ ] No untranslated English (unless proper nouns)
+
+---
+
+## Related Documentation
+
+- [04_workflow.md](04_workflow.md) - Processing workflow
+- [06_database_design.md](06_database_design.md) - Data schema

@@ -1,15 +1,17 @@
 """
-Data utilities for the NLP pipeline.
+Data utilities v3 for the NLP pipeline.
 
 Provides database connectivity (PostgreSQL) and helper functions
-for data processing in the speech translation pipeline.
+for data processing in the simplified YouTube-only speech translation pipeline.
 
-Schema Version: 2.0 (Multi-table design with revision tracking)
+Schema Version: 3.0 (Simplified pipeline with segments and translations)
 
-.. deprecated::
-    This module is deprecated as of v3. Use `data_utils_v3.py` instead,
-    which supports the simplified pipeline with segments and translations.
-    This file is kept for backwards compatibility with legacy scripts.
+Changes from v2:
+- Removed Substack/TTS pipeline support
+- Added subtitle_type tracking (manual vs auto-generated)
+- Added segment operations
+- Added segment_translation operations
+- Updated source_type enum values
 """
 
 import os
@@ -19,13 +21,6 @@ from typing import Optional, Dict, Any, List
 
 import psycopg2
 from psycopg2.extras import Json, RealDictCursor
-
-# Issue deprecation warning on import
-warnings.warn(
-    "data_utils.py is deprecated. Use data_utils_v3.py for the v3 schema.",
-    DeprecationWarning,
-    stacklevel=2
-)
 
 
 # =============================================================================
@@ -72,9 +67,9 @@ def get_or_create_source(
     Get existing source or create new one.
 
     Args:
-        source_type: Type of source ('youtube_with_transcript', 'youtube_without_transcript',
-                     'substack', 'manual_upload').
-        external_id: External identifier (YouTube channel ID, Substack slug).
+        source_type: Type of source ('youtube_manual_transcript',
+                     'youtube_auto_transcript', 'manual_upload').
+        external_id: External identifier (YouTube channel ID).
         name: Human-readable name of the source.
         url: Base URL of the source.
         metadata: Additional metadata as JSONB.
@@ -104,59 +99,49 @@ def get_or_create_source(
 
 
 # =============================================================================
-# SAMPLE OPERATIONS
+# SAMPLE OPERATIONS (V3)
 # =============================================================================
 
 def insert_sample(
-    content_type: str,
+    audio_file_path: str,
+    external_id: str,
+    subtitle_type: str,
     pipeline_type: str,
-    audio_file_path: Optional[str] = None,
-    text_file_path: Optional[str] = None,
-    external_id: Optional[str] = None,
     source_id: Optional[str] = None,
-    parent_sample_id: Optional[str] = None,
-    segment_index: Optional[int] = None,
-    start_time_ms: Optional[int] = None,
-    end_time_ms: Optional[int] = None,
+    text_file_path: Optional[str] = None,
+    subtitle_language: Optional[str] = None,
     duration_seconds: Optional[float] = None,
     cs_ratio: Optional[float] = None,
     source_metadata: Optional[Dict[str, Any]] = None,
     acoustic_metadata: Optional[Dict[str, Any]] = None,
-    linguistic_metadata: Optional[Dict[str, Any]] = None,
     priority: int = 0
 ) -> str:
     """
-    Insert a new sample into the samples table.
+    Insert a new sample into the samples table (v3 schema).
 
     Args:
-        content_type: 'audio_primary' or 'text_primary'.
-        pipeline_type: Pipeline this sample follows.
         audio_file_path: Path to audio file (relative to project root).
-        text_file_path: Path to text file (relative to project root).
-        external_id: External identifier (video ID, article slug).
+        external_id: External identifier (video ID).
+        subtitle_type: 'manual', 'auto_generated', or 'none'.
+        pipeline_type: Pipeline this sample follows.
         source_id: UUID of the parent source.
-        parent_sample_id: UUID of parent sample (for segments).
-        segment_index: Index within parent (0-based).
-        start_time_ms: Segment start time in milliseconds.
-        end_time_ms: Segment end time in milliseconds.
+        text_file_path: Path to text/transcript file.
+        subtitle_language: Language code of the subtitle.
         duration_seconds: Duration in seconds.
         cs_ratio: Code-switching ratio (0.0 to 1.0).
         source_metadata: Source-related metadata.
         acoustic_metadata: Audio properties metadata.
-        linguistic_metadata: Language/speaker metadata.
         priority: Processing priority (higher = more urgent).
 
     Returns:
         The UUID of the inserted sample.
 
     Raises:
-        ValueError: If neither audio_file_path nor text_file_path is provided.
+        ValueError: If audio_file_path is not provided.
         Exception: If insert fails.
     """
-    if audio_file_path is None and text_file_path is None:
-        raise ValueError(
-            "At least one of audio_file_path or text_file_path must be provided"
-        )
+    if not audio_file_path:
+        raise ValueError("audio_file_path must be provided")
 
     conn = get_pg_connection()
 
@@ -171,42 +156,37 @@ def insert_sample(
                     text_file_path,
                     external_id,
                     source_id,
-                    parent_sample_id,
-                    segment_index,
-                    start_time_ms,
-                    end_time_ms,
+                    subtitle_type,
+                    subtitle_language,
                     duration_seconds,
                     cs_ratio,
                     source_metadata,
                     acoustic_metadata,
-                    linguistic_metadata,
                     priority,
                     processing_state
                 ) VALUES (
-                    %s::content_type,
+                    'audio_primary'::content_type,
                     %s::source_type,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s,
+                    %s::subtitle_type,
+                    %s, %s, %s,
+                    %s, %s, %s,
                     'RAW'::processing_state
                 )
                 RETURNING sample_id
                 """,
                 (
-                    content_type,
                     pipeline_type,
                     audio_file_path,
                     text_file_path,
                     external_id,
                     source_id,
-                    parent_sample_id,
-                    segment_index,
-                    start_time_ms,
-                    end_time_ms,
+                    subtitle_type,
+                    subtitle_language,
                     duration_seconds,
                     cs_ratio,
                     Json(source_metadata or {}),
                     Json(acoustic_metadata or {}),
-                    Json(linguistic_metadata or {}),
                     priority
                 )
             )
@@ -222,7 +202,6 @@ def insert_sample(
 
 def sample_exists(
     audio_file_path: Optional[str] = None,
-    text_file_path: Optional[str] = None,
     external_id: Optional[str] = None
 ) -> bool:
     """
@@ -230,7 +209,6 @@ def sample_exists(
 
     Args:
         audio_file_path: Audio file path to check.
-        text_file_path: Text file path to check.
         external_id: External ID to check.
 
     Returns:
@@ -246,9 +224,6 @@ def sample_exists(
             if audio_file_path:
                 conditions.append("audio_file_path = %s")
                 params.append(audio_file_path)
-            if text_file_path:
-                conditions.append("text_file_path = %s")
-                params.append(text_file_path)
             if external_id:
                 conditions.append("external_id = %s")
                 params.append(external_id)
@@ -281,7 +256,7 @@ def get_sample(sample_id: str) -> Optional[Dict[str, Any]]:
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "SELECT * FROM v_sample_current_state WHERE sample_id = %s",
+                "SELECT * FROM samples WHERE sample_id = %s AND is_deleted = FALSE",
                 (sample_id,)
             )
             result = cur.fetchone()
@@ -328,7 +303,7 @@ def transition_state(
 
 
 # =============================================================================
-# TRANSCRIPT OPERATIONS
+# TRANSCRIPT OPERATIONS (V3)
 # =============================================================================
 
 def insert_transcript_revision(
@@ -336,20 +311,22 @@ def insert_transcript_revision(
     transcript_text: str,
     revision_type: str,
     revision_source: Optional[str] = None,
-    timestamps: Optional[List[Dict[str, Any]]] = None,
+    word_timestamps: Optional[List[Dict[str, Any]]] = None,
+    sentence_timestamps: Optional[List[Dict[str, Any]]] = None,
     created_by: str = "system"
 ) -> str:
     """
-    Insert a new transcript revision.
+    Insert a new transcript revision (v3 schema).
 
     Args:
         sample_id: UUID of the sample.
         transcript_text: The transcript content.
-        revision_type: Type of revision ('raw', 'asr_generated',
-                       'human_corrected', 'mfa_aligned').
-        revision_source: Source of revision ('youtube_api', 'whisper',
-                         'annotator_123').
-        timestamps: List of timestamp objects [{start_ms, end_ms, text}, ...].
+        revision_type: Type of revision ('youtube_raw', 'human_corrected',
+                       'whisperx_aligned').
+        revision_source: Source of revision ('youtube_api', 'annotator_email',
+                         'whisperx').
+        word_timestamps: Word-level timestamps from WhisperX.
+        sentence_timestamps: Sentence-level timestamps.
         created_by: User/system that created this revision.
 
     Returns:
@@ -363,13 +340,14 @@ def insert_transcript_revision(
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT add_transcript_revision(%s, %s, %s, %s, %s, %s)",
+                "SELECT add_transcript_revision(%s, %s, %s, %s, %s, %s, %s)",
                 (
                     sample_id,
                     transcript_text,
                     revision_type,
                     revision_source,
-                    Json(timestamps) if timestamps else None,
+                    Json(word_timestamps) if word_timestamps else None,
+                    Json(sentence_timestamps) if sentence_timestamps else None,
                     created_by
                 )
             )
@@ -413,31 +391,33 @@ def get_latest_transcript(sample_id: str) -> Optional[Dict[str, Any]]:
 
 
 # =============================================================================
-# TRANSLATION OPERATIONS
+# TRANSLATION OPERATIONS (V3)
 # =============================================================================
 
 def insert_translation_revision(
     sample_id: str,
     translation_text: str,
-    target_language: str,
     revision_type: str,
     source_transcript_revision_id: Optional[str] = None,
+    sentence_translations: Optional[List[Dict[str, Any]]] = None,
     revision_source: Optional[str] = None,
-    confidence_score: Optional[float] = None,
+    api_model: Optional[str] = None,
+    api_cost_usd: Optional[float] = None,
     created_by: str = "system"
 ) -> str:
     """
-    Insert a new translation revision.
+    Insert a new translation revision (v3 schema).
 
     Args:
         sample_id: UUID of the sample.
         translation_text: The translation content.
-        target_language: Target language code ('vi' for Vietnamese).
-        revision_type: Type of revision ('llm_generated', 'human_corrected',
+        revision_type: Type of revision ('gemini_draft', 'human_corrected',
                        'final').
         source_transcript_revision_id: UUID of source transcript revision.
-        revision_source: Source of revision ('gpt-4', 'annotator_456').
-        confidence_score: Confidence score (0.0 to 1.0).
+        sentence_translations: Per-sentence translation mapping.
+        revision_source: Source of revision ('gemini-1.5-flash').
+        api_model: API model used.
+        api_cost_usd: Estimated API cost.
         created_by: User/system that created this revision.
 
     Returns:
@@ -451,15 +431,16 @@ def insert_translation_revision(
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT add_translation_revision(%s, %s, %s, %s, %s, %s, %s, %s)",
+                "SELECT add_translation_revision(%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     sample_id,
                     translation_text,
-                    target_language,
                     revision_type,
                     source_transcript_revision_id,
+                    Json(sentence_translations) if sentence_translations else None,
                     revision_source,
-                    confidence_score,
+                    api_model,
+                    api_cost_usd,
                     created_by
                 )
             )
@@ -503,65 +484,112 @@ def get_latest_translation(sample_id: str) -> Optional[Dict[str, Any]]:
 
 
 # =============================================================================
-# REVIEW QUEUE OPERATIONS
+# SEGMENT OPERATIONS (V3 - NEW)
 # =============================================================================
 
-def get_review_queue(
-    task_type: Optional[str] = None,
-    pipeline_type: Optional[str] = None,
-    limit: int = 50
-) -> List[Dict[str, Any]]:
+def get_segments(sample_id: str) -> List[Dict[str, Any]]:
     """
-    Get samples from the review queue.
+    Get all segments for a sample.
 
     Args:
-        task_type: Filter by task type ('transcript_verification',
-                   'timestamp_alignment', 'translation_review',
-                   'quality_assessment').
-        pipeline_type: Filter by pipeline type.
-        limit: Maximum number of results.
+        sample_id: UUID of the sample.
 
     Returns:
-        List of sample dictionaries ordered by priority.
+        List of segment dictionaries ordered by index.
     """
     conn = get_pg_connection()
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            conditions = []
-            params = []
-
-            if task_type:
-                conditions.append("suggested_task_type = %s::annotation_task")
-                params.append(task_type)
-            if pipeline_type:
-                conditions.append("pipeline_type = %s::source_type")
-                params.append(pipeline_type)
-
-            where_clause = (
-                f"WHERE {' AND '.join(conditions)}" if conditions else ""
-            )
-            params.append(limit)
-
             cur.execute(
-                f"""
-                SELECT * FROM v_review_queue
-                {where_clause}
-                LIMIT %s
+                """
+                SELECT * FROM segments
+                WHERE sample_id = %s
+                ORDER BY segment_index
                 """,
-                params
+                (sample_id,)
             )
             return [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
 
 
+def get_segment(segment_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get a segment by its ID.
+
+    Args:
+        segment_id: UUID of the segment.
+
+    Returns:
+        Segment data as dictionary, or None if not found.
+    """
+    conn = get_pg_connection()
+
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT * FROM segments WHERE segment_id = %s",
+                (segment_id,)
+            )
+            result = cur.fetchone()
+            return dict(result) if result else None
+    finally:
+        conn.close()
+
+
+def update_segment_verification(
+    segment_id: str,
+    is_verified: bool,
+    has_issues: bool = False,
+    issue_notes: Optional[str] = None
+) -> bool:
+    """
+    Update segment verification status.
+
+    Args:
+        segment_id: UUID of the segment.
+        is_verified: Whether the segment is verified.
+        has_issues: Whether the segment has issues.
+        issue_notes: Notes about issues.
+
+    Returns:
+        True if successful.
+    """
+    conn = get_pg_connection()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE segments
+                SET is_verified = %s,
+                    has_issues = %s,
+                    issue_notes = %s,
+                    updated_at = NOW()
+                WHERE segment_id = %s
+                """,
+                (is_verified, has_issues, issue_notes, segment_id)
+            )
+            conn.commit()
+            return True
+    except psycopg2.Error as e:
+        conn.rollback()
+        raise Exception(f"Failed to update segment: {e}")
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# PIPELINE STATS & QUEUE OPERATIONS
+# =============================================================================
+
 def get_pipeline_stats() -> List[Dict[str, Any]]:
     """
     Get pipeline statistics.
 
     Returns:
-        List of statistics grouped by pipeline_type and processing_state.
+        List of statistics grouped by processing_state and subtitle_type.
     """
     conn = get_pg_connection()
 
@@ -573,208 +601,48 @@ def get_pipeline_stats() -> List[Dict[str, Any]]:
         conn.close()
 
 
-# =============================================================================
-# LINEAGE OPERATIONS
-# =============================================================================
-
-def insert_lineage(
-    ancestor_sample_id: str,
-    descendant_sample_id: str,
-    derivation_type: str,
-    derivation_step: int = 1,
-    processing_params: Optional[Dict[str, Any]] = None
-) -> str:
+def get_samples_by_state(
+    state: str,
+    limit: int = 50
+) -> List[Dict[str, Any]]:
     """
-    Insert a lineage relationship between samples.
+    Get samples in a specific processing state.
 
     Args:
-        ancestor_sample_id: UUID of the ancestor (source) sample.
-        descendant_sample_id: UUID of the descendant (derived) sample.
-        derivation_type: Type of derivation ('segmentation', 'enhancement',
-                         'tts_generation').
-        derivation_step: Distance in derivation chain (1 = direct).
-        processing_params: Parameters used for derivation.
+        state: Processing state to filter by.
+        limit: Maximum number of results.
 
     Returns:
-        The UUID of the inserted lineage record.
-
-    Raises:
-        Exception: If insert fails.
-    """
-    conn = get_pg_connection()
-
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO sample_lineage (
-                    ancestor_sample_id,
-                    descendant_sample_id,
-                    derivation_type,
-                    derivation_step,
-                    processing_params
-                ) VALUES (%s, %s, %s, %s, %s)
-                RETURNING lineage_id
-                """,
-                (
-                    ancestor_sample_id,
-                    descendant_sample_id,
-                    derivation_type,
-                    derivation_step,
-                    Json(processing_params or {})
-                )
-            )
-            lineage_id = cur.fetchone()[0]
-            conn.commit()
-            return str(lineage_id)
-    except psycopg2.Error as e:
-        conn.rollback()
-        raise Exception(f"Failed to insert lineage: {e}")
-    finally:
-        conn.close()
-
-
-def get_sample_lineage(sample_id: str) -> List[Dict[str, Any]]:
-    """
-    Get the full lineage chain for a sample.
-
-    Args:
-        sample_id: UUID of the sample.
-
-    Returns:
-        List of ancestor samples in order of derivation.
+        List of sample dictionaries.
     """
     conn = get_pg_connection()
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM get_sample_lineage(%s)", (sample_id,))
+            cur.execute(
+                """
+                SELECT * FROM v_sample_overview
+                WHERE processing_state = %s::processing_state
+                ORDER BY priority DESC, created_at ASC
+                LIMIT %s
+                """,
+                (state, limit)
+            )
             return [dict(row) for row in cur.fetchall()]
-    finally:
-        conn.close()
-
-
-# =============================================================================
-# ANNOTATION OPERATIONS
-# =============================================================================
-
-def insert_annotation(
-    sample_id: str,
-    task_type: str,
-    label_studio_project_id: Optional[int] = None,
-    label_studio_task_id: Optional[int] = None,
-    assigned_to: Optional[str] = None
-) -> str:
-    """
-    Insert a new annotation task.
-
-    Args:
-        sample_id: UUID of the sample.
-        task_type: Type of task ('transcript_verification', 'timestamp_alignment',
-                   'translation_review', 'quality_assessment').
-        label_studio_project_id: Label Studio project ID.
-        label_studio_task_id: Label Studio task ID.
-        assigned_to: Annotator user ID.
-
-    Returns:
-        The UUID of the inserted annotation.
-
-    Raises:
-        Exception: If insert fails.
-    """
-    conn = get_pg_connection()
-
-    try:
-        with conn.cursor() as cur:
+    except psycopg2.Error:
+        # View might not exist yet, fall back to direct query
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                INSERT INTO annotations (
-                    sample_id,
-                    task_type,
-                    label_studio_project_id,
-                    label_studio_task_id,
-                    assigned_to,
-                    assigned_at
-                ) VALUES (
-                    %s, %s::annotation_task, %s, %s, %s,
-                    CASE WHEN %s IS NOT NULL THEN NOW() ELSE NULL END
-                )
-                RETURNING annotation_id
+                SELECT * FROM samples
+                WHERE processing_state = %s::processing_state
+                  AND is_deleted = FALSE
+                ORDER BY priority DESC, created_at ASC
+                LIMIT %s
                 """,
-                (
-                    sample_id,
-                    task_type,
-                    label_studio_project_id,
-                    label_studio_task_id,
-                    assigned_to,
-                    assigned_to
-                )
+                (state, limit)
             )
-            annotation_id = cur.fetchone()[0]
-            conn.commit()
-            return str(annotation_id)
-    except psycopg2.Error as e:
-        conn.rollback()
-        raise Exception(f"Failed to insert annotation: {e}")
-    finally:
-        conn.close()
-
-
-def update_annotation_status(
-    annotation_id: str,
-    status: str,
-    result: Optional[Dict[str, Any]] = None,
-    time_spent_seconds: Optional[int] = None,
-    confidence_score: Optional[float] = None
-) -> bool:
-    """
-    Update an annotation's status and result.
-
-    Args:
-        annotation_id: UUID of the annotation.
-        status: New status ('pending', 'in_progress', 'completed', 'skipped',
-                'disputed').
-        result: Annotation result data.
-        time_spent_seconds: Time spent on annotation.
-        confidence_score: Annotator confidence.
-
-    Returns:
-        True if successful.
-
-    Raises:
-        Exception: If update fails.
-    """
-    conn = get_pg_connection()
-
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE annotations SET
-                    status = %s::annotation_status,
-                    result = COALESCE(%s, result),
-                    time_spent_seconds = COALESCE(%s, time_spent_seconds),
-                    confidence_score = COALESCE(%s, confidence_score),
-                    completed_at = CASE
-                        WHEN %s = 'completed' THEN NOW()
-                        ELSE completed_at
-                    END
-                WHERE annotation_id = %s
-                """,
-                (
-                    status,
-                    Json(result) if result else None,
-                    time_spent_seconds,
-                    confidence_score,
-                    status,
-                    annotation_id
-                )
-            )
-            conn.commit()
-            return True
-    except psycopg2.Error as e:
-        conn.rollback()
-        raise Exception(f"Failed to update annotation: {e}")
+            return [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
 
@@ -787,6 +655,7 @@ def log_processing(
     operation: str,
     success: bool,
     sample_id: Optional[str] = None,
+    segment_id: Optional[str] = None,
     previous_state: Optional[str] = None,
     new_state: Optional[str] = None,
     executor: Optional[str] = None,
@@ -799,10 +668,10 @@ def log_processing(
     Log a processing operation.
 
     Args:
-        operation: Operation name ('state_transition', 'enhancement',
-                   'segmentation').
+        operation: Operation name ('state_transition', 'whisperx_alignment', etc.).
         success: Whether the operation succeeded.
         sample_id: UUID of the sample (optional).
+        segment_id: UUID of the segment (optional).
         previous_state: Previous processing state.
         new_state: New processing state.
         executor: Who/what executed the operation.
@@ -821,18 +690,18 @@ def log_processing(
             cur.execute(
                 """
                 INSERT INTO processing_logs (
-                    sample_id, operation, previous_state, new_state,
+                    sample_id, segment_id, operation, previous_state, new_state,
                     executor, execution_time_ms, input_params,
                     output_summary, error_message, success
                 ) VALUES (
-                    %s, %s,
+                    %s, %s, %s,
                     %s::processing_state, %s::processing_state,
                     %s, %s, %s, %s, %s, %s
                 )
                 RETURNING log_id
                 """,
                 (
-                    sample_id, operation, previous_state, new_state,
+                    sample_id, segment_id, operation, previous_state, new_state,
                     executor, execution_time_ms,
                     Json(input_params) if input_params else None,
                     Json(output_summary) if output_summary else None,
@@ -907,54 +776,146 @@ def calculate_cs_ratio(text: str) -> float:
 
 
 # =============================================================================
-# LEGACY COMPATIBILITY (Deprecated - to be removed in future versions)
+# ANNOTATION OPERATIONS (V3)
 # =============================================================================
 
-def insert_raw_sample(
-    file_path: str,
-    source_metadata: Dict[str, Any],
-    acoustic_meta: Dict[str, Any],
-    linguistic_meta: Optional[Dict[str, Any]] = None,
-    transcript_raw: Optional[str] = None
+def insert_annotation(
+    task_type: str,
+    sample_id: Optional[str] = None,
+    segment_id: Optional[str] = None,
+    label_studio_project_id: Optional[int] = None,
+    label_studio_task_id: Optional[int] = None,
+    assigned_to: Optional[str] = None
 ) -> str:
     """
-    DEPRECATED: Use insert_sample() instead.
+    Insert a new annotation task.
 
-    Legacy function for backwards compatibility with old ingestion scripts.
+    Args:
+        task_type: Type of task ('transcript_correction', 'segment_verification',
+                   'translation_review').
+        sample_id: UUID of the sample (for transcript correction).
+        segment_id: UUID of the segment (for segment/translation review).
+        label_studio_project_id: Label Studio project ID.
+        label_studio_task_id: Label Studio task ID.
+        assigned_to: Annotator user ID.
+
+    Returns:
+        The UUID of the inserted annotation.
+
+    Raises:
+        ValueError: If neither sample_id nor segment_id is provided.
+        Exception: If insert fails.
     """
+    if not sample_id and not segment_id:
+        raise ValueError("Either sample_id or segment_id must be provided")
+
+    conn = get_pg_connection()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO annotations (
+                    sample_id,
+                    segment_id,
+                    task_type,
+                    label_studio_project_id,
+                    label_studio_task_id,
+                    assigned_to,
+                    assigned_at
+                ) VALUES (
+                    %s, %s, %s::annotation_task, %s, %s, %s,
+                    CASE WHEN %s IS NOT NULL THEN NOW() ELSE NULL END
+                )
+                RETURNING annotation_id
+                """,
+                (
+                    sample_id,
+                    segment_id,
+                    task_type,
+                    label_studio_project_id,
+                    label_studio_task_id,
+                    assigned_to,
+                    assigned_to
+                )
+            )
+            annotation_id = cur.fetchone()[0]
+            conn.commit()
+            return str(annotation_id)
+    except psycopg2.Error as e:
+        conn.rollback()
+        raise Exception(f"Failed to insert annotation: {e}")
+    finally:
+        conn.close()
+
+
+def update_annotation_status(
+    annotation_id: str,
+    status: str,
+    result: Optional[Dict[str, Any]] = None,
+    time_spent_seconds: Optional[int] = None
+) -> bool:
+    """
+    Update an annotation's status and result.
+
+    Args:
+        annotation_id: UUID of the annotation.
+        status: New status ('pending', 'in_progress', 'completed', 'skipped',
+                'disputed').
+        result: Annotation result data.
+        time_spent_seconds: Time spent on annotation.
+
+    Returns:
+        True if successful.
+
+    Raises:
+        Exception: If update fails.
+    """
+    conn = get_pg_connection()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE annotations SET
+                    status = %s::annotation_status,
+                    result = COALESCE(%s, result),
+                    time_spent_seconds = COALESCE(%s, time_spent_seconds),
+                    completed_at = CASE
+                        WHEN %s = 'completed' THEN NOW()
+                        ELSE completed_at
+                    END,
+                    updated_at = NOW()
+                WHERE annotation_id = %s
+                """,
+                (
+                    status,
+                    Json(result) if result else None,
+                    time_spent_seconds,
+                    status,
+                    annotation_id
+                )
+            )
+            conn.commit()
+            return True
+    except psycopg2.Error as e:
+        conn.rollback()
+        raise Exception(f"Failed to update annotation: {e}")
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# LEGACY COMPATIBILITY (Deprecated)
+# =============================================================================
+
+def insert_raw_sample(*args, **kwargs):
+    """DEPRECATED: Use insert_sample() instead."""
     warnings.warn(
         "insert_raw_sample is deprecated. Use insert_sample() instead.",
         DeprecationWarning,
         stacklevel=2
     )
-
-    # Determine pipeline type based on subtitle availability
-    has_transcript = transcript_raw is not None
-    pipeline_type = (
-        'youtube_with_transcript' if has_transcript
-        else 'youtube_without_transcript'
+    raise NotImplementedError(
+        "insert_raw_sample is no longer supported. Use insert_sample() with v3 schema."
     )
-
-    # Insert sample
-    sample_id = insert_sample(
-        content_type='audio_primary',
-        pipeline_type=pipeline_type,
-        audio_file_path=file_path,
-        external_id=source_metadata.get('channel_id'),
-        duration_seconds=acoustic_meta.get('duration'),
-        cs_ratio=linguistic_meta.get('cs_ratio') if linguistic_meta else None,
-        source_metadata=source_metadata,
-        acoustic_metadata=acoustic_meta,
-        linguistic_metadata=linguistic_meta or {}
-    )
-
-    # Insert transcript revision if available
-    if transcript_raw:
-        insert_transcript_revision(
-            sample_id=sample_id,
-            transcript_text=transcript_raw,
-            revision_type='raw',
-            revision_source='youtube_api'
-        )
-
-    return sample_id

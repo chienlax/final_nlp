@@ -46,13 +46,13 @@ dvc pull
 
 ```bash
 # YouTube video (requires transcript)
-python src/ingest_youtube_v3.py https://www.youtube.com/@SomeChannel
+python src/ingest_youtube.py https://www.youtube.com/@SomeChannel
 
 # Re-ingest existing metadata (no download)
-python src/ingest_youtube_v3.py --skip-download
+python src/ingest_youtube.py --skip-download
 
 # Dry run (no database changes)
-python src/ingest_youtube_v3.py --skip-download --dry-run
+python src/ingest_youtube.py --skip-download --dry-run
 
 # Version new data
 dvc add data/raw
@@ -72,12 +72,9 @@ final_nlp/
 │   │   └── metadata.jsonl      # Ingestion metadata
 │   ├── segments/               # Segmented audio chunks
 │   │   └── {sample_id}/        # Per-sample segment folder
-│   │       ├── 0000.wav
-│   │       ├── 0001.wav
-│   │       └── ...
 │   └── teencode.txt            # Vietnamese teencode dictionary
 ├── src/
-│   ├── ingest_youtube_v3.py    # YouTube ingestion (v3, transcript required)
+│   ├── ingest_youtube.py       # YouTube ingestion (transcript required)
 │   ├── label_studio_sync.py    # Label Studio integration
 │   ├── preprocessing/          # Audio processing pipeline
 │   │   ├── whisperx_align.py   # WhisperX forced alignment
@@ -85,14 +82,13 @@ final_nlp/
 │   │   ├── translate.py        # Gemini translation with key rotation
 │   │   └── denoise_audio.py    # DeepFilterNet noise removal
 │   └── utils/
-│       ├── data_utils_v3.py    # Database utilities (v3 schema)
+│       ├── data_utils.py       # Database utilities
 │       ├── video_downloading_utils.py
 │       ├── transcript_downloading_utils.py
 │       └── text_utils.py
 ├── init_scripts/
-│   ├── 01_schema.sql           # Legacy schema (v1)
-│   ├── 02_schema_v2.sql        # Legacy schema (v2)
-│   └── 03_schema_v3.sql        # Current schema (v3)
+│   ├── 00_create_label_studio_db.sql  # Label Studio DB setup
+│   └── 01_schema.sql                  # Current schema
 ├── label_studio_templates/
 │   ├── transcript_correction.xml   # Round 1: Transcript review
 │   ├── segment_review.xml          # Round 2: Segment verification
@@ -111,10 +107,10 @@ final_nlp/
 | [01_setup_project.md](docs/01_setup_project.md) | Environment setup, Docker, DVC configuration |
 | [02_project_progress.md](docs/02_project_progress.md) | Development progress and milestones |
 | [03_data_requirements.md](docs/03_data_requirements.md) | Audio/text specifications, quality criteria |
-| [04_workflow.md](docs/04_workflow.md) | End-to-end pipeline workflow (legacy) |
+| [04_workflow.md](docs/04_workflow.md) | **Current** pipeline workflow |
 | [05_scripts_details.md](docs/05_scripts_details.md) | Script reference with parameters and examples |
 | [06_database_design.md](docs/06_database_design.md) | Database schema, tables, indexes, functions |
-| [09_simplified_workflow_v3.md](docs/09_simplified_workflow_v3.md) | **Current** simplified pipeline workflow |
+| [07_label_studio.md](docs/07_label_studio.md) | Label Studio setup and integration |
 
 ## Audio Specifications
 
@@ -126,11 +122,11 @@ final_nlp/
 | Video Duration | 2-60 minutes per video |
 | Segment Duration | 10-30 seconds per segment |
 
-## Pipeline Overview (v3)
+## Pipeline Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                     YOUTUBE PIPELINE (v3)                               │
+│                         YOUTUBE PIPELINE                                │
 │                                                                         │
 │  RAW → TRANSCRIPT_REVIEW → TRANSCRIPT_VERIFIED → ALIGNED → SEGMENTED   │
 │      → SEGMENT_REVIEW → SEGMENT_VERIFIED → TRANSLATED                  │
