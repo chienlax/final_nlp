@@ -165,9 +165,18 @@ def download_transcripts_from_metadata() -> List[Dict[str, Any]]:
         # Check if we already have this transcript
         if file_path.exists():
             print(f"[EXISTS] Skipping: {transcript_filename}")
-            # Ensure metadata has transcript info
+            # Ensure metadata has transcript info from the saved file
             if 'transcript_file' not in entry:
                 entry['transcript_file'] = str(file_path)
+            # Load subtitle_type from existing transcript file if missing
+            if 'subtitle_type' not in entry:
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        transcript_data = json.load(f)
+                    entry['subtitle_type'] = transcript_data.get('subtitle_type', 'Auto-generated')
+                    entry['transcript_language'] = transcript_data.get('language', 'vi')
+                except Exception:
+                    pass  # Skip if can't read
             continue
 
         # Fetch transcript with type detection

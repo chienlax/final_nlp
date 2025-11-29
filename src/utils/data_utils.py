@@ -647,6 +647,155 @@ def get_samples_by_state(
         conn.close()
 
 
+def get_review_queue(
+    task_type: str,
+    limit: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get samples ready for a specific type of review in Label Studio.
+
+    Maps task types to the appropriate processing states and returns
+    samples with their transcript/translation data for annotation.
+
+    Args:
+        task_type: Type of review task:
+            - 'transcript_correction': Samples in RAW state needing transcript review
+            - 'segment_review': Samples in SEGMENTED state needing segment verification
+            - 'translation_review': Samples in TRANSLATED state needing translation review
+        limit: Maximum number of samples to return. If None, returns all.
+
+    Returns:
+        List of sample dictionaries with relevant data for the task type.
+        Each dict includes sample_id, audio_file_path, transcript, metadata, etc.
+    """
+    # Map task types to required processing states
+    state_mapping = {
+        'transcript_correction': 'RAW',
+        'segment_review': 'SEGMENTED',
+        'translation_review': 'TRANSLATED',
+        'audio_segmentation': 'TRANSCRIPT_VERIFIED',
+    }
+
+    state = state_mapping.get(task_type)
+    if not state:
+        raise ValueError(f"Unknown task type: {task_type}")
+
+    conn = get_pg_connection()
+
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if task_type == 'transcript_correction':
+                # Get RAW samples with their transcripts for review
+                query = """
+                    SELECT 
+                        s.sample_id,
+                        s.external_id,
+                        s.audio_file_path,
+                        s.text_file_path,
+                        s.subtitle_type,
+                        s.duration_seconds,
+                        s.cs_ratio,
+                        s.priority,
+                        s.source_metadata,
+                        tr.transcript_text AS transcript,
+                        tr.revision_id AS transcript_revision_id
+                    FROM samples s
+                    LEFT JOIN transcript_revisions tr 
+                        ON s.sample_id = tr.sample_id 
+                        AND tr.version = s.current_transcript_version
+                    WHERE s.processing_state = 'RAW'::processing_state
+                      AND s.is_deleted = FALSE
+                      AND s.label_studio_task_id IS NULL
+                    ORDER BY s.priority DESC, s.created_at ASC
+                """
+            elif task_type == 'segment_review':
+                # Get SEGMENTED samples - return segments for review
+                query = """
+                    SELECT 
+                        s.sample_id,
+                        s.external_id,
+                        s.audio_file_path,
+                        s.duration_seconds,
+                        seg.segment_id,
+                        seg.segment_index,
+                        seg.audio_file_path AS segment_audio_path,
+                        seg.transcript_text AS transcript,
+                        seg.start_time_ms,
+                        seg.end_time_ms,
+                        seg.alignment_score
+                    FROM samples s
+                    JOIN segments seg ON s.sample_id = seg.sample_id
+                    WHERE s.processing_state = 'SEGMENTED'::processing_state
+                      AND s.is_deleted = FALSE
+                      AND seg.is_verified = FALSE
+                    ORDER BY s.priority DESC, s.created_at ASC, seg.segment_index ASC
+                """
+            elif task_type == 'translation_review':
+                # Get TRANSLATED segments with their translations
+                query = """
+                    SELECT 
+                        s.sample_id,
+                        s.external_id,
+                        seg.segment_id,
+                        seg.segment_index,
+                        seg.audio_file_path AS segment_audio_path,
+                        seg.transcript_text AS transcript,
+                        st.translation_text AS translation,
+                        st.translation_id
+                    FROM samples s
+                    JOIN segments seg ON s.sample_id = seg.sample_id
+                    LEFT JOIN segment_translations st ON seg.segment_id = st.segment_id
+                    WHERE s.processing_state = 'TRANSLATED'::processing_state
+                      AND s.is_deleted = FALSE
+                      AND (st.is_verified = FALSE OR st.is_verified IS NULL)
+                    ORDER BY s.priority DESC, s.created_at ASC, seg.segment_index ASC
+                """
+            else:
+                # Generic fallback
+                query = f"""
+                    SELECT 
+                        s.sample_id,
+                        s.external_id,
+                        s.audio_file_path,
+                        s.duration_seconds,
+                        s.source_metadata
+                    FROM samples s
+                    WHERE s.processing_state = '{state}'::processing_state
+                      AND s.is_deleted = FALSE
+                    ORDER BY s.priority DESC, s.created_at ASC
+                """
+
+            if limit:
+                query += f" LIMIT {int(limit)}"
+
+            cur.execute(query)
+            results = [dict(row) for row in cur.fetchall()]
+
+            # Convert non-JSON-serializable types for JSON compatibility
+            from decimal import Decimal
+            from uuid import UUID
+            for row in results:
+                for key, value in row.items():
+                    if isinstance(value, Decimal):
+                        row[key] = float(value)
+                    elif isinstance(value, UUID):
+                        row[key] = str(value)
+
+            # Add metadata dict for convenience
+            for row in results:
+                row['metadata'] = {
+                    'external_id': row.get('external_id'),
+                    'subtitle_type': row.get('subtitle_type'),
+                    'duration_seconds': row.get('duration_seconds'),
+                    'cs_ratio': row.get('cs_ratio'),
+                }
+
+            return results
+
+    finally:
+        conn.close()
+
+
 # =============================================================================
 # LOGGING OPERATIONS
 # =============================================================================

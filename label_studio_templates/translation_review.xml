@@ -43,10 +43,10 @@ Schema Version: 3.0
     <Header value="📋 Instructions" size="4"/>
     <Text name="instructions" value="Verify audio ↔ transcript ↔ translation alignment:"/>
     <View style="margin-left: 20px;">
-      <Text value="✅ Listen to audio and verify transcript matches"/>
-      <Text value="✅ Check that translation captures the meaning"/>
-      <Text value="✅ Correct any translation errors"/>
-      <Text value="✅ Ensure natural Vietnamese phrasing"/>
+      <Text name="inst_1" value="✅ Listen to audio and verify transcript matches"/>
+      <Text name="inst_2" value="✅ Check that translation captures the meaning"/>
+      <Text name="inst_3" value="✅ Correct any translation errors"/>
+      <Text name="inst_4" value="✅ Ensure natural Vietnamese phrasing"/>
     </View>
   </View>
   

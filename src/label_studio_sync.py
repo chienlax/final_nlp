@@ -32,11 +32,16 @@ from utils.data_utils import (
 
 
 # Label Studio configuration from environment
-LABEL_STUDIO_URL = os.getenv("LABEL_STUDIO_URL", "http://localhost:8080")
+# Default to localhost:8085 for local development (Docker maps 8085->8080)
+# Inside Docker containers, use http://label_studio:8085 (set via docker-compose.yml)
+LABEL_STUDIO_URL = os.getenv("LABEL_STUDIO_URL", "http://localhost:8085")
 LABEL_STUDIO_API_KEY = os.getenv("LABEL_STUDIO_API_KEY", "")
 
 # Audio server URL for serving audio files to Label Studio
+# AUDIO_SERVER_URL: Internal URL for Docker-to-Docker communication
+# AUDIO_PUBLIC_URL: External URL for browser access (Label Studio UI loads audio in browser)
 AUDIO_SERVER_URL = os.getenv("AUDIO_SERVER_URL", "http://localhost:8081")
+AUDIO_PUBLIC_URL = os.getenv("AUDIO_PUBLIC_URL", "http://localhost:8081")
 
 # Task type to Label Studio project mapping
 PROJECT_MAPPING = {
@@ -187,18 +192,19 @@ class LabelStudioClient:
             )
 
             if resp.status_code == 200:
-                all_tasks = resp.json()
-                if isinstance(all_tasks, dict):
-                    all_tasks = all_tasks.get('tasks', [])
+                response_data = resp.json()
+                if isinstance(response_data, dict):
+                    all_tasks = response_data.get('tasks', [])
+                else:
+                    all_tasks = response_data
 
                 for task in all_tasks:
-                    annotations = task.get('annotations', [])
-                    if annotations:
-                        # Check if completed after 'since'
-                        if since:
-                            completed_at = annotations[-1].get('completed_by')
-                            # TODO: Parse and compare dates
-                        tasks.append(task)
+                    # Check if task is labeled (has annotations)
+                    if task.get('is_labeled') or task.get('total_annotations', 0) > 0:
+                        # Fetch full task details including annotations
+                        task_detail = self.get_task(task['id'])
+                        if task_detail and task_detail.get('annotations'):
+                            tasks.append(task_detail)
 
         except requests.RequestException as e:
             print(f"Error fetching tasks: {e}")
@@ -260,12 +266,12 @@ def push_to_label_studio(
         for sample in samples:
             sample_id = sample['sample_id']
 
-            # Generate HTTP URL for audio file
+            # Generate HTTP URL for audio file (use PUBLIC URL for browser access)
             file_path = sample.get('audio_file_path', '')
             if file_path:
                 # Extract filename from path (e.g., "data/raw/audio/xyz.wav" -> "xyz.wav")
                 audio_filename = Path(file_path).name
-                audio_url = f"{AUDIO_SERVER_URL}/audio/{audio_filename}"
+                audio_url = f"{AUDIO_PUBLIC_URL}/audio/{audio_filename}"
             else:
                 audio_url = ''
 
@@ -273,9 +279,11 @@ def push_to_label_studio(
             if task_type == 'transcript_correction':
                 task_data = {
                     'sample_id': sample_id,
-                    'text': sample.get('transcript', ''),
+                    'external_id': sample.get('external_id', ''),
+                    'duration_seconds': str(sample.get('duration_seconds', 0)),
+                    'subtitle_type': sample.get('subtitle_type', 'unknown'),
+                    'transcript_text': sample.get('transcript', ''),
                     'audio': audio_url,
-                    'metadata': json.dumps(sample.get('metadata', {})),
                 }
             elif task_type == 'translation_review':
                 task_data = {
@@ -409,17 +417,38 @@ def pull_from_label_studio(
                         created_by=str(latest_annotation.get('completed_by', 'annotator')),
                     )
 
-            # Update annotation status
-            update_annotation_status(
-                annotation_id=str(task_id),  # Note: Need to look up annotation_id by task_id
-                status='completed',
-                result=result,
-            )
+            # Update annotation status (lookup by label_studio_task_id)
+            conn = get_pg_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE annotations 
+                        SET status = 'completed', 
+                            result = %s,
+                            completed_at = NOW(),
+                            updated_at = NOW()
+                        WHERE label_studio_task_id = %s
+                        """,
+                        (json.dumps(result), task_id)
+                    )
+                    conn.commit()
+            finally:
+                conn.close()
 
-            # Transition sample state
+            # Transition sample state based on task type
+            if task_type == 'transcript_correction':
+                new_state = 'TRANSCRIPT_VERIFIED'
+            elif task_type == 'translation_review':
+                new_state = 'FINAL'
+            elif task_type == 'segment_review':
+                new_state = 'SEGMENT_VERIFIED'
+            else:
+                new_state = 'TRANSCRIPT_VERIFIED'  # Default fallback
+
             transition_state(
                 sample_id=sample_id,
-                new_state='REVIEWED',
+                new_state=new_state,
                 executor=f'label_studio_{task_type}',
             )
 
@@ -428,7 +457,7 @@ def pull_from_label_studio(
                 operation='annotation_completed',
                 success=True,
                 sample_id=sample_id,
-                new_state='REVIEWED',
+                new_state=new_state,
                 executor='label_studio_sync',
                 output_summary={
                     'task_type': task_type,

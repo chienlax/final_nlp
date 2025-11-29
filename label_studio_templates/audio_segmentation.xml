@@ -23,10 +23,10 @@ Interface:
     <Header value="Instructions" size="4"/>
     <Text name="instructions" value="Segment the audio into meaningful units. For each segment:"/>
     <View style="margin-left: 20px;">
-      <Text value="1. Click and drag on the waveform to create a region"/>
-      <Text value="2. Select the primary language for that segment"/>
-      <Text value="3. Mark code-switching boundaries"/>
-      <Text value="4. Note any audio quality issues"/>
+      <Text name="inst_1" value="1. Click and drag on the waveform to create a region"/>
+      <Text name="inst_2" value="2. Select the primary language for that segment"/>
+      <Text name="inst_3" value="3. Mark code-switching boundaries"/>
+      <Text name="inst_4" value="4. Note any audio quality issues"/>
     </View>
   </View>
   

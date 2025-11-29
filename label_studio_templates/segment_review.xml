@@ -50,7 +50,12 @@ Schema Version: 3.0
   <!-- Audio Player -->
   <View style="padding: 10px; background: #f5f5f5; border-radius: 8px; margin-bottom: 15px;">
     <Header value="🎧 Segment Audio" size="4"/>
-    <Audio name="audio" value="$audio" hotkey="space"/>
+    <!-- Note: Uses segment_audio which should be a pre-cut audio file for this segment -->
+    <!-- The segmentation pipeline creates files like: video_id_segment_001.wav -->
+    <Audio name="audio" value="$segment_audio" hotkey="space"/>
+    <View style="margin-top: 5px; font-size: 12px; color: #666;">
+      <Text name="timing_hint" value="Segment timing: $start_time_ms ms - $end_time_ms ms"/>
+    </View>
   </View>
   
   <!-- Instructions -->
@@ -58,10 +63,10 @@ Schema Version: 3.0
     <Header value="📋 Instructions" size="4"/>
     <Text name="instructions" value="Verify the segment and its transcript:"/>
     <View style="margin-left: 20px;">
-      <Text value="✅ Listen to confirm the audio matches the transcript"/>
-      <Text value="✅ Check that the segment starts and ends at natural boundaries"/>
-      <Text value="✅ Verify no words are cut off at boundaries"/>
-      <Text value="✅ Flag any alignment issues"/>
+      <Text name="inst_1" value="✅ Listen to confirm the audio matches the transcript"/>
+      <Text name="inst_2" value="✅ Check that the segment starts and ends at natural boundaries"/>
+      <Text name="inst_3" value="✅ Verify no words are cut off at boundaries"/>
+      <Text name="inst_4" value="✅ Flag any alignment issues"/>
     </View>
   </View>
   

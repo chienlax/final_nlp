@@ -48,11 +48,11 @@ Schema Version: 3.0
     <Header value="📋 Instructions" size="4"/>
     <Text name="instructions" value="Listen to the audio and correct the transcript. Focus on:"/>
     <View style="margin-left: 20px;">
-      <Text value="✅ Correct Vietnamese spelling with proper diacritics (đ, ă, ê, ơ, ư, etc.)"/>
-      <Text value="✅ Correct English words and phrases"/>
-      <Text value="✅ Fix code-switching boundaries"/>
-      <Text value="✅ Remove auto-caption artifacts [Music], [Applause], etc."/>
-      <Text value="✅ Keep natural speech markers (um, uh, à, ờ) if meaningful"/>
+      <Text name="inst_1" value="✅ Correct Vietnamese spelling with proper diacritics (đ, ă, ê, ơ, ư, etc.)"/>
+      <Text name="inst_2" value="✅ Correct English words and phrases"/>
+      <Text name="inst_3" value="✅ Fix code-switching boundaries"/>
+      <Text name="inst_4" value="✅ Remove auto-caption artifacts [Music], [Applause], etc."/>
+      <Text name="inst_5" value="✅ Keep natural speech markers (um, uh, à, ờ) if meaningful"/>
     </View>
   </View>
   
