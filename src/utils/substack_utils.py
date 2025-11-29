@@ -3,7 +3,21 @@ Substack downloading utilities.
 
 Downloads blog posts from Substack using Python requests and BeautifulSoup,
 following the project's data requirements for text-first pipeline.
+
+.. deprecated::
+    This module is deprecated as of v3. The project now focuses exclusively
+    on YouTube videos with transcripts. This file is kept for reference only.
+    See `ingest_youtube_v3.py` and `utils/data_utils_v3.py` for the current
+    workflow.
 """
+
+import warnings
+warnings.warn(
+    "substack_utils.py is deprecated. The Substack/TTS pipeline has been "
+    "removed in v3. Use the YouTube-only workflow instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 import re
 from datetime import datetime

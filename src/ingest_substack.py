@@ -3,7 +3,20 @@ Substack ingestion orchestrator for the NLP pipeline.
 
 Downloads articles from Substack blogs and ingests them into the database
 for the text-first processing pipeline.
+
+.. deprecated::
+    This module is deprecated as of v3. The project now focuses exclusively
+    on YouTube videos with transcripts. This file is kept for reference only.
+    See `ingest_youtube_v3.py` for the current ingestion workflow.
 """
+
+import warnings
+warnings.warn(
+    "ingest_substack.py is deprecated. Use ingest_youtube_v3.py instead. "
+    "The Substack/TTS pipeline has been removed in v3.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 import argparse
 import json
