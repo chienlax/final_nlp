@@ -1,0 +1,871 @@
+<!DOCTYPE html><html><head>
+      <title>06_database_design</title>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      
+      <link rel="stylesheet" href="file:///c:\Users\Quang Chien\.vscode\extensions\shd101wyy.markdown-preview-enhanced-0.8.20\crossnote\dependencies\katex\katex.min.css">
+      
+      
+      
+      
+      
+      <style>
+      code[class*=language-],pre[class*=language-]{color:#333;background:0 0;font-family:Consolas,"Liberation Mono",Menlo,Courier,monospace;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;word-wrap:normal;line-height:1.4;-moz-tab-size:8;-o-tab-size:8;tab-size:8;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none}pre[class*=language-]{padding:.8em;overflow:auto;border-radius:3px;background:#f5f5f5}:not(pre)>code[class*=language-]{padding:.1em;border-radius:.3em;white-space:normal;background:#f5f5f5}.token.blockquote,.token.comment{color:#969896}.token.cdata{color:#183691}.token.doctype,.token.macro.property,.token.punctuation,.token.variable{color:#333}.token.builtin,.token.important,.token.keyword,.token.operator,.token.rule{color:#a71d5d}.token.attr-value,.token.regex,.token.string,.token.url{color:#183691}.token.atrule,.token.boolean,.token.code,.token.command,.token.constant,.token.entity,.token.number,.token.property,.token.symbol{color:#0086b3}.token.prolog,.token.selector,.token.tag{color:#63a35c}.token.attr-name,.token.class,.token.class-name,.token.function,.token.id,.token.namespace,.token.pseudo-class,.token.pseudo-element,.token.url-reference .token.variable{color:#795da3}.token.entity{cursor:help}.token.title,.token.title .token.punctuation{font-weight:700;color:#1d3e81}.token.list{color:#ed6a43}.token.inserted{background-color:#eaffea;color:#55a532}.token.deleted{background-color:#ffecec;color:#bd2c00}.token.bold{font-weight:700}.token.italic{font-style:italic}.language-json .token.property{color:#183691}.language-markup .token.tag .token.punctuation{color:#333}.language-css .token.function,code.language-css{color:#0086b3}.language-yaml .token.atrule{color:#63a35c}code.language-yaml{color:#183691}.language-ruby .token.function{color:#333}.language-markdown .token.url{color:#795da3}.language-makefile .token.symbol{color:#795da3}.language-makefile .token.variable{color:#183691}.language-makefile .token.builtin{color:#0086b3}.language-bash .token.keyword{color:#0086b3}pre[data-line]{position:relative;padding:1em 0 1em 3em}pre[data-line] .line-highlight-wrapper{position:absolute;top:0;left:0;background-color:transparent;display:block;width:100%}pre[data-line] .line-highlight{position:absolute;left:0;right:0;padding:inherit 0;margin-top:1em;background:hsla(24,20%,50%,.08);background:linear-gradient(to right,hsla(24,20%,50%,.1) 70%,hsla(24,20%,50%,0));pointer-events:none;line-height:inherit;white-space:pre}pre[data-line] .line-highlight:before,pre[data-line] .line-highlight[data-end]:after{content:attr(data-start);position:absolute;top:.4em;left:.6em;min-width:1em;padding:0 .5em;background-color:hsla(24,20%,50%,.4);color:#f4f1ef;font:bold 65%/1.5 sans-serif;text-align:center;vertical-align:.3em;border-radius:999px;text-shadow:none;box-shadow:0 1px #fff}pre[data-line] .line-highlight[data-end]:after{content:attr(data-end);top:auto;bottom:.4em}html body{font-family:'Helvetica Neue',Helvetica,'Segoe UI',Arial,freesans,sans-serif;font-size:16px;line-height:1.6;color:#333;background-color:#fff;overflow:initial;box-sizing:border-box;word-wrap:break-word}html body>:first-child{margin-top:0}html body h1,html body h2,html body h3,html body h4,html body h5,html body h6{line-height:1.2;margin-top:1em;margin-bottom:16px;color:#000}html body h1{font-size:2.25em;font-weight:300;padding-bottom:.3em}html body h2{font-size:1.75em;font-weight:400;padding-bottom:.3em}html body h3{font-size:1.5em;font-weight:500}html body h4{font-size:1.25em;font-weight:600}html body h5{font-size:1.1em;font-weight:600}html body h6{font-size:1em;font-weight:600}html body h1,html body h2,html body h3,html body h4,html body h5{font-weight:600}html body h5{font-size:1em}html body h6{color:#5c5c5c}html body strong{color:#000}html body del{color:#5c5c5c}html body a:not([href]){color:inherit;text-decoration:none}html body a{color:#08c;text-decoration:none}html body a:hover{color:#00a3f5;text-decoration:none}html body img{max-width:100%}html body>p{margin-top:0;margin-bottom:16px;word-wrap:break-word}html body>ol,html body>ul{margin-bottom:16px}html body ol,html body ul{padding-left:2em}html body ol.no-list,html body ul.no-list{padding:0;list-style-type:none}html body ol ol,html body ol ul,html body ul ol,html body ul ul{margin-top:0;margin-bottom:0}html body li{margin-bottom:0}html body li.task-list-item{list-style:none}html body li>p{margin-top:0;margin-bottom:0}html body .task-list-item-checkbox{margin:0 .2em .25em -1.8em;vertical-align:middle}html body .task-list-item-checkbox:hover{cursor:pointer}html body blockquote{margin:16px 0;font-size:inherit;padding:0 15px;color:#5c5c5c;background-color:#f0f0f0;border-left:4px solid #d6d6d6}html body blockquote>:first-child{margin-top:0}html body blockquote>:last-child{margin-bottom:0}html body hr{height:4px;margin:32px 0;background-color:#d6d6d6;border:0 none}html body table{margin:10px 0 15px 0;border-collapse:collapse;border-spacing:0;display:block;width:100%;overflow:auto;word-break:normal;word-break:keep-all}html body table th{font-weight:700;color:#000}html body table td,html body table th{border:1px solid #d6d6d6;padding:6px 13px}html body dl{padding:0}html body dl dt{padding:0;margin-top:16px;font-size:1em;font-style:italic;font-weight:700}html body dl dd{padding:0 16px;margin-bottom:16px}html body code{font-family:Menlo,Monaco,Consolas,'Courier New',monospace;font-size:.85em;color:#000;background-color:#f0f0f0;border-radius:3px;padding:.2em 0}html body code::after,html body code::before{letter-spacing:-.2em;content:'\00a0'}html body pre>code{padding:0;margin:0;word-break:normal;white-space:pre;background:0 0;border:0}html body .highlight{margin-bottom:16px}html body .highlight pre,html body pre{padding:1em;overflow:auto;line-height:1.45;border:#d6d6d6;border-radius:3px}html body .highlight pre{margin-bottom:0;word-break:normal}html body pre code,html body pre tt{display:inline;max-width:initial;padding:0;margin:0;overflow:initial;line-height:inherit;word-wrap:normal;background-color:transparent;border:0}html body pre code:after,html body pre code:before,html body pre tt:after,html body pre tt:before{content:normal}html body blockquote,html body dl,html body ol,html body p,html body pre,html body ul{margin-top:0;margin-bottom:16px}html body kbd{color:#000;border:1px solid #d6d6d6;border-bottom:2px solid #c7c7c7;padding:2px 4px;background-color:#f0f0f0;border-radius:3px}@media print{html body{background-color:#fff}html body h1,html body h2,html body h3,html body h4,html body h5,html body h6{color:#000;page-break-after:avoid}html body blockquote{color:#5c5c5c}html body pre{page-break-inside:avoid}html body table{display:table}html body img{display:block;max-width:100%;max-height:100%}html body code,html body pre{word-wrap:break-word;white-space:pre}}.markdown-preview{width:100%;height:100%;box-sizing:border-box}.markdown-preview ul{list-style:disc}.markdown-preview ul ul{list-style:circle}.markdown-preview ul ul ul{list-style:square}.markdown-preview ol{list-style:decimal}.markdown-preview ol ol,.markdown-preview ul ol{list-style-type:lower-roman}.markdown-preview ol ol ol,.markdown-preview ol ul ol,.markdown-preview ul ol ol,.markdown-preview ul ul ol{list-style-type:lower-alpha}.markdown-preview .newpage,.markdown-preview .pagebreak{page-break-before:always}.markdown-preview pre.line-numbers{position:relative;padding-left:3.8em;counter-reset:linenumber}.markdown-preview pre.line-numbers>code{position:relative}.markdown-preview pre.line-numbers .line-numbers-rows{position:absolute;pointer-events:none;top:1em;font-size:100%;left:0;width:3em;letter-spacing:-1px;border-right:1px solid #999;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none}.markdown-preview pre.line-numbers .line-numbers-rows>span{pointer-events:none;display:block;counter-increment:linenumber}.markdown-preview pre.line-numbers .line-numbers-rows>span:before{content:counter(linenumber);color:#999;display:block;padding-right:.8em;text-align:right}.markdown-preview .mathjax-exps .MathJax_Display{text-align:center!important}.markdown-preview:not([data-for=preview]) .code-chunk .code-chunk-btn-group{display:none}.markdown-preview:not([data-for=preview]) .code-chunk .status{display:none}.markdown-preview:not([data-for=preview]) .code-chunk .output-div{margin-bottom:16px}.markdown-preview .md-toc{padding:0}.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link{display:inline;padding:.25rem 0}.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link div,.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link p{display:inline}.markdown-preview .md-toc .md-toc-link-wrapper.highlighted .md-toc-link{font-weight:800}.scrollbar-style::-webkit-scrollbar{width:8px}.scrollbar-style::-webkit-scrollbar-track{border-radius:10px;background-color:transparent}.scrollbar-style::-webkit-scrollbar-thumb{border-radius:5px;background-color:rgba(150,150,150,.66);border:4px solid rgba(150,150,150,.66);background-clip:content-box}html body[for=html-export]:not([data-presentation-mode]){position:relative;width:100%;height:100%;top:0;left:0;margin:0;padding:0;overflow:auto}html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{position:relative;top:0;min-height:100vh}@media screen and (min-width:914px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{padding:2em calc(50% - 457px + 2em)}}@media screen and (max-width:914px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{padding:2em}}@media screen and (max-width:450px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{font-size:14px!important;padding:1em}}@media print{html body[for=html-export]:not([data-presentation-mode]) #sidebar-toc-btn{display:none}}html body[for=html-export]:not([data-presentation-mode]) #sidebar-toc-btn{position:fixed;bottom:8px;left:8px;font-size:28px;cursor:pointer;color:inherit;z-index:99;width:32px;text-align:center;opacity:.4}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] #sidebar-toc-btn{opacity:1}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc{position:fixed;top:0;left:0;width:300px;height:100%;padding:32px 0 48px 0;font-size:14px;box-shadow:0 0 4px rgba(150,150,150,.33);box-sizing:border-box;overflow:auto;background-color:inherit}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar{width:8px}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar-track{border-radius:10px;background-color:transparent}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar-thumb{border-radius:5px;background-color:rgba(150,150,150,.66);border:4px solid rgba(150,150,150,.66);background-clip:content-box}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc a{text-decoration:none}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc{padding:0 16px}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link{display:inline;padding:.25rem 0}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link div,html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link p{display:inline}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper.highlighted .md-toc-link{font-weight:800}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{left:300px;width:calc(100% - 300px);padding:2em calc(50% - 457px - 300px / 2);margin:0;box-sizing:border-box}@media screen and (max-width:1274px){html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{padding:2em}}@media screen and (max-width:450px){html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{width:100%}}html body[for=html-export]:not([data-presentation-mode]):not([html-show-sidebar-toc]) .markdown-preview{left:50%;transform:translateX(-50%)}html body[for=html-export]:not([data-presentation-mode]):not([html-show-sidebar-toc]) .md-sidebar-toc{display:none}
+/* Please visit the URL below for more information: */
+/*   https://shd101wyy.github.io/markdown-preview-enhanced/#/customize-css */
+
+      </style>
+      <!-- The content below will be included at the end of the <head> element. --><script type="text/javascript">
+  document.addEventListener("DOMContentLoaded", function () {
+    // your code here
+  });
+</script></head><body for="html-export">
+    
+    
+      <div class="crossnote markdown-preview  ">
+      
+<h1 id="06-database-design">06. Database Design </h1>
+<p>This document explains the database design rationale and schema structure for the Vietnamese-English Code-Switching Speech Translation pipeline.</p>
+<hr>
+<h2 id="table-of-contents">Table of Contents </h2>
+<ol>
+<li><a href="#1-design-philosophy">Design Philosophy</a></li>
+<li><a href="#2-schema-evolution">Schema Evolution</a></li>
+<li><a href="#3-entity-relationship-diagram">Entity-Relationship Diagram</a></li>
+<li><a href="#4-table-definitions">Table Definitions</a></li>
+<li><a href="#5-enum-types">ENUM Types</a></li>
+<li><a href="#6-indexes-strategy">Indexes Strategy</a></li>
+<li><a href="#7-views">Views</a></li>
+<li><a href="#8-functions">Functions</a></li>
+<li><a href="#9-query-patterns">Query Patterns</a></li>
+<li><a href="#10-label-studio-integration-schema-v3">Label Studio Integration Schema (V3)</a></li>
+<li><a href="#11-schema-file-locations">Schema File Locations</a></li>
+</ol>
+<hr>
+<h2 id="1-design-philosophy">1. Design Philosophy </h2>
+<h3 id="core-principles">Core Principles </h3>
+<ol>
+<li>
+<p><strong>Separation of Concerns</strong></p>
+<ul>
+<li>Sources, samples, revisions, and annotations are separate entities</li>
+<li>Each table has a single responsibility</li>
+<li>Clear relationships via foreign keys</li>
+</ul>
+</li>
+<li>
+<p><strong>Immutable Audit Trail</strong></p>
+<ul>
+<li>Transcript and translation changes are append-only revisions</li>
+<li>Never update text content; always create new versions</li>
+<li>Full history preserved for quality tracking</li>
+</ul>
+</li>
+<li>
+<p><strong>Flexible Metadata</strong></p>
+<ul>
+<li>JSONB columns for evolving requirements</li>
+<li>Typed columns for frequently queried fields</li>
+<li>Best of both: schema + flexibility</li>
+</ul>
+</li>
+<li>
+<p><strong>Label Studio Optimized</strong></p>
+<ul>
+<li>Indexes designed for annotation workflow queries</li>
+<li>Review queue views for efficient task assignment</li>
+<li>Annotation tracking integrated at the schema level</li>
+</ul>
+</li>
+<li>
+<p><strong>Dual-Pipeline Support</strong></p>
+<ul>
+<li>Audio-First (YouTube): RAW → ALIGNED → SEGMENTED → ENHANCED → TRANSLATED → REVIEWED</li>
+<li>Text-First (Substack): RAW → NORMALIZED → CS_CHUNKED → TTS_GENERATED → TRANSLATED → REVIEWED</li>
+</ul>
+</li>
+</ol>
+<hr>
+<h2 id="2-schema-evolution">2. Schema Evolution </h2>
+<h3 id="v1--v2-migration">V1 → V2 Migration </h3>
+<p><strong>V1 (Single Table)</strong></p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Old: Everything in one table</span>
+<span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TABLE">TABLE</span> dataset_ledger <span class="token punctuation">(</span>
+    id <span class="token keyword keyword-SERIAL">SERIAL</span> <span class="token keyword keyword-PRIMARY">PRIMARY</span> <span class="token keyword keyword-KEY">KEY</span><span class="token punctuation">,</span>
+    file_path <span class="token keyword keyword-TEXT">TEXT</span><span class="token punctuation">,</span>
+    transcript <span class="token keyword keyword-TEXT">TEXT</span><span class="token punctuation">,</span>
+    translation <span class="token keyword keyword-TEXT">TEXT</span><span class="token punctuation">,</span>
+    <span class="token keyword keyword-status">status</span> <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">50</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    metadata JSONB
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><p><strong>V2 (Multi-Table Design)</strong></p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- New: Normalized structure</span>
+sources → samples → transcript_revisions
+                  → translation_revisions
+                  → annotations
+                  → sample_lineage
+                  → processing_logs
+</code></pre><h3 id="why-multi-table">Why Multi-Table? </h3>
+<table>
+<thead>
+<tr>
+<th>Problem (V1)</th>
+<th>Solution (V2)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No revision history</td>
+<td><code>transcript_revisions</code> table</td>
+</tr>
+<tr>
+<td>No source tracking</td>
+<td><code>sources</code> table</td>
+</tr>
+<tr>
+<td>No annotation integration</td>
+<td><code>annotations</code> table</td>
+</tr>
+<tr>
+<td>No segment relationships</td>
+<td><code>sample_lineage</code> table</td>
+</tr>
+<tr>
+<td>No audit trail</td>
+<td><code>processing_logs</code> table</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="3-entity-relationship-diagram">3. Entity-Relationship Diagram </h2>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>┌─────────────┐
+│   sources   │
+├─────────────┤
+│ source_id   │────┐
+│ source_type │    │
+│ external_id │    │
+│ name        │    │
+│ url         │    │
+│ metadata    │    │
+└─────────────┘    │
+                   │ 1:N
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│                          samples                             │
+├─────────────────────────────────────────────────────────────┤
+│ sample_id (PK)                                               │
+│ source_id (FK) ─────────────────────────────────────────────┘
+│ parent_sample_id (FK, self-ref) ←───────────────────────────┐
+│ external_id                                                  │
+│ content_type (audio_primary | text_primary)                 │
+│ pipeline_type                                                │
+│ processing_state (RAW → ... → REVIEWED)                     │
+│ audio_file_path                                              │
+│ text_file_path                                               │
+│ segment_index, start_time_ms, end_time_ms                   │
+│ duration_seconds, cs_ratio, quality_score                   │
+│ source_metadata, acoustic_metadata, linguistic_metadata     │
+│ label_studio_project_id, label_studio_task_id               │
+└────┬────────────────────┬────────────────────┬──────────────┘
+     │ 1:N                │ 1:N                │ 1:N
+     ▼                    ▼                    ▼
+┌───────────────┐  ┌──────────────────┐  ┌─────────────┐
+│ transcript_   │  │ translation_     │  │ annotations │
+│ revisions     │  │ revisions        │  ├─────────────┤
+├───────────────┤  ├──────────────────┤  │ task_type   │
+│ revision_id   │  │ revision_id      │  │ status      │
+│ sample_id(FK) │  │ sample_id(FK)    │  │ assigned_to │
+│ version       │  │ version          │  │ result      │
+│ transcript_   │  │ translation_     │  │ label_studio│
+│   text        │  │   text           │  │   _ids      │
+│ revision_type │  │ target_language  │  └─────────────┘
+│ timestamps    │  │ revision_type    │
+│ created_by    │  │ confidence_score │
+└───────────────┘  │ source_transcript│
+                   │   _revision_id   │
+                   └──────────────────┘
+
+                   Additional Tables
+┌─────────────────┐     ┌──────────────────┐
+│ sample_lineage  │     │ processing_logs  │
+├─────────────────┤     ├──────────────────┤
+│ ancestor_id(FK) │     │ sample_id(FK)    │
+│ descendant_id   │     │ operation        │
+│ derivation_type │     │ previous_state   │
+│ derivation_step │     │ new_state        │
+└─────────────────┘     │ executor         │
+                        │ success          │
+                        └──────────────────┘
+</code></pre><hr>
+<h2 id="4-table-definitions">4. Table Definitions </h2>
+<h3 id="41-sources">4.1 sources </h3>
+<p><strong>Purpose:</strong> Track original content sources (YouTube channels, Substack blogs)</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TABLE">TABLE</span> sources <span class="token punctuation">(</span>
+    source_id UUID <span class="token keyword keyword-PRIMARY">PRIMARY</span> <span class="token keyword keyword-KEY">KEY</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> gen_random_uuid<span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    source_type source_type <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>    <span class="token comment">-- youtube_with_transcript, substack, etc.</span>
+    external_id <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span><span class="token punctuation">,</span>            <span class="token comment">-- YouTube channel ID, Substack slug</span>
+    name <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">500</span><span class="token punctuation">)</span><span class="token punctuation">,</span>                   <span class="token comment">-- Human-readable name</span>
+    url <span class="token keyword keyword-TEXT">TEXT</span><span class="token punctuation">,</span>                            <span class="token comment">-- Base URL</span>
+    metadata JSONB <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'{}'</span><span class="token punctuation">,</span>         <span class="token comment">-- Flexible: subscriber count, etc.</span>
+    created_at TIMESTAMPTZ <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token function">NOW</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    updated_at TIMESTAMPTZ <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token function">NOW</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    <span class="token keyword keyword-UNIQUE">UNIQUE</span> <span class="token punctuation">(</span>source_type<span class="token punctuation">,</span> external_id<span class="token punctuation">)</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Key Design Decisions:</strong></p>
+<ul>
+<li>UUID primary key for distributed systems compatibility</li>
+<li><code>source_type</code> + <code>external_id</code> uniqueness prevents duplicates</li>
+<li>JSONB for evolving metadata requirements</li>
+</ul>
+<h3 id="42-samples">4.2 samples </h3>
+<p><strong>Purpose:</strong> Core data units with processing state tracking</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TABLE">TABLE</span> samples <span class="token punctuation">(</span>
+    sample_id UUID <span class="token keyword keyword-PRIMARY">PRIMARY</span> <span class="token keyword keyword-KEY">KEY</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> gen_random_uuid<span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    <span class="token comment">-- Relationships</span>
+    source_id UUID <span class="token keyword keyword-REFERENCES">REFERENCES</span> sources<span class="token punctuation">(</span>source_id<span class="token punctuation">)</span><span class="token punctuation">,</span>
+    parent_sample_id UUID <span class="token keyword keyword-REFERENCES">REFERENCES</span> samples<span class="token punctuation">(</span>sample_id<span class="token punctuation">)</span><span class="token punctuation">,</span>  <span class="token comment">-- Self-referential</span>
+    
+    <span class="token comment">-- Content identification</span>
+    external_id <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span><span class="token punctuation">,</span>            <span class="token comment">-- Video ID, article slug</span>
+    content_type content_type <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>  <span class="token comment">-- audio_primary, text_primary</span>
+    
+    <span class="token comment">-- File references</span>
+    audio_file_path <span class="token keyword keyword-TEXT">TEXT</span><span class="token punctuation">,</span>
+    text_file_path <span class="token keyword keyword-TEXT">TEXT</span><span class="token punctuation">,</span>
+    
+    <span class="token comment">-- Processing pipeline</span>
+    pipeline_type source_type <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>
+    processing_state processing_state <span class="token operator">NOT</span> <span class="token boolean">NULL</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'RAW'</span><span class="token punctuation">,</span>
+    
+    <span class="token comment">-- Segment metadata (for child samples)</span>
+    segment_index <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    start_time_ms <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    end_time_ms <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    
+    <span class="token comment">-- Version tracking (denormalized for fast access)</span>
+    current_transcript_version <span class="token keyword keyword-INTEGER">INTEGER</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token number">0</span><span class="token punctuation">,</span>
+    current_translation_version <span class="token keyword keyword-INTEGER">INTEGER</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token number">0</span><span class="token punctuation">,</span>
+    
+    <span class="token comment">-- Queryable metadata</span>
+    duration_seconds <span class="token keyword keyword-NUMERIC">NUMERIC</span><span class="token punctuation">(</span><span class="token number">10</span><span class="token punctuation">,</span> <span class="token number">2</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    sample_rate <span class="token keyword keyword-INTEGER">INTEGER</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token number">16000</span><span class="token punctuation">,</span>
+    cs_ratio <span class="token keyword keyword-NUMERIC">NUMERIC</span><span class="token punctuation">(</span><span class="token number">5</span><span class="token punctuation">,</span> <span class="token number">4</span><span class="token punctuation">)</span><span class="token punctuation">,</span>              <span class="token comment">-- Code-switching ratio</span>
+    quality_score <span class="token keyword keyword-NUMERIC">NUMERIC</span><span class="token punctuation">(</span><span class="token number">3</span><span class="token punctuation">,</span> <span class="token number">2</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    priority <span class="token keyword keyword-INTEGER">INTEGER</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token number">0</span><span class="token punctuation">,</span>
+    
+    <span class="token comment">-- Flexible metadata (JSONB)</span>
+    source_metadata JSONB <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'{}'</span><span class="token punctuation">,</span>
+    acoustic_metadata JSONB <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'{}'</span><span class="token punctuation">,</span>
+    linguistic_metadata JSONB <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'{}'</span><span class="token punctuation">,</span>
+    processing_metadata JSONB <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'{}'</span><span class="token punctuation">,</span>
+    
+    <span class="token comment">-- Label Studio integration</span>
+    label_studio_project_id <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    label_studio_task_id <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    
+    <span class="token comment">-- Soft delete</span>
+    is_deleted <span class="token keyword keyword-BOOLEAN">BOOLEAN</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token boolean">FALSE</span><span class="token punctuation">,</span>
+    deleted_at TIMESTAMPTZ<span class="token punctuation">,</span>
+    
+    <span class="token keyword keyword-CONSTRAINT">CONSTRAINT</span> chk_file_path <span class="token keyword keyword-CHECK">CHECK</span> <span class="token punctuation">(</span>
+        audio_file_path <span class="token operator">IS</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span> <span class="token operator">OR</span> text_file_path <span class="token operator">IS</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span>
+    <span class="token punctuation">)</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Key Design Decisions:</strong></p>
+<ul>
+<li>Self-referential <code>parent_sample_id</code> for segment hierarchies</li>
+<li><code>processing_state</code> enum for state machine tracking</li>
+<li>Denormalized version counters for O(1) "latest" queries</li>
+<li>Soft delete instead of hard delete for audit compliance</li>
+</ul>
+<h3 id="43-transcript_revisions">4.3 transcript_revisions </h3>
+<p><strong>Purpose:</strong> Immutable transcript history (append-only)</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TABLE">TABLE</span> transcript_revisions <span class="token punctuation">(</span>
+    revision_id UUID <span class="token keyword keyword-PRIMARY">PRIMARY</span> <span class="token keyword keyword-KEY">KEY</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> gen_random_uuid<span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    sample_id UUID <span class="token operator">NOT</span> <span class="token boolean">NULL</span> <span class="token keyword keyword-REFERENCES">REFERENCES</span> samples<span class="token punctuation">(</span>sample_id<span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    version <span class="token keyword keyword-INTEGER">INTEGER</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>            <span class="token comment">-- Auto-incrementing per sample</span>
+    transcript_text <span class="token keyword keyword-TEXT">TEXT</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>
+    
+    revision_type <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">50</span><span class="token punctuation">)</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>  <span class="token comment">-- raw, asr_generated, human_corrected, mfa_aligned</span>
+    revision_source <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">100</span><span class="token punctuation">)</span><span class="token punctuation">,</span>        <span class="token comment">-- youtube_api, whisper, annotator_123</span>
+    
+    timestamps JSONB<span class="token punctuation">,</span>                    <span class="token comment">-- [{start_ms, end_ms, text}, ...]</span>
+    metadata JSONB <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'{}'</span><span class="token punctuation">,</span>
+    
+    created_at TIMESTAMPTZ <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token function">NOW</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    created_by <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    <span class="token keyword keyword-UNIQUE">UNIQUE</span> <span class="token punctuation">(</span>sample_id<span class="token punctuation">,</span> version<span class="token punctuation">)</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Key Design Decisions:</strong></p>
+<ul>
+<li>Never UPDATE, only INSERT new versions</li>
+<li><code>timestamps</code> JSONB for word-level alignment data</li>
+<li><code>revision_type</code> categorizes the source of changes</li>
+</ul>
+<h3 id="44-translation_revisions">4.4 translation_revisions </h3>
+<p><strong>Purpose:</strong> Immutable translation history with provenance</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TABLE">TABLE</span> translation_revisions <span class="token punctuation">(</span>
+    revision_id UUID <span class="token keyword keyword-PRIMARY">PRIMARY</span> <span class="token keyword keyword-KEY">KEY</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> gen_random_uuid<span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    sample_id UUID <span class="token operator">NOT</span> <span class="token boolean">NULL</span> <span class="token keyword keyword-REFERENCES">REFERENCES</span> samples<span class="token punctuation">(</span>sample_id<span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    version <span class="token keyword keyword-INTEGER">INTEGER</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>
+    source_transcript_revision_id UUID <span class="token keyword keyword-REFERENCES">REFERENCES</span> transcript_revisions<span class="token punctuation">(</span>revision_id<span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    translation_text <span class="token keyword keyword-TEXT">TEXT</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>
+    source_language <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">10</span><span class="token punctuation">)</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'vi-en'</span><span class="token punctuation">,</span>  <span class="token comment">-- Code-switched source</span>
+    target_language <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">10</span><span class="token punctuation">)</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>         <span class="token comment">-- 'vi' (translate to Vietnamese)</span>
+    
+    revision_type <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">50</span><span class="token punctuation">)</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>  <span class="token comment">-- llm_generated, human_corrected, final</span>
+    revision_source <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">100</span><span class="token punctuation">)</span><span class="token punctuation">,</span>        <span class="token comment">-- gpt-4, annotator_456</span>
+    
+    confidence_score <span class="token keyword keyword-NUMERIC">NUMERIC</span><span class="token punctuation">(</span><span class="token number">5</span><span class="token punctuation">,</span> <span class="token number">4</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    bleu_score <span class="token keyword keyword-NUMERIC">NUMERIC</span><span class="token punctuation">(</span><span class="token number">5</span><span class="token punctuation">,</span> <span class="token number">4</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    metadata JSONB <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'{}'</span><span class="token punctuation">,</span>
+    
+    created_at TIMESTAMPTZ <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token function">NOW</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    created_by <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    <span class="token keyword keyword-UNIQUE">UNIQUE</span> <span class="token punctuation">(</span>sample_id<span class="token punctuation">,</span> version<span class="token punctuation">)</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Key Design Decisions:</strong></p>
+<ul>
+<li>Links back to specific transcript revision for reproducibility</li>
+<li>Quality metrics stored for model comparison</li>
+</ul>
+<h3 id="45-annotations">4.5 annotations </h3>
+<p><strong>Purpose:</strong> Label Studio task and result tracking</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TABLE">TABLE</span> annotations <span class="token punctuation">(</span>
+    annotation_id UUID <span class="token keyword keyword-PRIMARY">PRIMARY</span> <span class="token keyword keyword-KEY">KEY</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> gen_random_uuid<span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    sample_id UUID <span class="token operator">NOT</span> <span class="token boolean">NULL</span> <span class="token keyword keyword-REFERENCES">REFERENCES</span> samples<span class="token punctuation">(</span>sample_id<span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    task_type annotation_task <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>  <span class="token comment">-- transcript_verification, translation_review, etc.</span>
+    <span class="token keyword keyword-status">status</span> annotation_status <span class="token operator">NOT</span> <span class="token boolean">NULL</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'pending'</span><span class="token punctuation">,</span>
+    
+    assigned_to <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    assigned_at TIMESTAMPTZ<span class="token punctuation">,</span>
+    
+    label_studio_project_id <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    label_studio_task_id <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    label_studio_annotation_id <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    
+    result JSONB<span class="token punctuation">,</span>                        <span class="token comment">-- Annotation result data</span>
+    time_spent_seconds <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    confidence_score <span class="token keyword keyword-NUMERIC">NUMERIC</span><span class="token punctuation">(</span><span class="token number">3</span><span class="token punctuation">,</span> <span class="token number">2</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    created_at TIMESTAMPTZ <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token function">NOW</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    updated_at TIMESTAMPTZ <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token function">NOW</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    completed_at TIMESTAMPTZ<span class="token punctuation">,</span>
+    
+    <span class="token keyword keyword-UNIQUE">UNIQUE</span> <span class="token punctuation">(</span>sample_id<span class="token punctuation">,</span> task_type<span class="token punctuation">,</span> label_studio_annotation_id<span class="token punctuation">)</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><h3 id="46-sample_lineage">4.6 sample_lineage </h3>
+<p><strong>Purpose:</strong> Track complex derivation relationships</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TABLE">TABLE</span> sample_lineage <span class="token punctuation">(</span>
+    lineage_id UUID <span class="token keyword keyword-PRIMARY">PRIMARY</span> <span class="token keyword keyword-KEY">KEY</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> gen_random_uuid<span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    ancestor_sample_id UUID <span class="token operator">NOT</span> <span class="token boolean">NULL</span> <span class="token keyword keyword-REFERENCES">REFERENCES</span> samples<span class="token punctuation">(</span>sample_id<span class="token punctuation">)</span><span class="token punctuation">,</span>
+    descendant_sample_id UUID <span class="token operator">NOT</span> <span class="token boolean">NULL</span> <span class="token keyword keyword-REFERENCES">REFERENCES</span> samples<span class="token punctuation">(</span>sample_id<span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    derivation_type <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">50</span><span class="token punctuation">)</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>  <span class="token comment">-- segmentation, enhancement, tts_generation</span>
+    derivation_step <span class="token keyword keyword-INTEGER">INTEGER</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>       <span class="token comment">-- Distance in chain (1 = direct)</span>
+    processing_params JSONB <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'{}'</span><span class="token punctuation">,</span>
+    
+    created_at TIMESTAMPTZ <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token function">NOW</span><span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    <span class="token keyword keyword-UNIQUE">UNIQUE</span> <span class="token punctuation">(</span>ancestor_sample_id<span class="token punctuation">,</span> descendant_sample_id<span class="token punctuation">)</span><span class="token punctuation">,</span>
+    <span class="token keyword keyword-CHECK">CHECK</span> <span class="token punctuation">(</span>ancestor_sample_id <span class="token operator">!=</span> descendant_sample_id<span class="token punctuation">)</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Use Case:</strong> When a 10-minute video is segmented into 20 clips, each clip has a lineage record pointing to the parent video.</p>
+<h3 id="47-processing_logs">4.7 processing_logs </h3>
+<p><strong>Purpose:</strong> Audit trail for all processing operations</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TABLE">TABLE</span> processing_logs <span class="token punctuation">(</span>
+    log_id UUID <span class="token keyword keyword-PRIMARY">PRIMARY</span> <span class="token keyword keyword-KEY">KEY</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> gen_random_uuid<span class="token punctuation">(</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    sample_id UUID <span class="token keyword keyword-REFERENCES">REFERENCES</span> samples<span class="token punctuation">(</span>sample_id<span class="token punctuation">)</span><span class="token punctuation">,</span>
+    
+    operation <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">100</span><span class="token punctuation">)</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>     <span class="token comment">-- state_transition, enhancement, segmentation</span>
+    previous_state processing_state<span class="token punctuation">,</span>
+    new_state processing_state<span class="token punctuation">,</span>
+    
+    executor <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span><span class="token punctuation">,</span>               <span class="token comment">-- Script name, container ID, user</span>
+    execution_time_ms <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    
+    input_params JSONB<span class="token punctuation">,</span>
+    output_summary JSONB<span class="token punctuation">,</span>
+    error_message <span class="token keyword keyword-TEXT">TEXT</span><span class="token punctuation">,</span>
+    success <span class="token keyword keyword-BOOLEAN">BOOLEAN</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>
+    
+    created_at TIMESTAMPTZ <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token function">NOW</span><span class="token punctuation">(</span><span class="token punctuation">)</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><hr>
+<h2 id="5-enum-types">5. ENUM Types </h2>
+<h3 id="51-source_type">5.1 source_type </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TYPE">TYPE</span> source_type <span class="token keyword keyword-AS">AS</span> <span class="token keyword keyword-ENUM">ENUM</span> <span class="token punctuation">(</span>
+    <span class="token string">'youtube_with_transcript'</span><span class="token punctuation">,</span>
+    <span class="token string">'youtube_without_transcript'</span><span class="token punctuation">,</span>
+    <span class="token string">'substack'</span><span class="token punctuation">,</span>
+    <span class="token string">'manual_upload'</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Rationale:</strong> Different sources require different processing pipelines.</p>
+<h3 id="52-processing_state">5.2 processing_state </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TYPE">TYPE</span> processing_state <span class="token keyword keyword-AS">AS</span> <span class="token keyword keyword-ENUM">ENUM</span> <span class="token punctuation">(</span>
+    <span class="token string">'RAW'</span><span class="token punctuation">,</span>              <span class="token comment">-- Initial state after ingestion</span>
+    <span class="token string">'ALIGNED'</span><span class="token punctuation">,</span>          <span class="token comment">-- MFA forced alignment complete</span>
+    <span class="token string">'SEGMENTED'</span><span class="token punctuation">,</span>        <span class="token comment">-- Split into clips (transcript-based)</span>
+    <span class="token string">'VAD_SEGMENTED'</span><span class="token punctuation">,</span>    <span class="token comment">-- Split into clips (VAD-based)</span>
+    <span class="token string">'ENHANCED'</span><span class="token punctuation">,</span>         <span class="token comment">-- Audio enhancement (DeepFilterNet)</span>
+    <span class="token string">'NORMALIZED'</span><span class="token punctuation">,</span>       <span class="token comment">-- Text normalization complete (text-first)</span>
+    <span class="token string">'CS_CHUNKED'</span><span class="token punctuation">,</span>       <span class="token comment">-- CS chunks extracted (text-first)</span>
+    <span class="token string">'TTS_GENERATED'</span><span class="token punctuation">,</span>    <span class="token comment">-- TTS audio generated (text-first)</span>
+    <span class="token string">'TRANSLATED'</span><span class="token punctuation">,</span>       <span class="token comment">-- LLM translation complete</span>
+    <span class="token string">'REVIEWED'</span><span class="token punctuation">,</span>         <span class="token comment">-- Human review passed</span>
+    <span class="token string">'REJECTED'</span>          <span class="token comment">-- Failed quality check</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><p><strong>State Transitions:</strong></p>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>Audio-First (with transcript):
+RAW → ALIGNED → SEGMENTED → ENHANCED → TRANSLATED → REVIEWED
+
+Audio-First (without transcript):
+RAW → VAD_SEGMENTED → ALIGNED → ENHANCED → TRANSLATED → REVIEWED
+
+Text-First:
+RAW → NORMALIZED → CS_CHUNKED → TTS_GENERATED → TRANSLATED → REVIEWED
+</code></pre><h3 id="53-content_type">5.3 content_type </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TYPE">TYPE</span> content_type <span class="token keyword keyword-AS">AS</span> <span class="token keyword keyword-ENUM">ENUM</span> <span class="token punctuation">(</span>
+    <span class="token string">'audio_primary'</span><span class="token punctuation">,</span>    <span class="token comment">-- Audio file with optional transcript</span>
+    <span class="token string">'text_primary'</span>      <span class="token comment">-- Text file with optional synthesized audio</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><h3 id="54-annotation_task">5.4 annotation_task </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TYPE">TYPE</span> annotation_task <span class="token keyword keyword-AS">AS</span> <span class="token keyword keyword-ENUM">ENUM</span> <span class="token punctuation">(</span>
+    <span class="token string">'transcript_verification'</span><span class="token punctuation">,</span>  <span class="token comment">-- Verify/correct ASR output</span>
+    <span class="token string">'timestamp_alignment'</span><span class="token punctuation">,</span>      <span class="token comment">-- Verify word-level timestamps</span>
+    <span class="token string">'translation_review'</span><span class="token punctuation">,</span>       <span class="token comment">-- Review LLM translations</span>
+    <span class="token string">'quality_assessment'</span>        <span class="token comment">-- Final quality check</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><h3 id="55-annotation_status">5.5 annotation_status </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-TYPE">TYPE</span> annotation_status <span class="token keyword keyword-AS">AS</span> <span class="token keyword keyword-ENUM">ENUM</span> <span class="token punctuation">(</span>
+    <span class="token string">'pending'</span><span class="token punctuation">,</span>      <span class="token comment">-- Awaiting assignment</span>
+    <span class="token string">'in_progress'</span><span class="token punctuation">,</span>  <span class="token comment">-- Being worked on</span>
+    <span class="token string">'completed'</span><span class="token punctuation">,</span>    <span class="token comment">-- Successfully finished</span>
+    <span class="token string">'skipped'</span><span class="token punctuation">,</span>      <span class="token comment">-- Skipped (too hard, bad quality)</span>
+    <span class="token string">'disputed'</span>      <span class="token comment">-- Requires senior review</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><hr>
+<h2 id="6-indexes-strategy">6. Indexes Strategy </h2>
+<h3 id="61-review-queue-index-primary-workflow">6.1 Review Queue Index (Primary Workflow) </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-INDEX">INDEX</span> idx_samples_review_queue <span class="token keyword keyword-ON">ON</span> samples<span class="token punctuation">(</span>
+    processing_state<span class="token punctuation">,</span> 
+    priority <span class="token keyword keyword-DESC">DESC</span><span class="token punctuation">,</span> 
+    created_at <span class="token keyword keyword-ASC">ASC</span>
+<span class="token punctuation">)</span> <span class="token keyword keyword-WHERE">WHERE</span> is_deleted <span class="token operator">=</span> <span class="token boolean">FALSE</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Query Pattern:</strong> "What needs review next?"</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> samples 
+<span class="token keyword keyword-WHERE">WHERE</span> processing_state <span class="token operator">=</span> <span class="token string">'ALIGNED'</span> 
+  <span class="token operator">AND</span> is_deleted <span class="token operator">=</span> <span class="token boolean">FALSE</span>
+<span class="token keyword keyword-ORDER">ORDER</span> <span class="token keyword keyword-BY">BY</span> priority <span class="token keyword keyword-DESC">DESC</span><span class="token punctuation">,</span> created_at <span class="token keyword keyword-ASC">ASC</span>
+<span class="token keyword keyword-LIMIT">LIMIT</span> <span class="token number">100</span><span class="token punctuation">;</span>
+</code></pre><h3 id="62-segment-lookup">6.2 Segment Lookup </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-INDEX">INDEX</span> idx_samples_parent <span class="token keyword keyword-ON">ON</span> samples<span class="token punctuation">(</span>parent_sample_id<span class="token punctuation">,</span> segment_index<span class="token punctuation">)</span>
+<span class="token keyword keyword-WHERE">WHERE</span> parent_sample_id <span class="token operator">IS</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Query Pattern:</strong> "Get all segments of a video"</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> samples
+<span class="token keyword keyword-WHERE">WHERE</span> parent_sample_id <span class="token operator">=</span> <span class="token string">'uuid'</span>
+<span class="token keyword keyword-ORDER">ORDER</span> <span class="token keyword keyword-BY">BY</span> segment_index<span class="token punctuation">;</span>
+</code></pre><h3 id="63-latest-revision">6.3 Latest Revision </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-INDEX">INDEX</span> idx_transcript_rev_latest <span class="token keyword keyword-ON">ON</span> transcript_revisions<span class="token punctuation">(</span>
+    sample_id<span class="token punctuation">,</span> 
+    version <span class="token keyword keyword-DESC">DESC</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Query Pattern:</strong> "Get latest transcript"</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> transcript_revisions
+<span class="token keyword keyword-WHERE">WHERE</span> sample_id <span class="token operator">=</span> <span class="token string">'uuid'</span>
+<span class="token keyword keyword-ORDER">ORDER</span> <span class="token keyword keyword-BY">BY</span> version <span class="token keyword keyword-DESC">DESC</span>
+<span class="token keyword keyword-LIMIT">LIMIT</span> <span class="token number">1</span><span class="token punctuation">;</span>
+</code></pre><h3 id="64-cs-ratio-filtering">6.4 CS Ratio Filtering </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-INDEX">INDEX</span> idx_samples_cs_ratio <span class="token keyword keyword-ON">ON</span> samples<span class="token punctuation">(</span>cs_ratio <span class="token keyword keyword-DESC">DESC</span><span class="token punctuation">)</span>
+<span class="token keyword keyword-WHERE">WHERE</span> cs_ratio <span class="token operator">IS</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span> <span class="token operator">AND</span> cs_ratio <span class="token operator">&gt;</span> <span class="token number">0</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Query Pattern:</strong> "Find high code-switching samples"</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> samples
+<span class="token keyword keyword-WHERE">WHERE</span> cs_ratio <span class="token operator">&gt;</span> <span class="token number">0.3</span>
+<span class="token keyword keyword-ORDER">ORDER</span> <span class="token keyword keyword-BY">BY</span> cs_ratio <span class="token keyword keyword-DESC">DESC</span><span class="token punctuation">;</span>
+</code></pre><h3 id="65-jsonb-metadata-search">6.5 JSONB Metadata Search </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-INDEX">INDEX</span> idx_samples_source_meta <span class="token keyword keyword-ON">ON</span> samples <span class="token keyword keyword-USING">USING</span> GIN <span class="token punctuation">(</span>source_metadata<span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-INDEX">INDEX</span> idx_samples_linguistic_meta <span class="token keyword keyword-ON">ON</span> samples <span class="token keyword keyword-USING">USING</span> GIN <span class="token punctuation">(</span>linguistic_metadata<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Query Pattern:</strong> "Find samples from a specific channel"</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> samples
+<span class="token keyword keyword-WHERE">WHERE</span> source_metadata @<span class="token operator">&gt;</span> <span class="token string">'{"channel_id": "UCxxx"}'</span>::jsonb<span class="token punctuation">;</span>
+</code></pre><hr>
+<h2 id="7-views">7. Views </h2>
+<h3 id="71-v_sample_current_state">7.1 v_sample_current_state </h3>
+<p><strong>Purpose:</strong> Consolidated view of samples with latest revisions</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-VIEW">VIEW</span> v_sample_current_state <span class="token keyword keyword-AS">AS</span>
+<span class="token keyword keyword-SELECT">SELECT</span> 
+    s<span class="token punctuation">.</span><span class="token operator">*</span><span class="token punctuation">,</span>
+    tr<span class="token punctuation">.</span>transcript_text <span class="token keyword keyword-AS">AS</span> current_transcript<span class="token punctuation">,</span>
+    tr<span class="token punctuation">.</span>timestamps <span class="token keyword keyword-AS">AS</span> transcript_timestamps<span class="token punctuation">,</span>
+    tl<span class="token punctuation">.</span>translation_text <span class="token keyword keyword-AS">AS</span> current_translation<span class="token punctuation">,</span>
+    src<span class="token punctuation">.</span>name <span class="token keyword keyword-AS">AS</span> source_name
+<span class="token keyword keyword-FROM">FROM</span> samples s
+<span class="token keyword keyword-LEFT">LEFT</span> <span class="token keyword keyword-JOIN">JOIN</span> LATERAL <span class="token punctuation">(</span>
+    <span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> transcript_revisions 
+    <span class="token keyword keyword-WHERE">WHERE</span> sample_id <span class="token operator">=</span> s<span class="token punctuation">.</span>sample_id 
+    <span class="token keyword keyword-ORDER">ORDER</span> <span class="token keyword keyword-BY">BY</span> version <span class="token keyword keyword-DESC">DESC</span> <span class="token keyword keyword-LIMIT">LIMIT</span> <span class="token number">1</span>
+<span class="token punctuation">)</span> tr <span class="token keyword keyword-ON">ON</span> <span class="token boolean">TRUE</span>
+<span class="token keyword keyword-LEFT">LEFT</span> <span class="token keyword keyword-JOIN">JOIN</span> LATERAL <span class="token punctuation">(</span>
+    <span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> translation_revisions 
+    <span class="token keyword keyword-WHERE">WHERE</span> sample_id <span class="token operator">=</span> s<span class="token punctuation">.</span>sample_id 
+    <span class="token keyword keyword-ORDER">ORDER</span> <span class="token keyword keyword-BY">BY</span> version <span class="token keyword keyword-DESC">DESC</span> <span class="token keyword keyword-LIMIT">LIMIT</span> <span class="token number">1</span>
+<span class="token punctuation">)</span> tl <span class="token keyword keyword-ON">ON</span> <span class="token boolean">TRUE</span>
+<span class="token keyword keyword-LEFT">LEFT</span> <span class="token keyword keyword-JOIN">JOIN</span> sources src <span class="token keyword keyword-ON">ON</span> s<span class="token punctuation">.</span>source_id <span class="token operator">=</span> src<span class="token punctuation">.</span>source_id
+<span class="token keyword keyword-WHERE">WHERE</span> s<span class="token punctuation">.</span>is_deleted <span class="token operator">=</span> <span class="token boolean">FALSE</span><span class="token punctuation">;</span>
+</code></pre><h3 id="72-v_review_queue">7.2 v_review_queue </h3>
+<p><strong>Purpose:</strong> Label Studio task assignment queue</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-VIEW">VIEW</span> v_review_queue <span class="token keyword keyword-AS">AS</span>
+<span class="token keyword keyword-SELECT">SELECT</span> 
+    s<span class="token punctuation">.</span>sample_id<span class="token punctuation">,</span>
+    s<span class="token punctuation">.</span>processing_state<span class="token punctuation">,</span>
+    s<span class="token punctuation">.</span>priority<span class="token punctuation">,</span>
+    <span class="token keyword keyword-CASE">CASE</span> 
+        <span class="token keyword keyword-WHEN">WHEN</span> s<span class="token punctuation">.</span>processing_state <span class="token operator">IN</span> <span class="token punctuation">(</span><span class="token string">'RAW'</span><span class="token punctuation">,</span> <span class="token string">'VAD_SEGMENTED'</span><span class="token punctuation">)</span> <span class="token keyword keyword-THEN">THEN</span> <span class="token string">'transcript_verification'</span>
+        <span class="token keyword keyword-WHEN">WHEN</span> s<span class="token punctuation">.</span>processing_state <span class="token operator">=</span> <span class="token string">'ALIGNED'</span> <span class="token keyword keyword-THEN">THEN</span> <span class="token string">'timestamp_alignment'</span>
+        <span class="token keyword keyword-WHEN">WHEN</span> s<span class="token punctuation">.</span>processing_state <span class="token operator">=</span> <span class="token string">'TRANSLATED'</span> <span class="token keyword keyword-THEN">THEN</span> <span class="token string">'translation_review'</span>
+        <span class="token keyword keyword-ELSE">ELSE</span> <span class="token string">'quality_assessment'</span>
+    <span class="token keyword keyword-END">END</span> <span class="token keyword keyword-AS">AS</span> suggested_task_type<span class="token punctuation">,</span>
+    <span class="token punctuation">(</span><span class="token keyword keyword-SELECT">SELECT</span> <span class="token function">COUNT</span><span class="token punctuation">(</span><span class="token operator">*</span><span class="token punctuation">)</span> <span class="token keyword keyword-FROM">FROM</span> annotations a 
+     <span class="token keyword keyword-WHERE">WHERE</span> a<span class="token punctuation">.</span>sample_id <span class="token operator">=</span> s<span class="token punctuation">.</span>sample_id <span class="token operator">AND</span> a<span class="token punctuation">.</span><span class="token keyword keyword-status">status</span> <span class="token operator">=</span> <span class="token string">'completed'</span><span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> completed_annotations
+<span class="token keyword keyword-FROM">FROM</span> samples s
+<span class="token keyword keyword-WHERE">WHERE</span> s<span class="token punctuation">.</span>processing_state <span class="token operator">NOT</span> <span class="token operator">IN</span> <span class="token punctuation">(</span><span class="token string">'REVIEWED'</span><span class="token punctuation">,</span> <span class="token string">'REJECTED'</span><span class="token punctuation">)</span>
+<span class="token keyword keyword-ORDER">ORDER</span> <span class="token keyword keyword-BY">BY</span> s<span class="token punctuation">.</span>priority <span class="token keyword keyword-DESC">DESC</span><span class="token punctuation">,</span> s<span class="token punctuation">.</span>created_at <span class="token keyword keyword-ASC">ASC</span><span class="token punctuation">;</span>
+</code></pre><h3 id="73-v_pipeline_stats">7.3 v_pipeline_stats </h3>
+<p><strong>Purpose:</strong> Processing statistics dashboard</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-VIEW">VIEW</span> v_pipeline_stats <span class="token keyword keyword-AS">AS</span>
+<span class="token keyword keyword-SELECT">SELECT</span> 
+    pipeline_type<span class="token punctuation">,</span>
+    processing_state<span class="token punctuation">,</span>
+    <span class="token function">COUNT</span><span class="token punctuation">(</span><span class="token operator">*</span><span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> sample_count<span class="token punctuation">,</span>
+    <span class="token function">AVG</span><span class="token punctuation">(</span>duration_seconds<span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> avg_duration<span class="token punctuation">,</span>
+    <span class="token function">AVG</span><span class="token punctuation">(</span>cs_ratio<span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> avg_cs_ratio
+<span class="token keyword keyword-FROM">FROM</span> samples
+<span class="token keyword keyword-WHERE">WHERE</span> is_deleted <span class="token operator">=</span> <span class="token boolean">FALSE</span>
+<span class="token keyword keyword-GROUP">GROUP</span> <span class="token keyword keyword-BY">BY</span> pipeline_type<span class="token punctuation">,</span> processing_state<span class="token punctuation">;</span>
+</code></pre><hr>
+<h2 id="8-functions">8. Functions </h2>
+<h3 id="81-transition_sample_state">8.1 transition_sample_state </h3>
+<p><strong>Purpose:</strong> State machine with automatic logging</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-FUNCTION">FUNCTION</span> transition_sample_state<span class="token punctuation">(</span>
+    p_sample_id UUID<span class="token punctuation">,</span>
+    p_new_state processing_state<span class="token punctuation">,</span>
+    p_executor <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'system'</span>
+<span class="token punctuation">)</span> <span class="token keyword keyword-RETURNS">RETURNS</span> <span class="token keyword keyword-BOOLEAN">BOOLEAN</span>
+</code></pre><p><strong>Usage:</strong></p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-SELECT">SELECT</span> transition_sample_state<span class="token punctuation">(</span>
+    <span class="token string">'uuid-here'</span><span class="token punctuation">,</span>
+    <span class="token string">'ALIGNED'</span><span class="token punctuation">,</span>
+    <span class="token string">'mfa_alignment_script'</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><h3 id="82-add_transcript_revision">8.2 add_transcript_revision </h3>
+<p><strong>Purpose:</strong> Add revision with automatic version increment</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-FUNCTION">FUNCTION</span> add_transcript_revision<span class="token punctuation">(</span>
+    p_sample_id UUID<span class="token punctuation">,</span>
+    p_transcript_text <span class="token keyword keyword-TEXT">TEXT</span><span class="token punctuation">,</span>
+    p_revision_type <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">50</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    p_revision_source <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">100</span><span class="token punctuation">)</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>
+    p_timestamps JSONB <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>
+    p_created_by <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'system'</span>
+<span class="token punctuation">)</span> <span class="token keyword keyword-RETURNS">RETURNS</span> UUID
+</code></pre><p><strong>Usage:</strong></p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-SELECT">SELECT</span> add_transcript_revision<span class="token punctuation">(</span>
+    <span class="token string">'sample-uuid'</span><span class="token punctuation">,</span>
+    <span class="token string">'Corrected transcript text'</span><span class="token punctuation">,</span>
+    <span class="token string">'human_corrected'</span><span class="token punctuation">,</span>
+    <span class="token string">'annotator_123'</span><span class="token punctuation">,</span>
+    <span class="token boolean">NULL</span><span class="token punctuation">,</span>
+    <span class="token string">'john_doe'</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><h3 id="83-get_or_create_source">8.3 get_or_create_source </h3>
+<p><strong>Purpose:</strong> Idempotent source creation</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-FUNCTION">FUNCTION</span> get_or_create_source<span class="token punctuation">(</span>
+    p_source_type source_type<span class="token punctuation">,</span>
+    p_external_id <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+    p_name <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">500</span><span class="token punctuation">)</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>
+    p_url <span class="token keyword keyword-TEXT">TEXT</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token boolean">NULL</span><span class="token punctuation">,</span>
+    p_metadata JSONB <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token string">'{}'</span>
+<span class="token punctuation">)</span> <span class="token keyword keyword-RETURNS">RETURNS</span> UUID
+</code></pre><hr>
+<h2 id="9-query-patterns">9. Query Patterns </h2>
+<h3 id="91-ingestion-query">9.1 Ingestion Query </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Insert sample with source lookup</span>
+<span class="token keyword keyword-WITH">WITH</span> src <span class="token keyword keyword-AS">AS</span> <span class="token punctuation">(</span>
+    <span class="token keyword keyword-SELECT">SELECT</span> get_or_create_source<span class="token punctuation">(</span>
+        <span class="token string">'youtube_with_transcript'</span><span class="token punctuation">,</span>
+        <span class="token string">'UCxxx'</span><span class="token punctuation">,</span>
+        <span class="token string">'Channel Name'</span><span class="token punctuation">,</span>
+        <span class="token string">'https://youtube.com/@channel'</span><span class="token punctuation">,</span>
+        <span class="token string">'{"subscriber_count": 100000}'</span>::jsonb
+    <span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> source_id
+<span class="token punctuation">)</span>
+<span class="token keyword keyword-INSERT">INSERT</span> <span class="token keyword keyword-INTO">INTO</span> samples <span class="token punctuation">(</span>
+    source_id<span class="token punctuation">,</span> external_id<span class="token punctuation">,</span> content_type<span class="token punctuation">,</span> pipeline_type<span class="token punctuation">,</span>
+    audio_file_path<span class="token punctuation">,</span> text_file_path<span class="token punctuation">,</span> duration_seconds<span class="token punctuation">,</span> cs_ratio
+<span class="token punctuation">)</span>
+<span class="token keyword keyword-SELECT">SELECT</span> 
+    src<span class="token punctuation">.</span>source_id<span class="token punctuation">,</span> <span class="token string">'video123'</span><span class="token punctuation">,</span> <span class="token string">'audio_primary'</span><span class="token punctuation">,</span> <span class="token string">'youtube_with_transcript'</span><span class="token punctuation">,</span>
+    <span class="token string">'data/raw/audio/video123.wav'</span><span class="token punctuation">,</span> <span class="token string">'data/raw/text/video123_transcript.json'</span><span class="token punctuation">,</span>
+    <span class="token number">300.5</span><span class="token punctuation">,</span> <span class="token number">0.35</span>
+<span class="token keyword keyword-FROM">FROM</span> src
+<span class="token keyword keyword-RETURNING">RETURNING</span> sample_id<span class="token punctuation">;</span>
+</code></pre><h3 id="92-get-processing-queue">9.2 Get Processing Queue </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-SELECT">SELECT</span> 
+    sample_id<span class="token punctuation">,</span>
+    external_id<span class="token punctuation">,</span>
+    processing_state<span class="token punctuation">,</span>
+    priority<span class="token punctuation">,</span>
+    audio_file_path<span class="token punctuation">,</span>
+    text_file_path
+<span class="token keyword keyword-FROM">FROM</span> samples
+<span class="token keyword keyword-WHERE">WHERE</span> processing_state <span class="token operator">=</span> <span class="token string">'RAW'</span>
+  <span class="token operator">AND</span> pipeline_type <span class="token operator">=</span> <span class="token string">'youtube_with_transcript'</span>
+  <span class="token operator">AND</span> is_deleted <span class="token operator">=</span> <span class="token boolean">FALSE</span>
+<span class="token keyword keyword-ORDER">ORDER</span> <span class="token keyword keyword-BY">BY</span> priority <span class="token keyword keyword-DESC">DESC</span><span class="token punctuation">,</span> created_at <span class="token keyword keyword-ASC">ASC</span>
+<span class="token keyword keyword-LIMIT">LIMIT</span> <span class="token number">10</span><span class="token punctuation">;</span>
+</code></pre><h3 id="93-get-sample-with-history">9.3 Get Sample with History </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-SELECT">SELECT</span> 
+    s<span class="token punctuation">.</span>sample_id<span class="token punctuation">,</span>
+    s<span class="token punctuation">.</span>external_id<span class="token punctuation">,</span>
+    s<span class="token punctuation">.</span>processing_state<span class="token punctuation">,</span>
+    json_agg<span class="token punctuation">(</span><span class="token keyword keyword-DISTINCT">DISTINCT</span> jsonb_build_object<span class="token punctuation">(</span>
+        <span class="token string">'version'</span><span class="token punctuation">,</span> tr<span class="token punctuation">.</span>version<span class="token punctuation">,</span>
+        <span class="token string">'type'</span><span class="token punctuation">,</span> tr<span class="token punctuation">.</span>revision_type<span class="token punctuation">,</span>
+        <span class="token string">'created_at'</span><span class="token punctuation">,</span> tr<span class="token punctuation">.</span>created_at
+    <span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> transcript_history<span class="token punctuation">,</span>
+    json_agg<span class="token punctuation">(</span><span class="token keyword keyword-DISTINCT">DISTINCT</span> jsonb_build_object<span class="token punctuation">(</span>
+        <span class="token string">'version'</span><span class="token punctuation">,</span> tl<span class="token punctuation">.</span>version<span class="token punctuation">,</span>
+        <span class="token string">'type'</span><span class="token punctuation">,</span> tl<span class="token punctuation">.</span>revision_type<span class="token punctuation">,</span>
+        <span class="token string">'created_at'</span><span class="token punctuation">,</span> tl<span class="token punctuation">.</span>created_at
+    <span class="token punctuation">)</span><span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> translation_history
+<span class="token keyword keyword-FROM">FROM</span> samples s
+<span class="token keyword keyword-LEFT">LEFT</span> <span class="token keyword keyword-JOIN">JOIN</span> transcript_revisions tr <span class="token keyword keyword-ON">ON</span> s<span class="token punctuation">.</span>sample_id <span class="token operator">=</span> tr<span class="token punctuation">.</span>sample_id
+<span class="token keyword keyword-LEFT">LEFT</span> <span class="token keyword keyword-JOIN">JOIN</span> translation_revisions tl <span class="token keyword keyword-ON">ON</span> s<span class="token punctuation">.</span>sample_id <span class="token operator">=</span> tl<span class="token punctuation">.</span>sample_id
+<span class="token keyword keyword-WHERE">WHERE</span> s<span class="token punctuation">.</span>sample_id <span class="token operator">=</span> <span class="token string">'uuid-here'</span>
+<span class="token keyword keyword-GROUP">GROUP</span> <span class="token keyword keyword-BY">BY</span> s<span class="token punctuation">.</span>sample_id<span class="token punctuation">;</span>
+</code></pre><hr>
+<h2 id="10-label-studio-integration-schema-v3">10. Label Studio Integration Schema (V3) </h2>
+<p>The Label Studio integration adds versioning and conflict resolution capabilities. This schema is defined in <code>init_scripts/03_schema_label_studio_v1.sql</code>.</p>
+<h3 id="101-new-columns-on-samples-table">10.1 New Columns on <code>samples</code> Table </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- DVC versioning for conflict detection</span>
+<span class="token keyword keyword-ALTER">ALTER</span> <span class="token keyword keyword-TABLE">TABLE</span> samples <span class="token keyword keyword-ADD">ADD</span> <span class="token keyword keyword-COLUMN">COLUMN</span> dvc_commit_hash <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">64</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token keyword keyword-ALTER">ALTER</span> <span class="token keyword keyword-TABLE">TABLE</span> samples <span class="token keyword keyword-ADD">ADD</span> <span class="token keyword keyword-COLUMN">COLUMN</span> audio_file_md5 <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">32</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token keyword keyword-ALTER">ALTER</span> <span class="token keyword keyword-TABLE">TABLE</span> samples <span class="token keyword keyword-ADD">ADD</span> <span class="token keyword keyword-COLUMN">COLUMN</span> sync_version <span class="token keyword keyword-INTEGER">INTEGER</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token number">1</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- Locking for concurrent annotation</span>
+<span class="token keyword keyword-ALTER">ALTER</span> <span class="token keyword keyword-TABLE">TABLE</span> samples <span class="token keyword keyword-ADD">ADD</span> <span class="token keyword keyword-COLUMN">COLUMN</span> locked_at TIMESTAMPTZ<span class="token punctuation">;</span>
+<span class="token keyword keyword-ALTER">ALTER</span> <span class="token keyword keyword-TABLE">TABLE</span> samples <span class="token keyword keyword-ADD">ADD</span> <span class="token keyword keyword-COLUMN">COLUMN</span> locked_by <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- Quality control / Gold standard</span>
+<span class="token keyword keyword-ALTER">ALTER</span> <span class="token keyword keyword-TABLE">TABLE</span> samples <span class="token keyword keyword-ADD">ADD</span> <span class="token keyword keyword-COLUMN">COLUMN</span> is_gold_standard <span class="token keyword keyword-BOOLEAN">BOOLEAN</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token boolean">FALSE</span><span class="token punctuation">;</span>
+<span class="token keyword keyword-ALTER">ALTER</span> <span class="token keyword keyword-TABLE">TABLE</span> samples <span class="token keyword keyword-ADD">ADD</span> <span class="token keyword keyword-COLUMN">COLUMN</span> gold_score <span class="token keyword keyword-NUMERIC">NUMERIC</span><span class="token punctuation">(</span><span class="token number">5</span><span class="token punctuation">,</span><span class="token number">4</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dvc_commit_hash</code></td>
+<td>VARCHAR(64)</td>
+<td>DVC commit at time of sync</td>
+</tr>
+<tr>
+<td><code>audio_file_md5</code></td>
+<td>VARCHAR(32)</td>
+<td>File checksum for change detection</td>
+</tr>
+<tr>
+<td><code>sync_version</code></td>
+<td>INTEGER</td>
+<td>Incremented when sample is updated</td>
+</tr>
+<tr>
+<td><code>locked_at</code></td>
+<td>TIMESTAMPTZ</td>
+<td>When sample was locked for annotation</td>
+</tr>
+<tr>
+<td><code>locked_by</code></td>
+<td>VARCHAR(255)</td>
+<td>Who locked the sample</td>
+</tr>
+<tr>
+<td><code>is_gold_standard</code></td>
+<td>BOOLEAN</td>
+<td>Mark as quality control sample</td>
+</tr>
+<tr>
+<td><code>gold_score</code></td>
+<td>NUMERIC(5,4)</td>
+<td>Expected score for gold samples</td>
+</tr>
+</tbody>
+</table>
+<h3 id="102-locking-functions">10.2 Locking Functions </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Lock a sample for annotation</span>
+<span class="token keyword keyword-CREATE">CREATE</span> <span class="token operator">OR</span> <span class="token keyword keyword-REPLACE">REPLACE</span> <span class="token keyword keyword-FUNCTION">FUNCTION</span> lock_sample_for_annotation<span class="token punctuation">(</span>
+    p_sample_id UUID<span class="token punctuation">,</span>
+    p_annotator <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span>
+<span class="token punctuation">)</span> <span class="token keyword keyword-RETURNS">RETURNS</span> <span class="token keyword keyword-TABLE">TABLE</span><span class="token punctuation">(</span>
+    success <span class="token keyword keyword-BOOLEAN">BOOLEAN</span><span class="token punctuation">,</span>
+    current_sync_version <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    message <span class="token keyword keyword-TEXT">TEXT</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- Unlock a sample after annotation</span>
+<span class="token keyword keyword-CREATE">CREATE</span> <span class="token operator">OR</span> <span class="token keyword keyword-REPLACE">REPLACE</span> <span class="token keyword keyword-FUNCTION">FUNCTION</span> unlock_sample<span class="token punctuation">(</span>
+    p_sample_id UUID<span class="token punctuation">,</span>
+    p_annotator <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span>
+<span class="token punctuation">)</span> <span class="token keyword keyword-RETURNS">RETURNS</span> <span class="token keyword keyword-BOOLEAN">BOOLEAN</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Usage:</strong></p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Lock before annotation</span>
+<span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> lock_sample_for_annotation<span class="token punctuation">(</span><span class="token string">'uuid-here'</span><span class="token punctuation">,</span> <span class="token string">'annotator_1'</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token comment">-- Returns: success=true, current_sync_version=5, message='Sample locked'</span>
+
+<span class="token comment">-- Unlock after completion</span>
+<span class="token keyword keyword-SELECT">SELECT</span> unlock_sample<span class="token punctuation">(</span><span class="token string">'uuid-here'</span><span class="token punctuation">,</span> <span class="token string">'annotator_1'</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><h3 id="103-conflict-detection-functions">10.3 Conflict Detection Functions </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Check if sample was modified during annotation</span>
+<span class="token keyword keyword-CREATE">CREATE</span> <span class="token operator">OR</span> <span class="token keyword keyword-REPLACE">REPLACE</span> <span class="token keyword keyword-FUNCTION">FUNCTION</span> check_annotation_conflict<span class="token punctuation">(</span>
+    p_sample_id UUID<span class="token punctuation">,</span>
+    p_annotation_sync_version <span class="token keyword keyword-INTEGER">INTEGER</span>
+<span class="token punctuation">)</span> <span class="token keyword keyword-RETURNS">RETURNS</span> <span class="token keyword keyword-TABLE">TABLE</span><span class="token punctuation">(</span>
+    has_conflict <span class="token keyword keyword-BOOLEAN">BOOLEAN</span><span class="token punctuation">,</span>
+    current_version <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    annotation_version <span class="token keyword keyword-INTEGER">INTEGER</span><span class="token punctuation">,</span>
+    message <span class="token keyword keyword-TEXT">TEXT</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- Create conflict sample when discrepancy detected</span>
+<span class="token keyword keyword-CREATE">CREATE</span> <span class="token operator">OR</span> <span class="token keyword keyword-REPLACE">REPLACE</span> <span class="token keyword keyword-FUNCTION">FUNCTION</span> create_conflict_sample<span class="token punctuation">(</span>
+    p_original_sample_id UUID<span class="token punctuation">,</span>
+    p_annotation_data JSONB<span class="token punctuation">,</span>
+    p_annotator <span class="token keyword keyword-VARCHAR">VARCHAR</span><span class="token punctuation">(</span><span class="token number">255</span><span class="token punctuation">)</span>
+<span class="token punctuation">)</span> <span class="token keyword keyword-RETURNS">RETURNS</span> UUID<span class="token punctuation">;</span>
+</code></pre><p><strong>Usage:</strong></p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Check for conflict before recording annotation</span>
+<span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> check_annotation_conflict<span class="token punctuation">(</span><span class="token string">'uuid-here'</span><span class="token punctuation">,</span> <span class="token number">5</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+<span class="token comment">-- Returns: has_conflict=true if sync_version &gt; 5</span>
+
+<span class="token comment">-- Create conflict sample if needed</span>
+<span class="token keyword keyword-SELECT">SELECT</span> create_conflict_sample<span class="token punctuation">(</span>
+    <span class="token string">'original-uuid'</span><span class="token punctuation">,</span>
+    <span class="token string">'{"transcript": "annotated text"}'</span>::jsonb<span class="token punctuation">,</span>
+    <span class="token string">'annotator_1'</span>
+<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><h3 id="104-gold-standard-functions">10.4 Gold Standard Functions </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Mark a sample as gold standard</span>
+<span class="token keyword keyword-CREATE">CREATE</span> <span class="token operator">OR</span> <span class="token keyword keyword-REPLACE">REPLACE</span> <span class="token keyword keyword-FUNCTION">FUNCTION</span> set_gold_standard<span class="token punctuation">(</span>
+    p_sample_id UUID<span class="token punctuation">,</span>
+    p_expected_score <span class="token keyword keyword-NUMERIC">NUMERIC</span><span class="token punctuation">(</span><span class="token number">5</span><span class="token punctuation">,</span><span class="token number">4</span><span class="token punctuation">)</span> <span class="token keyword keyword-DEFAULT">DEFAULT</span> <span class="token boolean">NULL</span>
+<span class="token punctuation">)</span> <span class="token keyword keyword-RETURNS">RETURNS</span> <span class="token keyword keyword-BOOLEAN">BOOLEAN</span><span class="token punctuation">;</span>
+</code></pre><p><strong>Usage:</strong></p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Set sample as gold standard with expected score</span>
+<span class="token keyword keyword-SELECT">SELECT</span> set_gold_standard<span class="token punctuation">(</span><span class="token string">'uuid-here'</span><span class="token punctuation">,</span> <span class="token number">0.95</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><h3 id="105-new-views">10.5 New Views </h3>
+<h4 id="v_annotator_accuracy">v_annotator_accuracy </h4>
+<p>Track annotator performance against gold standard samples:</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-VIEW">VIEW</span> v_annotator_accuracy <span class="token keyword keyword-AS">AS</span>
+<span class="token keyword keyword-SELECT">SELECT</span> 
+    a<span class="token punctuation">.</span>assigned_to <span class="token keyword keyword-AS">AS</span> annotator<span class="token punctuation">,</span>
+    <span class="token function">COUNT</span><span class="token punctuation">(</span><span class="token operator">*</span><span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> total_annotations<span class="token punctuation">,</span>
+    <span class="token function">COUNT</span><span class="token punctuation">(</span><span class="token keyword keyword-CASE">CASE</span> <span class="token keyword keyword-WHEN">WHEN</span> s<span class="token punctuation">.</span>is_gold_standard <span class="token keyword keyword-THEN">THEN</span> <span class="token number">1</span> <span class="token keyword keyword-END">END</span><span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> gold_annotations<span class="token punctuation">,</span>
+    <span class="token function">AVG</span><span class="token punctuation">(</span><span class="token keyword keyword-CASE">CASE</span> <span class="token keyword keyword-WHEN">WHEN</span> s<span class="token punctuation">.</span>is_gold_standard <span class="token keyword keyword-THEN">THEN</span> a<span class="token punctuation">.</span>confidence_score <span class="token keyword keyword-END">END</span><span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> avg_gold_score<span class="token punctuation">,</span>
+    <span class="token function">AVG</span><span class="token punctuation">(</span><span class="token keyword keyword-CASE">CASE</span> <span class="token keyword keyword-WHEN">WHEN</span> s<span class="token punctuation">.</span>is_gold_standard 
+        <span class="token keyword keyword-THEN">THEN</span> ABS<span class="token punctuation">(</span>a<span class="token punctuation">.</span>confidence_score <span class="token operator">-</span> s<span class="token punctuation">.</span>gold_score<span class="token punctuation">)</span> <span class="token keyword keyword-END">END</span><span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> avg_gold_deviation
+<span class="token keyword keyword-FROM">FROM</span> annotations a
+<span class="token keyword keyword-JOIN">JOIN</span> samples s <span class="token keyword keyword-ON">ON</span> a<span class="token punctuation">.</span>sample_id <span class="token operator">=</span> s<span class="token punctuation">.</span>sample_id
+<span class="token keyword keyword-WHERE">WHERE</span> a<span class="token punctuation">.</span><span class="token keyword keyword-status">status</span> <span class="token operator">=</span> <span class="token string">'completed'</span>
+<span class="token keyword keyword-GROUP">GROUP</span> <span class="token keyword keyword-BY">BY</span> a<span class="token punctuation">.</span>assigned_to<span class="token punctuation">;</span>
+</code></pre><h4 id="v_gold_standard_samples">v_gold_standard_samples </h4>
+<p>List all gold standard samples:</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-VIEW">VIEW</span> v_gold_standard_samples <span class="token keyword keyword-AS">AS</span>
+<span class="token keyword keyword-SELECT">SELECT</span> 
+    s<span class="token punctuation">.</span>sample_id<span class="token punctuation">,</span>
+    s<span class="token punctuation">.</span>external_id<span class="token punctuation">,</span>
+    s<span class="token punctuation">.</span>gold_score<span class="token punctuation">,</span>
+    s<span class="token punctuation">.</span>processing_state<span class="token punctuation">,</span>
+    <span class="token function">COUNT</span><span class="token punctuation">(</span>a<span class="token punctuation">.</span>annotation_id<span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> annotation_count<span class="token punctuation">,</span>
+    <span class="token function">AVG</span><span class="token punctuation">(</span>a<span class="token punctuation">.</span>confidence_score<span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> avg_annotator_score
+<span class="token keyword keyword-FROM">FROM</span> samples s
+<span class="token keyword keyword-LEFT">LEFT</span> <span class="token keyword keyword-JOIN">JOIN</span> annotations a <span class="token keyword keyword-ON">ON</span> s<span class="token punctuation">.</span>sample_id <span class="token operator">=</span> a<span class="token punctuation">.</span>sample_id
+<span class="token keyword keyword-WHERE">WHERE</span> s<span class="token punctuation">.</span>is_gold_standard <span class="token operator">=</span> <span class="token boolean">TRUE</span>
+<span class="token keyword keyword-GROUP">GROUP</span> <span class="token keyword keyword-BY">BY</span> s<span class="token punctuation">.</span>sample_id<span class="token punctuation">;</span>
+</code></pre><h4 id="v_sync_status">v_sync_status </h4>
+<p>Monitor DVC synchronization status:</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-VIEW">VIEW</span> v_sync_status <span class="token keyword keyword-AS">AS</span>
+<span class="token keyword keyword-SELECT">SELECT</span> 
+    dvc_commit_hash<span class="token punctuation">,</span>
+    <span class="token function">COUNT</span><span class="token punctuation">(</span><span class="token operator">*</span><span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> sample_count<span class="token punctuation">,</span>
+    <span class="token function">MAX</span><span class="token punctuation">(</span>updated_at<span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> last_updated<span class="token punctuation">,</span>
+    <span class="token function">COUNT</span><span class="token punctuation">(</span><span class="token keyword keyword-CASE">CASE</span> <span class="token keyword keyword-WHEN">WHEN</span> locked_at <span class="token operator">IS</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span> <span class="token keyword keyword-THEN">THEN</span> <span class="token number">1</span> <span class="token keyword keyword-END">END</span><span class="token punctuation">)</span> <span class="token keyword keyword-AS">AS</span> locked_count
+<span class="token keyword keyword-FROM">FROM</span> samples
+<span class="token keyword keyword-WHERE">WHERE</span> is_deleted <span class="token operator">=</span> <span class="token boolean">FALSE</span>
+<span class="token keyword keyword-GROUP">GROUP</span> <span class="token keyword keyword-BY">BY</span> dvc_commit_hash
+<span class="token keyword keyword-ORDER">ORDER</span> <span class="token keyword keyword-BY">BY</span> last_updated <span class="token keyword keyword-DESC">DESC</span><span class="token punctuation">;</span>
+</code></pre><h3 id="106-updated-indexes">10.6 Updated Indexes </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Fast lookup for locked samples</span>
+<span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-INDEX">INDEX</span> idx_samples_locked <span class="token keyword keyword-ON">ON</span> samples<span class="token punctuation">(</span>locked_at<span class="token punctuation">)</span>
+<span class="token keyword keyword-WHERE">WHERE</span> locked_at <span class="token operator">IS</span> <span class="token operator">NOT</span> <span class="token boolean">NULL</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- Gold standard queries</span>
+<span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-INDEX">INDEX</span> idx_samples_gold <span class="token keyword keyword-ON">ON</span> samples<span class="token punctuation">(</span>is_gold_standard<span class="token punctuation">)</span>
+<span class="token keyword keyword-WHERE">WHERE</span> is_gold_standard <span class="token operator">=</span> <span class="token boolean">TRUE</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- Sync version for conflict detection</span>
+<span class="token keyword keyword-CREATE">CREATE</span> <span class="token keyword keyword-INDEX">INDEX</span> idx_samples_sync_version <span class="token keyword keyword-ON">ON</span> samples<span class="token punctuation">(</span>sync_version<span class="token punctuation">)</span><span class="token punctuation">;</span>
+</code></pre><hr>
+<h2 id="11-schema-file-locations">11. Schema File Locations </h2>
+<p>The complete schema is defined in multiple files:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>init_scripts/01_schema.sql</code></td>
+<td>Legacy V1 schema (deprecated)</td>
+</tr>
+<tr>
+<td><code>init_scripts/02_schema_v2.sql</code></td>
+<td>Core multi-table schema</td>
+</tr>
+<tr>
+<td><code>init_scripts/03_schema_label_studio_v1.sql</code></td>
+<td>Label Studio integration additions</td>
+</tr>
+</tbody>
+</table>
+<p>To initialize the database:</p>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Via Docker Compose (recommended - runs all init scripts)</span>
+<span class="token function">docker-compose</span> up <span class="token parameter variable">-d</span> postgres
+
+<span class="token comment"># Or manually (run in order)</span>
+psql <span class="token parameter variable">-h</span> localhost <span class="token parameter variable">-U</span> admin <span class="token parameter variable">-d</span> data_factory <span class="token parameter variable">-f</span> init_scripts/02_schema_v2.sql
+psql <span class="token parameter variable">-h</span> localhost <span class="token parameter variable">-U</span> admin <span class="token parameter variable">-d</span> data_factory <span class="token parameter variable">-f</span> init_scripts/03_schema_label_studio_v1.sql
+</code></pre>
+      </div>
+      
+      
+    
+    
+    
+    
+    
+    
+  
+    </body></html>

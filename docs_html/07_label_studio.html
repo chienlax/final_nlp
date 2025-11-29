@@ -1,0 +1,722 @@
+<!DOCTYPE html><html><head>
+      <title>07_label_studio</title>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      
+      <link rel="stylesheet" href="file:///c:\Users\Quang Chien\.vscode\extensions\shd101wyy.markdown-preview-enhanced-0.8.20\crossnote\dependencies\katex\katex.min.css">
+      
+      
+      
+      
+      
+      <style>
+      code[class*=language-],pre[class*=language-]{color:#333;background:0 0;font-family:Consolas,"Liberation Mono",Menlo,Courier,monospace;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;word-wrap:normal;line-height:1.4;-moz-tab-size:8;-o-tab-size:8;tab-size:8;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none}pre[class*=language-]{padding:.8em;overflow:auto;border-radius:3px;background:#f5f5f5}:not(pre)>code[class*=language-]{padding:.1em;border-radius:.3em;white-space:normal;background:#f5f5f5}.token.blockquote,.token.comment{color:#969896}.token.cdata{color:#183691}.token.doctype,.token.macro.property,.token.punctuation,.token.variable{color:#333}.token.builtin,.token.important,.token.keyword,.token.operator,.token.rule{color:#a71d5d}.token.attr-value,.token.regex,.token.string,.token.url{color:#183691}.token.atrule,.token.boolean,.token.code,.token.command,.token.constant,.token.entity,.token.number,.token.property,.token.symbol{color:#0086b3}.token.prolog,.token.selector,.token.tag{color:#63a35c}.token.attr-name,.token.class,.token.class-name,.token.function,.token.id,.token.namespace,.token.pseudo-class,.token.pseudo-element,.token.url-reference .token.variable{color:#795da3}.token.entity{cursor:help}.token.title,.token.title .token.punctuation{font-weight:700;color:#1d3e81}.token.list{color:#ed6a43}.token.inserted{background-color:#eaffea;color:#55a532}.token.deleted{background-color:#ffecec;color:#bd2c00}.token.bold{font-weight:700}.token.italic{font-style:italic}.language-json .token.property{color:#183691}.language-markup .token.tag .token.punctuation{color:#333}.language-css .token.function,code.language-css{color:#0086b3}.language-yaml .token.atrule{color:#63a35c}code.language-yaml{color:#183691}.language-ruby .token.function{color:#333}.language-markdown .token.url{color:#795da3}.language-makefile .token.symbol{color:#795da3}.language-makefile .token.variable{color:#183691}.language-makefile .token.builtin{color:#0086b3}.language-bash .token.keyword{color:#0086b3}pre[data-line]{position:relative;padding:1em 0 1em 3em}pre[data-line] .line-highlight-wrapper{position:absolute;top:0;left:0;background-color:transparent;display:block;width:100%}pre[data-line] .line-highlight{position:absolute;left:0;right:0;padding:inherit 0;margin-top:1em;background:hsla(24,20%,50%,.08);background:linear-gradient(to right,hsla(24,20%,50%,.1) 70%,hsla(24,20%,50%,0));pointer-events:none;line-height:inherit;white-space:pre}pre[data-line] .line-highlight:before,pre[data-line] .line-highlight[data-end]:after{content:attr(data-start);position:absolute;top:.4em;left:.6em;min-width:1em;padding:0 .5em;background-color:hsla(24,20%,50%,.4);color:#f4f1ef;font:bold 65%/1.5 sans-serif;text-align:center;vertical-align:.3em;border-radius:999px;text-shadow:none;box-shadow:0 1px #fff}pre[data-line] .line-highlight[data-end]:after{content:attr(data-end);top:auto;bottom:.4em}html body{font-family:'Helvetica Neue',Helvetica,'Segoe UI',Arial,freesans,sans-serif;font-size:16px;line-height:1.6;color:#333;background-color:#fff;overflow:initial;box-sizing:border-box;word-wrap:break-word}html body>:first-child{margin-top:0}html body h1,html body h2,html body h3,html body h4,html body h5,html body h6{line-height:1.2;margin-top:1em;margin-bottom:16px;color:#000}html body h1{font-size:2.25em;font-weight:300;padding-bottom:.3em}html body h2{font-size:1.75em;font-weight:400;padding-bottom:.3em}html body h3{font-size:1.5em;font-weight:500}html body h4{font-size:1.25em;font-weight:600}html body h5{font-size:1.1em;font-weight:600}html body h6{font-size:1em;font-weight:600}html body h1,html body h2,html body h3,html body h4,html body h5{font-weight:600}html body h5{font-size:1em}html body h6{color:#5c5c5c}html body strong{color:#000}html body del{color:#5c5c5c}html body a:not([href]){color:inherit;text-decoration:none}html body a{color:#08c;text-decoration:none}html body a:hover{color:#00a3f5;text-decoration:none}html body img{max-width:100%}html body>p{margin-top:0;margin-bottom:16px;word-wrap:break-word}html body>ol,html body>ul{margin-bottom:16px}html body ol,html body ul{padding-left:2em}html body ol.no-list,html body ul.no-list{padding:0;list-style-type:none}html body ol ol,html body ol ul,html body ul ol,html body ul ul{margin-top:0;margin-bottom:0}html body li{margin-bottom:0}html body li.task-list-item{list-style:none}html body li>p{margin-top:0;margin-bottom:0}html body .task-list-item-checkbox{margin:0 .2em .25em -1.8em;vertical-align:middle}html body .task-list-item-checkbox:hover{cursor:pointer}html body blockquote{margin:16px 0;font-size:inherit;padding:0 15px;color:#5c5c5c;background-color:#f0f0f0;border-left:4px solid #d6d6d6}html body blockquote>:first-child{margin-top:0}html body blockquote>:last-child{margin-bottom:0}html body hr{height:4px;margin:32px 0;background-color:#d6d6d6;border:0 none}html body table{margin:10px 0 15px 0;border-collapse:collapse;border-spacing:0;display:block;width:100%;overflow:auto;word-break:normal;word-break:keep-all}html body table th{font-weight:700;color:#000}html body table td,html body table th{border:1px solid #d6d6d6;padding:6px 13px}html body dl{padding:0}html body dl dt{padding:0;margin-top:16px;font-size:1em;font-style:italic;font-weight:700}html body dl dd{padding:0 16px;margin-bottom:16px}html body code{font-family:Menlo,Monaco,Consolas,'Courier New',monospace;font-size:.85em;color:#000;background-color:#f0f0f0;border-radius:3px;padding:.2em 0}html body code::after,html body code::before{letter-spacing:-.2em;content:'\00a0'}html body pre>code{padding:0;margin:0;word-break:normal;white-space:pre;background:0 0;border:0}html body .highlight{margin-bottom:16px}html body .highlight pre,html body pre{padding:1em;overflow:auto;line-height:1.45;border:#d6d6d6;border-radius:3px}html body .highlight pre{margin-bottom:0;word-break:normal}html body pre code,html body pre tt{display:inline;max-width:initial;padding:0;margin:0;overflow:initial;line-height:inherit;word-wrap:normal;background-color:transparent;border:0}html body pre code:after,html body pre code:before,html body pre tt:after,html body pre tt:before{content:normal}html body blockquote,html body dl,html body ol,html body p,html body pre,html body ul{margin-top:0;margin-bottom:16px}html body kbd{color:#000;border:1px solid #d6d6d6;border-bottom:2px solid #c7c7c7;padding:2px 4px;background-color:#f0f0f0;border-radius:3px}@media print{html body{background-color:#fff}html body h1,html body h2,html body h3,html body h4,html body h5,html body h6{color:#000;page-break-after:avoid}html body blockquote{color:#5c5c5c}html body pre{page-break-inside:avoid}html body table{display:table}html body img{display:block;max-width:100%;max-height:100%}html body code,html body pre{word-wrap:break-word;white-space:pre}}.markdown-preview{width:100%;height:100%;box-sizing:border-box}.markdown-preview ul{list-style:disc}.markdown-preview ul ul{list-style:circle}.markdown-preview ul ul ul{list-style:square}.markdown-preview ol{list-style:decimal}.markdown-preview ol ol,.markdown-preview ul ol{list-style-type:lower-roman}.markdown-preview ol ol ol,.markdown-preview ol ul ol,.markdown-preview ul ol ol,.markdown-preview ul ul ol{list-style-type:lower-alpha}.markdown-preview .newpage,.markdown-preview .pagebreak{page-break-before:always}.markdown-preview pre.line-numbers{position:relative;padding-left:3.8em;counter-reset:linenumber}.markdown-preview pre.line-numbers>code{position:relative}.markdown-preview pre.line-numbers .line-numbers-rows{position:absolute;pointer-events:none;top:1em;font-size:100%;left:0;width:3em;letter-spacing:-1px;border-right:1px solid #999;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none}.markdown-preview pre.line-numbers .line-numbers-rows>span{pointer-events:none;display:block;counter-increment:linenumber}.markdown-preview pre.line-numbers .line-numbers-rows>span:before{content:counter(linenumber);color:#999;display:block;padding-right:.8em;text-align:right}.markdown-preview .mathjax-exps .MathJax_Display{text-align:center!important}.markdown-preview:not([data-for=preview]) .code-chunk .code-chunk-btn-group{display:none}.markdown-preview:not([data-for=preview]) .code-chunk .status{display:none}.markdown-preview:not([data-for=preview]) .code-chunk .output-div{margin-bottom:16px}.markdown-preview .md-toc{padding:0}.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link{display:inline;padding:.25rem 0}.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link div,.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link p{display:inline}.markdown-preview .md-toc .md-toc-link-wrapper.highlighted .md-toc-link{font-weight:800}.scrollbar-style::-webkit-scrollbar{width:8px}.scrollbar-style::-webkit-scrollbar-track{border-radius:10px;background-color:transparent}.scrollbar-style::-webkit-scrollbar-thumb{border-radius:5px;background-color:rgba(150,150,150,.66);border:4px solid rgba(150,150,150,.66);background-clip:content-box}html body[for=html-export]:not([data-presentation-mode]){position:relative;width:100%;height:100%;top:0;left:0;margin:0;padding:0;overflow:auto}html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{position:relative;top:0;min-height:100vh}@media screen and (min-width:914px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{padding:2em calc(50% - 457px + 2em)}}@media screen and (max-width:914px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{padding:2em}}@media screen and (max-width:450px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{font-size:14px!important;padding:1em}}@media print{html body[for=html-export]:not([data-presentation-mode]) #sidebar-toc-btn{display:none}}html body[for=html-export]:not([data-presentation-mode]) #sidebar-toc-btn{position:fixed;bottom:8px;left:8px;font-size:28px;cursor:pointer;color:inherit;z-index:99;width:32px;text-align:center;opacity:.4}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] #sidebar-toc-btn{opacity:1}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc{position:fixed;top:0;left:0;width:300px;height:100%;padding:32px 0 48px 0;font-size:14px;box-shadow:0 0 4px rgba(150,150,150,.33);box-sizing:border-box;overflow:auto;background-color:inherit}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar{width:8px}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar-track{border-radius:10px;background-color:transparent}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar-thumb{border-radius:5px;background-color:rgba(150,150,150,.66);border:4px solid rgba(150,150,150,.66);background-clip:content-box}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc a{text-decoration:none}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc{padding:0 16px}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link{display:inline;padding:.25rem 0}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link div,html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link p{display:inline}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper.highlighted .md-toc-link{font-weight:800}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{left:300px;width:calc(100% - 300px);padding:2em calc(50% - 457px - 300px / 2);margin:0;box-sizing:border-box}@media screen and (max-width:1274px){html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{padding:2em}}@media screen and (max-width:450px){html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{width:100%}}html body[for=html-export]:not([data-presentation-mode]):not([html-show-sidebar-toc]) .markdown-preview{left:50%;transform:translateX(-50%)}html body[for=html-export]:not([data-presentation-mode]):not([html-show-sidebar-toc]) .md-sidebar-toc{display:none}
+/* Please visit the URL below for more information: */
+/*   https://shd101wyy.github.io/markdown-preview-enhanced/#/customize-css */
+
+      </style>
+      <!-- The content below will be included at the end of the <head> element. --><script type="text/javascript">
+  document.addEventListener("DOMContentLoaded", function () {
+    // your code here
+  });
+</script></head><body for="html-export">
+    
+    
+      <div class="crossnote markdown-preview  ">
+      <div>
+<h1 id="07-label-studio-integration">07. Label Studio Integration </h1>
+<p>This document details the Label Studio integration for human annotation in the Vietnamese-English Code-Switching Speech Translation pipeline.</p>
+<hr>
+<h2 id="table-of-contents">Table of Contents </h2>
+<ol>
+<li><a href="#1-overview">Overview</a></li>
+<li><a href="#2-architecture">Architecture</a></li>
+<li><a href="#3-setup--configuration">Setup &amp; Configuration</a></li>
+<li><a href="#4-postgresql-backend">PostgreSQL Backend</a></li>
+<li><a href="#5-label-studio-projects">Label Studio Projects</a></li>
+<li><a href="#6-workflow">Workflow</a></li>
+<li><a href="#7-dvc-integration">DVC Integration</a></li>
+<li><a href="#8-conflict-resolution">Conflict Resolution</a></li>
+<li><a href="#9-quality-control">Quality Control</a></li>
+<li><a href="#10-api-reference">API Reference</a></li>
+<li><a href="#11-backup--recovery">Backup &amp; Recovery</a></li>
+<li><a href="#12-troubleshooting">Troubleshooting</a></li>
+</ol>
+<hr>
+<h2 id="1-overview">1. Overview </h2>
+<p>Label Studio provides the human annotation interface for:</p>
+<ul>
+<li><strong>Transcript Correction</strong>: Review and correct ASR-generated transcripts</li>
+<li><strong>Translation Review</strong>: Validate and fix machine translations</li>
+<li><strong>Audio Segmentation</strong>: Mark language boundaries in audio</li>
+</ul>
+<h3 id="key-features">Key Features </h3>
+<ul>
+<li><strong>PostgreSQL backend</strong>: All Label Studio data stored in PostgreSQL (same instance as data_factory)</li>
+<li>Concurrent crawling and labeling (no need to finish ingestion before review)</li>
+<li>Automatic 5-minute DVC sync for data consistency</li>
+<li>Conflict detection when samples are modified during annotation</li>
+<li>Gold standard samples for annotator quality control</li>
+</ul>
+<hr>
+<h2 id="2-architecture">2. Architecture </h2>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>┌─────────────────────────────────────────────────────────────────────────────┐
+│                        DATA FLOW ARCHITECTURE                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────┐         ┌──────────────┐         ┌──────────────┐
+    │   Google     │◄───────►│  DVC Sync    │◄───────►│  Local Data  │
+    │   Drive      │  push   │  Service     │  pull   │  (data/raw)  │
+    │   (Source)   │         │  (5 min)     │         │              │
+    └──────────────┘         └──────────────┘         └──────┬───────┘
+                                                             │
+                                                             ▼
+    ┌──────────────────────────────────────────────────────────────────────┐
+    │                      PostgreSQL (factory_ledger)                      │
+    │  ┌─────────────────────────┐    ┌─────────────────────────┐         │
+    │  │    data_factory DB      │    │    label_studio DB      │         │
+    │  │  - samples              │    │  - users, projects      │         │
+    │  │  - transcripts          │    │  - tasks, annotations   │         │
+    │  │  - translations         │    │  - Django internals     │         │
+    │  └─────────────────────────┘    └─────────────────────────┘         │
+    └──────────────────────────────────────────────────────────────────────┘
+           ▲                                    ▲
+           │                                    │
+    ┌──────┴──────┐         ┌──────────────┐   │    ┌──────────────┐
+    │  Webhook    │◄────────│  Label       │───┘    │  nginx       │
+    │  Server     │ callback│  Studio      │◄──────►│  Audio       │
+    │  (FastAPI)  │         │  :8080       │  audio │  Server :8081│
+    └─────────────┘         └──────────────┘        └──────────────┘
+</code></pre><h3 id="docker-services">Docker Services </h3>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Container</th>
+<th>Port</th>
+<th>Database</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>postgres</code></td>
+<td>factory_ledger</td>
+<td>5432</td>
+<td>data_factory + label_studio</td>
+</tr>
+<tr>
+<td><code>label_studio</code></td>
+<td>label_studio</td>
+<td>8080</td>
+<td>Uses label_studio DB</td>
+</tr>
+<tr>
+<td><code>audio_server</code></td>
+<td>audio_server</td>
+<td>8081</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>sync_service</code></td>
+<td>sync_service</td>
+<td>-</td>
+<td>Uses data_factory DB</td>
+</tr>
+<tr>
+<td><code>ingestion</code></td>
+<td>factory_ingestion</td>
+<td>-</td>
+<td>Uses data_factory DB</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="3-setup--configuration">3. Setup &amp; Configuration </h2>
+<h3 id="31-environment-variables">3.1 Environment Variables </h3>
+<p>Create a <code>.env</code> file from the template:</p>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token function">cp</span> .env.example .env
+</code></pre><p>Key variables:</p>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Label Studio</span>
+<span class="token assign-left variable">LABEL_STUDIO_URL</span><span class="token operator">=</span>http://localhost:8080
+<span class="token assign-left variable">LABEL_STUDIO_API_KEY</span><span class="token operator">=</span>your_api_key_here
+<span class="token assign-left variable">LS_PROJECT_TRANSCRIPT</span><span class="token operator">=</span><span class="token number">1</span>
+<span class="token assign-left variable">LS_PROJECT_TRANSLATION</span><span class="token operator">=</span><span class="token number">2</span>
+<span class="token assign-left variable">LS_PROJECT_SEGMENTATION</span><span class="token operator">=</span><span class="token number">3</span>
+
+<span class="token comment"># Audio Server</span>
+<span class="token assign-left variable">AUDIO_SERVER_URL</span><span class="token operator">=</span>http://localhost:8081
+
+<span class="token comment"># Sync Service</span>
+<span class="token assign-left variable">SYNC_INTERVAL_MINUTES</span><span class="token operator">=</span><span class="token number">5</span>
+
+<span class="token comment"># Quality Control</span>
+<span class="token assign-left variable">GOLD_SAMPLE_RATIO</span><span class="token operator">=</span><span class="token number">0.05</span>
+<span class="token assign-left variable">SKIP_GOLD_VALIDATION</span><span class="token operator">=</span>false
+</code></pre><h3 id="32-starting-services">3.2 Starting Services </h3>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Start all services</span>
+<span class="token function">docker-compose</span> up <span class="token parameter variable">-d</span>
+
+<span class="token comment"># Verify services are running</span>
+<span class="token function">docker-compose</span> <span class="token function">ps</span>
+
+<span class="token comment"># View logs</span>
+<span class="token function">docker-compose</span> logs <span class="token parameter variable">-f</span> label_studio
+<span class="token function">docker-compose</span> logs <span class="token parameter variable">-f</span> sync_service
+</code></pre><h3 id="33-initial-label-studio-setup">3.3 Initial Label Studio Setup </h3>
+<ol>
+<li><strong>Access Label Studio</strong>: <a href="http://localhost:8080">http://localhost:8080</a></li>
+<li><strong>Create admin account</strong> on first launch</li>
+<li><strong>Get API key</strong>: Settings → Account &amp; Settings → Access Token</li>
+<li><strong>Update <code>.env</code></strong> with your API key</li>
+</ol>
+<blockquote>
+<p><strong>Note:</strong> Database schemas are applied automatically on first <code>docker-compose up</code>. No manual SQL execution needed!</p>
+</blockquote>
+<hr>
+<h2 id="4-postgresql-backend">4. PostgreSQL Backend </h2>
+<p>Label Studio is configured to use PostgreSQL instead of SQLite, which means:</p>
+<ul>
+<li><strong>Shared persistence</strong>: All data lives in <code>./database_data/</code></li>
+<li><strong>Better performance</strong>: PostgreSQL handles concurrent access better</li>
+<li><strong>Unified backups</strong>: One database backup covers everything</li>
+</ul>
+<h3 id="41-database-layout">4.1 Database Layout </h3>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>PostgreSQL Instance (factory_ledger:5432)
+├── data_factory (database)
+│   ├── samples
+│   ├── transcript_revisions
+│   ├── translation_revisions
+│   ├── annotations
+│   └── ...
+└── label_studio (database)
+    ├── auth_user (Label Studio users)
+    ├── projects_project (Label Studio projects)
+    ├── tasks_task (Tasks)
+    ├── tasks_annotation (Annotations)
+    └── ... (Django internals)
+</code></pre><h3 id="42-benefits-of-postgresql-backend">4.2 Benefits of PostgreSQL Backend </h3>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>SQLite (default)</th>
+<th>PostgreSQL (our setup)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Concurrent writes</td>
+<td>❌ Limited</td>
+<td>✅ Full support</td>
+</tr>
+<tr>
+<td>Survives <code>docker-compose down -v</code></td>
+<td>❌ No</td>
+<td>✅ Yes (bind mount)</td>
+</tr>
+<tr>
+<td>Backup with data_factory</td>
+<td>❌ Separate</td>
+<td>✅ Together</td>
+</tr>
+<tr>
+<td>Query from Python scripts</td>
+<td>❌ Complex</td>
+<td>✅ Direct SQL</td>
+</tr>
+<tr>
+<td>Team collaboration</td>
+<td>❌ File locks</td>
+<td>✅ Connection pooling</td>
+</tr>
+</tbody>
+</table>
+<h3 id="43-accessing-label-studio-database">4.3 Accessing Label Studio Database </h3>
+<pre data-role="codeBlock" data-info="powershell" class="language-powershell powershell"><code><span class="token comment"># Connect to label_studio database</span>
+docker exec <span class="token operator">-</span>it factory_ledger psql <span class="token operator">-</span>U admin <span class="token operator">-</span>d label_studio
+
+<span class="token comment"># List tables</span>
+\dt
+
+<span class="token comment"># Query users</span>
+<span class="token function">SELECT</span> id<span class="token punctuation">,</span> email<span class="token punctuation">,</span> is_staff <span class="token keyword keyword-FROM">FROM</span> auth_user<span class="token punctuation">;</span>
+
+<span class="token comment"># Query projects</span>
+<span class="token function">SELECT</span> id<span class="token punctuation">,</span> title<span class="token punctuation">,</span> created_at <span class="token keyword keyword-FROM">FROM</span> projects_project<span class="token punctuation">;</span>
+</code></pre><hr>
+<h2 id="5-label-studio-projects">5. Label Studio Projects </h2>
+<h3 id="41-creating-projects">4.1 Creating Projects </h3>
+<p>Create three projects in Label Studio using the provided templates:</p>
+<table>
+<thead>
+<tr>
+<th>Project</th>
+<th>Template File</th>
+<th>Data Fields</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Transcript Correction</td>
+<td><code>label_studio_templates/transcript_correction.xml</code></td>
+<td><code>audio</code>, <code>text</code>, <code>sample_id</code></td>
+</tr>
+<tr>
+<td>Translation Review</td>
+<td><code>label_studio_templates/translation_review.xml</code></td>
+<td><code>source_text</code>, <code>translation</code>, <code>sample_id</code></td>
+</tr>
+<tr>
+<td>Audio Segmentation</td>
+<td><code>label_studio_templates/audio_segmentation.xml</code></td>
+<td><code>audio</code>, <code>text</code>, <code>sample_id</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-project-setup-steps">4.2 Project Setup Steps </h3>
+<ol>
+<li>Click <strong>Create Project</strong></li>
+<li>Enter project name (e.g., "Transcript Correction")</li>
+<li>Go to <strong>Labeling Setup</strong> → <strong>Code</strong></li>
+<li>Paste the XML from the corresponding template file</li>
+<li>Go to <strong>Settings</strong> → <strong>Webhooks</strong></li>
+<li>Add webhook URL: <code>http://host.docker.internal:8000/webhook</code></li>
+<li>Select events: <code>ANNOTATION_CREATED</code>, <code>ANNOTATION_UPDATED</code></li>
+</ol>
+<h3 id="43-template-reference">4.3 Template Reference </h3>
+<h4 id="transcript-correction-transcript_correctionxml">Transcript Correction (<code>transcript_correction.xml</code>) </h4>
+<ul>
+<li>Audio player with waveform</li>
+<li>Editable text area for corrections</li>
+<li>Quality flags (audio_quality_poor, heavy_code_switching, etc.)</li>
+<li>Confidence rating (1-5 stars)</li>
+</ul>
+<h4 id="translation-review-translation_reviewxml">Translation Review (<code>translation_review.xml</code>) </h4>
+<ul>
+<li>Side-by-side source/target view</li>
+<li>Editable translation text area</li>
+<li>Translation quality issues checklist</li>
+<li>MT quality rating</li>
+</ul>
+<h4 id="audio-segmentation-audio_segmentationxml">Audio Segmentation (<code>audio_segmentation.xml</code>) </h4>
+<ul>
+<li>Audio player with region selection</li>
+<li>Language labels (Vietnamese, English, Code-Switched, Silence, Noise)</li>
+<li>Segment quality tags</li>
+<li>Overall audio quality rating</li>
+</ul>
+<hr>
+<h2 id="6-workflow">6. Workflow </h2>
+<h3 id="61-push-samples-to-label-studio">6.1 Push Samples to Label Studio </h3>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Push transcript correction tasks</span>
+python src/label_studio_sync.py push --task-type transcript_correction <span class="token parameter variable">--limit</span> <span class="token number">50</span>
+
+<span class="token comment"># Push translation review tasks</span>
+python src/label_studio_sync.py push --task-type translation_review
+
+<span class="token comment"># Dry run (preview without creating tasks)</span>
+python src/label_studio_sync.py push --task-type transcript_correction --dry-run
+</code></pre><h3 id="62-pull-completed-annotations">6.2 Pull Completed Annotations </h3>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Pull completed annotations back to database</span>
+python src/label_studio_sync.py pull --task-type transcript_correction
+
+<span class="token comment"># Check status</span>
+python src/label_studio_sync.py status
+</code></pre><h3 id="63-export-reviewed-data">6.3 Export Reviewed Data </h3>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Export all reviewed samples</span>
+python src/export_reviewed.py
+
+<span class="token comment"># Export specific task type</span>
+python src/export_reviewed.py --task-type transcript_verification
+
+<span class="token comment"># Dry run</span>
+python src/export_reviewed.py --dry-run
+
+<span class="token comment"># Include previously exported samples</span>
+python src/export_reviewed.py --include-exported
+</code></pre><h3 id="64-dvc-pipeline">6.4 DVC Pipeline </h3>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Run export stage</span>
+dvc repro export_reviewed
+
+<span class="token comment"># Generate manifest</span>
+dvc repro generate_manifest
+
+<span class="token comment"># Push reviewed data to remote</span>
+dvc push
+</code></pre><hr>
+<h2 id="7-dvc-integration">7. DVC Integration </h2>
+<h3 id="71-sync-daemon">7.1 Sync Daemon </h3>
+<p>The <code>sync_service</code> container runs automatic DVC pulls every 5 minutes:</p>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Manual single sync</span>
+python src/sync_daemon.py <span class="token parameter variable">--once</span>
+
+<span class="token comment"># Check DVC status</span>
+python src/sync_daemon.py <span class="token parameter variable">--status</span>
+
+<span class="token comment"># Push local changes to remote</span>
+python src/sync_daemon.py <span class="token parameter variable">--push</span>
+</code></pre><h3 id="72-data-flow">7.2 Data Flow </h3>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>Google Drive (DVC Remote)
+         │
+         ▼ dvc pull (every 5 min)
+    data/raw/
+    ├── audio/         → served via nginx:8081
+    ├── text/          → stored in database
+    └── metadata.jsonl
+         │
+         ▼ after human review
+    data/reviewed/
+    ├── transcript_verification/
+    │   └── {sample_id}/
+    │       ├── audio.wav
+    │       ├── transcript.json
+    │       └── metadata.json
+    └── translation_review/
+        └── {sample_id}/
+            └── ...
+         │
+         ▼ dvc push
+    Google Drive (DVC Remote)
+</code></pre><h3 id="73-version-tracking">7.3 Version Tracking </h3>
+<p>Each sample tracks its DVC version:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dvc_commit_hash</code></td>
+<td>Git commit hash when sample was added</td>
+</tr>
+<tr>
+<td><code>audio_file_md5</code></td>
+<td>MD5 hash of audio file for integrity</td>
+</tr>
+<tr>
+<td><code>sync_version</code></td>
+<td>Auto-incremented on file changes</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="8-conflict-resolution">8. Conflict Resolution </h2>
+<h3 id="81-conflict-detection">8.1 Conflict Detection </h3>
+<p>A conflict occurs when:</p>
+<ol>
+<li>Sample is pushed to Label Studio for annotation</li>
+<li>Crawler updates the sample (new transcript, different audio)</li>
+<li>Annotator completes the annotation</li>
+</ol>
+<p>The system detects this via <code>sync_version</code> comparison.</p>
+<h3 id="82-conflict-resolution-strategies">8.2 Conflict Resolution Strategies </h3>
+<table>
+<thead>
+<tr>
+<th>Strategy</th>
+<th>Description</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>human_wins</code></td>
+<td>Human annotation takes precedence</td>
+<td>Default for corrections</td>
+</tr>
+<tr>
+<td><code>crawler_wins</code></td>
+<td>New crawled data replaces annotation</td>
+<td>Rare, for re-ingestion</td>
+</tr>
+<tr>
+<td><code>merged</code></td>
+<td>Combine both changes</td>
+<td>Complex merge scenarios</td>
+</tr>
+<tr>
+<td><code>pending_reflow</code></td>
+<td>Create new sample for re-review</td>
+<td>When unsure</td>
+</tr>
+</tbody>
+</table>
+<h3 id="83-handling-conflicts">8.3 Handling Conflicts </h3>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># List conflicts</span>
+<span class="token function">curl</span> http://localhost:8000/api/conflicts
+
+<span class="token comment"># Resolve a conflict</span>
+<span class="token function">curl</span> <span class="token parameter variable">-X</span> POST <span class="token string">"http://localhost:8000/api/resolve-conflict/{annotation_id}?resolution=human_wins"</span>
+</code></pre><h3 id="84-database-functions">8.4 Database Functions </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Lock sample before pushing to Label Studio</span>
+<span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> lock_sample_for_annotation<span class="token punctuation">(</span><span class="token string">'sample-uuid'</span><span class="token punctuation">,</span> <span class="token string">'label_studio'</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- Check for conflicts</span>
+<span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> check_annotation_conflict<span class="token punctuation">(</span><span class="token string">'sample-uuid'</span><span class="token punctuation">,</span> expected_version<span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- Create conflict sample for re-review</span>
+<span class="token keyword keyword-SELECT">SELECT</span> create_conflict_sample<span class="token punctuation">(</span><span class="token string">'original-sample-uuid'</span><span class="token punctuation">,</span> <span class="token string">'Reason for conflict'</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- Unlock sample after annotation</span>
+<span class="token keyword keyword-SELECT">SELECT</span> unlock_sample<span class="token punctuation">(</span><span class="token string">'sample-uuid'</span><span class="token punctuation">,</span> <span class="token boolean">TRUE</span><span class="token punctuation">)</span><span class="token punctuation">;</span>  <span class="token comment">-- TRUE = increment version</span>
+</code></pre><hr>
+<h2 id="9-quality-control">9. Quality Control </h2>
+<h3 id="91-gold-standard-samples">9.1 Gold Standard Samples </h3>
+<p>Gold standard samples are pre-verified samples used to measure annotator accuracy.</p>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Mark a sample as gold standard</span>
+<span class="token keyword keyword-SELECT">SELECT</span> set_gold_standard<span class="token punctuation">(</span><span class="token string">'sample-uuid'</span><span class="token punctuation">,</span> <span class="token number">0.95</span><span class="token punctuation">,</span> <span class="token string">'admin'</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- View gold standard samples</span>
+<span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> v_gold_standard_samples<span class="token punctuation">;</span>
+
+<span class="token comment">-- View annotator accuracy</span>
+<span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> v_annotator_accuracy<span class="token punctuation">;</span>
+</code></pre><h3 id="92-environment-configuration">9.2 Environment Configuration </h3>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Percentage of samples to use as gold (5%)</span>
+<span class="token assign-left variable">GOLD_SAMPLE_RATIO</span><span class="token operator">=</span><span class="token number">0.05</span>
+
+<span class="token comment"># Skip validation for testing</span>
+<span class="token assign-left variable">SKIP_GOLD_VALIDATION</span><span class="token operator">=</span>true
+</code></pre><h3 id="93-annotator-metrics">9.3 Annotator Metrics </h3>
+<p>The <code>v_annotator_accuracy</code> view provides:</p>
+<ul>
+<li>Total gold annotations per annotator</li>
+<li>Average expected score</li>
+<li>Completion rate percentage</li>
+</ul>
+<hr>
+<h2 id="10-api-reference">10. API Reference </h2>
+<h3 id="101-webhook-server-endpoints">10.1 Webhook Server Endpoints </h3>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/health</code></td>
+<td>GET</td>
+<td>Health check</td>
+</tr>
+<tr>
+<td><code>/webhook</code></td>
+<td>POST</td>
+<td>Label Studio webhook handler</td>
+</tr>
+<tr>
+<td><code>/api/conflicts</code></td>
+<td>GET</td>
+<td>List annotation conflicts</td>
+</tr>
+<tr>
+<td><code>/api/resolve-conflict/{id}</code></td>
+<td>POST</td>
+<td>Resolve a conflict</td>
+</tr>
+<tr>
+<td><code>/api/stats</code></td>
+<td>GET</td>
+<td>Annotation statistics</td>
+</tr>
+</tbody>
+</table>
+<h3 id="102-label-studio-sync-cli">10.2 Label Studio Sync CLI </h3>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Usage</span>
+python src/label_studio_sync.py <span class="token operator">&lt;</span>action<span class="token operator">&gt;</span> <span class="token punctuation">[</span>options<span class="token punctuation">]</span>
+
+<span class="token comment"># Actions</span>
+push     Push samples to Label Studio
+pull     Pull completed annotations
+status   Check connection status
+
+<span class="token comment"># Options</span>
+--task-type    transcript_correction <span class="token operator">|</span> translation_review <span class="token operator">|</span> audio_segmentation
+<span class="token parameter variable">--limit</span>        Maximum samples to process
+--dry-run      Preview without changes
+</code></pre><h3 id="103-export-cli">10.3 Export CLI </h3>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Usage</span>
+python src/export_reviewed.py <span class="token punctuation">[</span>options<span class="token punctuation">]</span>
+
+<span class="token comment"># Options</span>
+--task-type         Filter by task <span class="token builtin class-name">type</span>
+<span class="token parameter variable">--limit</span>             Maximum samples to <span class="token builtin class-name">export</span>
+--output-dir        Output directory <span class="token punctuation">(</span>default: data/reviewed<span class="token punctuation">)</span>
+--include-exported  Include previously exported
+--dry-run           Preview without writing
+--no-manifest       Skip manifest generation
+</code></pre><h3 id="104-sync-daemon-cli">10.4 Sync Daemon CLI </h3>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Usage</span>
+python src/sync_daemon.py <span class="token punctuation">[</span>options<span class="token punctuation">]</span>
+
+<span class="token comment"># Options</span>
+<span class="token parameter variable">--once</span>       Run single <span class="token function">sync</span> and <span class="token builtin class-name">exit</span>
+<span class="token parameter variable">--interval</span>   Sync interval <span class="token keyword keyword-in">in</span> minutes <span class="token punctuation">(</span>default: <span class="token number">5</span><span class="token punctuation">)</span>
+<span class="token parameter variable">--push</span>       Run dvc push instead of pull
+<span class="token parameter variable">--status</span>     Check DVC status and <span class="token builtin class-name">exit</span>
+<span class="token parameter variable">-v</span>           Verbose output
+</code></pre><hr>
+<h2 id="11-backup--recovery">11. Backup &amp; Recovery </h2>
+<h3 id="111-understanding-data-persistence">11.1 Understanding Data Persistence </h3>
+<p>All persistent data is stored in <code>./database_data/</code>:</p>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>database_data/
+├── base/                  # PostgreSQL data files
+├── global/                # System catalog
+├── pg_wal/                # Write-ahead logs
+└── ...
+</code></pre><p><strong>Both databases</strong> (<code>data_factory</code> and <code>label_studio</code>) are stored here.</p>
+<h3 id="112-backup-strategies">11.2 Backup Strategies </h3>
+<h4 id="full-database-backup-recommended">Full Database Backup (Recommended) </h4>
+<pre data-role="codeBlock" data-info="powershell" class="language-powershell powershell"><code><span class="token comment"># Create timestamped backup</span>
+<span class="token variable">$timestamp</span> = <span class="token function">Get-Date</span> <span class="token operator">-</span>Format <span class="token string">"yyyyMMdd_HHmmss"</span>
+docker exec factory_ledger pg_dumpall <span class="token operator">-</span>U admin &gt; <span class="token string">"backup_${timestamp}.sql"</span>
+
+<span class="token comment"># Compress backup</span>
+<span class="token function">Compress-Archive</span> <span class="token operator">-</span>Path <span class="token string">"backup_${timestamp}.sql"</span> <span class="token operator">-</span>DestinationPath <span class="token string">"backup_${timestamp}.zip"</span>
+</code></pre><h4 id="per-database-backup">Per-Database Backup </h4>
+<pre data-role="codeBlock" data-info="powershell" class="language-powershell powershell"><code><span class="token comment"># Backup data_factory only</span>
+docker exec factory_ledger pg_dump <span class="token operator">-</span>U admin <span class="token operator">-</span>d data_factory &gt; data_factory_backup<span class="token punctuation">.</span>sql
+
+<span class="token comment"># Backup label_studio only</span>
+docker exec factory_ledger pg_dump <span class="token operator">-</span>U admin <span class="token operator">-</span>d label_studio &gt; label_studio_backup<span class="token punctuation">.</span>sql
+</code></pre><h3 id="113-restore-from-backup">11.3 Restore from Backup </h3>
+<pre data-role="codeBlock" data-info="powershell" class="language-powershell powershell"><code><span class="token comment"># Stop all services</span>
+docker-compose down
+
+<span class="token comment"># Clear existing data (DANGER: destroys all data!)</span>
+<span class="token function">Remove-Item</span> <span class="token operator">-</span>Recurse <span class="token operator">-</span>Force <span class="token punctuation">.</span>\database_data\<span class="token operator">*</span>
+
+<span class="token comment"># Start only PostgreSQL</span>
+docker-compose up <span class="token operator">-</span>d postgres
+
+<span class="token comment"># Wait for it to be ready</span>
+<span class="token function">Start-Sleep</span> <span class="token operator">-</span>Seconds 10
+
+<span class="token comment"># Restore backup (PowerShell-compatible)</span>
+<span class="token function">Get-Content</span> backup_20251128_120000<span class="token punctuation">.</span>sql <span class="token punctuation">|</span> docker exec <span class="token operator">-</span>i factory_ledger psql <span class="token operator">-</span>U admin <span class="token operator">-</span>d postgres
+
+<span class="token comment"># Start remaining services</span>
+docker-compose up <span class="token operator">-</span>d
+</code></pre><h3 id="114-label-studio-exportimport-alternative">11.4 Label Studio Export/Import (Alternative) </h3>
+<p>For portability, you can also use Label Studio's built-in export:</p>
+<ol>
+<li><strong>Export Project</strong>: Project Settings → Export → JSON</li>
+<li><strong>Import Project</strong>: Create new project → Import → Upload JSON</li>
+</ol>
+<p>This exports:</p>
+<ul>
+<li>Project configuration</li>
+<li>Tasks</li>
+<li>Annotations</li>
+</ul>
+<p><strong>Note:</strong> This does NOT export user accounts.</p>
+<h3 id="115-automated-backup-script">11.5 Automated Backup Script </h3>
+<p>Create <code>scripts/backup.ps1</code>:</p>
+<pre data-role="codeBlock" data-info="powershell" class="language-powershell powershell"><code><span class="token comment"># Automated backup script</span>
+<span class="token variable">$BACKUP_DIR</span> = <span class="token string">".\backups"</span>
+<span class="token variable">$TIMESTAMP</span> = <span class="token function">Get-Date</span> <span class="token operator">-</span>Format <span class="token string">"yyyyMMdd_HHmmss"</span>
+<span class="token variable">$BACKUP_FILE</span> = <span class="token string">"<span class="token variable">$BACKUP_DIR</span>\backup_<span class="token variable">$TIMESTAMP</span>.sql"</span>
+
+<span class="token comment"># Create backup directory</span>
+<span class="token function">New-Item</span> <span class="token operator">-</span>ItemType Directory <span class="token operator">-</span>Force <span class="token operator">-</span>Path <span class="token variable">$BACKUP_DIR</span> <span class="token punctuation">|</span> <span class="token function">Out-Null</span>
+
+<span class="token comment"># Dump all databases</span>
+<span class="token function">Write-Host</span> <span class="token string">"Creating backup: <span class="token variable">$BACKUP_FILE</span>"</span>
+docker exec factory_ledger pg_dumpall <span class="token operator">-</span>U admin <span class="token punctuation">|</span> <span class="token function">Out-File</span> <span class="token operator">-</span>Encoding UTF8 <span class="token variable">$BACKUP_FILE</span>
+
+<span class="token comment"># Compress</span>
+<span class="token function">Compress-Archive</span> <span class="token operator">-</span>Path <span class="token variable">$BACKUP_FILE</span> <span class="token operator">-</span>DestinationPath <span class="token string">"<span class="token variable">$BACKUP_FILE</span>.zip"</span>
+<span class="token function">Remove-Item</span> <span class="token variable">$BACKUP_FILE</span>
+
+<span class="token comment"># Keep only last 7 backups</span>
+<span class="token function">Get-ChildItem</span> <span class="token variable">$BACKUP_DIR</span> <span class="token operator">-</span><span class="token keyword keyword-Filter">Filter</span> <span class="token string">"*.zip"</span> <span class="token punctuation">|</span> 
+    <span class="token function">Sort-Object</span> CreationTime <span class="token operator">-</span>Descending <span class="token punctuation">|</span> 
+    <span class="token function">Select-Object</span> <span class="token operator">-</span>Skip 7 <span class="token punctuation">|</span> 
+    <span class="token function">Remove-Item</span>
+
+<span class="token function">Write-Host</span> <span class="token string">"Backup complete: <span class="token variable">$BACKUP_FILE</span>.zip"</span>
+</code></pre><h3 id="116-before-clean-reset-checklist">11.6 Before Clean Reset Checklist </h3>
+<p>Before running <code>docker-compose down -v</code> or deleting <code>database_data/</code>:</p>
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Export Label Studio projects (JSON format)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Run database backup (pg_dumpall)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Verify backup file is not empty</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Note your Label Studio API key</li>
+</ul>
+<hr>
+<h2 id="12-troubleshooting">12. Troubleshooting </h2>
+<h3 id="121-common-issues">12.1 Common Issues </h3>
+<h4 id="audio-files-not-loading-in-label-studio">Audio files not loading in Label Studio </h4>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Check nginx is serving files</span>
+<span class="token function">curl</span> http://localhost:8081/audio/test.wav
+
+<span class="token comment"># Verify CORS headers</span>
+<span class="token function">curl</span> <span class="token parameter variable">-I</span> http://localhost:8081/audio/test.wav <span class="token operator">|</span> <span class="token function">grep</span> <span class="token parameter variable">-i</span> access-control
+</code></pre><h4 id="webhook-not-receiving-callbacks">Webhook not receiving callbacks </h4>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Check webhook server is running</span>
+<span class="token function">curl</span> http://localhost:8000/health
+
+<span class="token comment"># Verify Label Studio webhook configuration</span>
+<span class="token comment"># Settings → Webhooks → Test Connection</span>
+</code></pre><h4 id="dvc-sync-failing">DVC sync failing </h4>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Check authentication</span>
+dvc remote list
+dvc push <span class="token parameter variable">--verbose</span>
+
+<span class="token comment"># Re-authenticate</span>
+<span class="token comment"># Delete ~/.cache/pydrive2fs and re-run dvc pull</span>
+</code></pre><h4 id="label-studio-not-starting-postgresql-connection">Label Studio not starting (PostgreSQL connection) </h4>
+<pre data-role="codeBlock" data-info="powershell" class="language-powershell powershell"><code><span class="token comment"># Check PostgreSQL is healthy</span>
+docker-compose <span class="token function">ps</span>
+docker logs factory_ledger
+
+<span class="token comment"># Verify label_studio database exists</span>
+docker exec factory_ledger psql <span class="token operator">-</span>U admin <span class="token operator">-</span>c <span class="token string">"\l"</span>
+</code></pre><h3 id="122-logs">12.2 Logs </h3>
+<pre data-role="codeBlock" data-info="bash" class="language-bash bash"><code><span class="token comment"># Label Studio logs</span>
+<span class="token function">docker-compose</span> logs <span class="token parameter variable">-f</span> label_studio
+
+<span class="token comment"># Sync service logs</span>
+<span class="token function">docker-compose</span> logs <span class="token parameter variable">-f</span> sync_service
+
+<span class="token comment"># Audio server logs</span>
+<span class="token function">docker-compose</span> logs <span class="token parameter variable">-f</span> audio_server
+
+<span class="token comment"># Webhook server (if running locally)</span>
+<span class="token function">tail</span> <span class="token parameter variable">-f</span> logs/webhook.log
+</code></pre><h3 id="123-database-queries">12.3 Database Queries </h3>
+<pre data-role="codeBlock" data-info="sql" class="language-sql sql"><code><span class="token comment">-- Check sync status</span>
+<span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> v_sync_status <span class="token keyword keyword-WHERE">WHERE</span> lock_status <span class="token operator">!=</span> <span class="token string">'unlocked'</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- Find samples with pending annotations</span>
+<span class="token keyword keyword-SELECT">SELECT</span> s<span class="token punctuation">.</span>sample_id<span class="token punctuation">,</span> a<span class="token punctuation">.</span><span class="token keyword keyword-status">status</span><span class="token punctuation">,</span> a<span class="token punctuation">.</span>task_type
+<span class="token keyword keyword-FROM">FROM</span> samples s
+<span class="token keyword keyword-JOIN">JOIN</span> annotations a <span class="token keyword keyword-ON">ON</span> s<span class="token punctuation">.</span>sample_id <span class="token operator">=</span> a<span class="token punctuation">.</span>sample_id
+<span class="token keyword keyword-WHERE">WHERE</span> a<span class="token punctuation">.</span><span class="token keyword keyword-status">status</span> <span class="token operator">IN</span> <span class="token punctuation">(</span><span class="token string">'pending'</span><span class="token punctuation">,</span> <span class="token string">'in_progress'</span><span class="token punctuation">)</span><span class="token punctuation">;</span>
+
+<span class="token comment">-- Check for conflicts</span>
+<span class="token keyword keyword-SELECT">SELECT</span> <span class="token operator">*</span> <span class="token keyword keyword-FROM">FROM</span> annotations <span class="token keyword keyword-WHERE">WHERE</span> conflict_detected <span class="token operator">=</span> <span class="token boolean">TRUE</span><span class="token punctuation">;</span>
+</code></pre><hr>
+<h2 id="related-documentation">Related Documentation </h2>
+<ul>
+<li><a href="01_setup_project.md">01. Project Setup</a> - Initial environment setup</li>
+<li><a href="04_workflow.md">04. Workflow</a> - Overall pipeline workflow</li>
+<li><a href="05_scripts_details.md">05. Script Details</a> - Script documentation</li>
+<li><a href="06_database_design.md">06. Database Design</a> - Schema reference</li>
+</ul>
+</div>
+      </div>
+      
+      
+    
+    
+    
+    
+    
+    
+  
+    </body></html>

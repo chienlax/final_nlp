@@ -27,8 +27,8 @@ This document outlines the setup process for the Vietnamese-English Code-Switchi
 2.  **Create a Local Virtual Environment** (Optional but recommended for IDEs):
     ```bash
     python -m venv .venv
-    .\.venv\Scripts\Activate
-    pip install -r requirements.txt
+    .venv\Scripts\Activate
+    pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
     ```
 
 3.  **Copy environment configuration**:
