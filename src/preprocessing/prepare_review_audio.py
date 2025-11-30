@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
-Prepare Review Audio Script.
+Prepare Review Audio Script (v2 - Sample-level review).
 
 Pre-cuts sentence audio files for Label Studio unified review workflow.
-Creates review_chunks in the database and outputs sentence audio files
-with padding for smooth playback.
+No chunking - loads entire sample with all sentences for review.
 
 Pipeline Stage: TRANSLATED → REVIEW_PREPARED
 
 Workflow:
 1. Load sentence timestamps from transcript_revisions
-2. Create review_chunks (15 sentences each)
-3. Pre-cut sentence audio to data/review/{sample_id}/sentences/
-4. Initialize sentence_reviews records
-5. Transition sample to REVIEW_PREPARED state
+2. Pre-cut sentence audio to data/review/{sample_id}/sentences/
+3. Initialize sentence_reviews records with sentence_audio_path
+4. Transition sample to REVIEW_PREPARED state
 
 Usage:
     python prepare_review_audio.py --sample-id <uuid>
@@ -30,7 +28,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import psycopg2
 from psycopg2.extras import Json, RealDictCursor
@@ -45,10 +43,6 @@ from utils.data_utils import get_pg_connection, log_processing
 # CONFIGURATION
 # =============================================================================
 
-# Review chunk settings
-DEFAULT_CHUNK_SIZE = 15  # Sentences per chunk
-
-# Audio settings
 SAMPLE_RATE = 16000
 AUDIO_FORMAT = "wav"
 AUDIO_PADDING_MS = 200  # 0.2s padding before and after each sentence
@@ -100,38 +94,38 @@ def cut_sentence_audio(
         start_ms: Start time in milliseconds.
         end_ms: End time in milliseconds.
         output_path: Path to save the sentence audio.
-        padding_ms: Padding in milliseconds before and after.
+        padding_ms: Padding to add before and after.
 
     Returns:
-        Dictionary with cut metadata.
+        Dictionary with result info.
     """
-    # Calculate padded boundaries (clamp to audio bounds)
     audio_duration_ms = len(audio)
-    padded_start_ms = max(0, start_ms - padding_ms)
-    padded_end_ms = min(audio_duration_ms, end_ms + padding_ms)
 
-    # Extract segment
-    segment = audio[padded_start_ms:padded_end_ms]
+    # Add padding
+    padded_start = max(0, start_ms - padding_ms)
+    padded_end = min(audio_duration_ms, end_ms + padding_ms)
 
-    # Ensure 16kHz mono
-    segment = segment.set_frame_rate(SAMPLE_RATE).set_channels(1)
+    # Cut the segment
+    segment = audio[padded_start:padded_end]
 
-    # Save
+    # Export
     output_path.parent.mkdir(parents=True, exist_ok=True)
     segment.export(str(output_path), format=AUDIO_FORMAT)
 
     return {
+        "success": True,
+        "output_path": str(output_path),
         "original_start_ms": start_ms,
         "original_end_ms": end_ms,
-        "padded_start_ms": padded_start_ms,
-        "padded_end_ms": padded_end_ms,
-        "duration_ms": padded_end_ms - padded_start_ms,
-        "output_path": str(output_path)
+        "padded_start_ms": padded_start,
+        "padded_end_ms": padded_end,
+        "duration_ms": padded_end - padded_start,
+        "file_size_bytes": output_path.stat().st_size
     }
 
 
 def prepare_sentence_audio_files(
-    audio_path: Path,
+    audio: Any,
     sentences: List[Dict[str, Any]],
     output_dir: Path,
     padding_ms: int = AUDIO_PADDING_MS
@@ -140,32 +134,31 @@ def prepare_sentence_audio_files(
     Pre-cut all sentence audio files for a sample.
 
     Args:
-        audio_path: Path to source audio file.
-        sentences: List of sentence dicts with start, end, text, translation.
+        audio: Loaded AudioSegment object.
+        sentences: List of sentence dictionaries with start/end times.
         output_dir: Directory to save sentence audio files.
-        padding_ms: Padding in milliseconds.
+        padding_ms: Padding to add before and after each sentence.
 
     Returns:
-        List of cut metadata dictionaries.
+        List of result dictionaries for each sentence.
     """
-    print(f"[INFO] Loading audio: {audio_path}")
-    audio = load_audio(audio_path)
-    audio_duration_ms = len(audio)
-    print(f"[INFO] Audio duration: {audio_duration_ms / 1000:.1f}s")
-
-    # Create sentences directory
+    results = []
     sentences_dir = output_dir / "sentences"
     sentences_dir.mkdir(parents=True, exist_ok=True)
 
-    results = []
-
     for idx, sentence in enumerate(sentences):
-        # Convert times from seconds to milliseconds
-        start_ms = int(sentence["start"] * 1000)
-        end_ms = int(sentence["end"] * 1000)
+        start_ms = int(sentence.get("start", 0) * 1000)
+        end_ms = int(sentence.get("end", 0) * 1000)
 
-        # Output path: sentences/0001.wav, sentences/0002.wav, etc.
-        output_path = sentences_dir / f"{idx:04d}.{AUDIO_FORMAT}"
+        if end_ms <= start_ms:
+            results.append({
+                "success": False,
+                "sentence_idx": idx,
+                "error": "Invalid time range"
+            })
+            continue
+
+        output_path = sentences_dir / f"{idx:04d}.wav"
 
         try:
             result = cut_sentence_audio(
@@ -176,19 +169,17 @@ def prepare_sentence_audio_files(
                 padding_ms=padding_ms
             )
             result["sentence_idx"] = idx
-            result["success"] = True
             results.append(result)
 
-            if idx % 50 == 0:
+            if (idx + 1) % 50 == 0 or idx == 0:
                 print(f"  Processed {idx + 1}/{len(sentences)} sentences...")
 
         except Exception as e:
             results.append({
-                "sentence_idx": idx,
                 "success": False,
+                "sentence_idx": idx,
                 "error": str(e)
             })
-            print(f"  [ERROR] Sentence {idx}: {e}")
 
     return results
 
@@ -199,13 +190,13 @@ def prepare_sentence_audio_files(
 
 def get_samples_for_review_prep(limit: int = 10) -> List[Dict[str, Any]]:
     """
-    Get samples ready for review preparation (TRANSLATED state).
+    Get samples ready for review preparation (in TRANSLATED state).
 
     Args:
         limit: Maximum number of samples to return.
 
     Returns:
-        List of sample dictionaries with transcript data.
+        List of sample dictionaries.
     """
     conn = get_pg_connection()
 
@@ -218,11 +209,12 @@ def get_samples_for_review_prep(limit: int = 10) -> List[Dict[str, Any]]:
                     s.external_id,
                     s.audio_file_path,
                     s.duration_seconds,
-                    s.priority,
                     s.source_metadata->>'title' AS video_title,
+                    COALESCE(src.channel_name, src.name) AS channel_name,
                     tr.revision_id AS transcript_revision_id,
                     tr.sentence_timestamps
                 FROM samples s
+                LEFT JOIN sources src ON s.source_id = src.source_id
                 JOIN transcript_revisions tr 
                     ON s.sample_id = tr.sample_id 
                     AND tr.version = s.current_transcript_version
@@ -235,96 +227,23 @@ def get_samples_for_review_prep(limit: int = 10) -> List[Dict[str, Any]]:
                 (limit,)
             )
             return [dict(row) for row in cur.fetchall()]
-    finally:
-        conn.close()
 
-
-def create_review_chunks_for_sample(
-    sample_id: str,
-    sentences: List[Dict[str, Any]],
-    chunk_size: int = DEFAULT_CHUNK_SIZE
-) -> List[Dict[str, Any]]:
-    """
-    Create review_chunks records in the database.
-
-    Args:
-        sample_id: UUID of the sample.
-        sentences: List of sentence dicts.
-        chunk_size: Number of sentences per chunk.
-
-    Returns:
-        List of created chunk dictionaries.
-    """
-    conn = get_pg_connection()
-    chunks = []
-
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Delete existing chunks for this sample
-            cur.execute(
-                "DELETE FROM review_chunks WHERE sample_id = %s",
-                (sample_id,)
-            )
-
-            # Delete existing sentence reviews
-            cur.execute(
-                "DELETE FROM sentence_reviews WHERE sample_id = %s",
-                (sample_id,)
-            )
-
-            # Create chunks
-            chunk_idx = 0
-            start_idx = 0
-
-            while start_idx < len(sentences):
-                end_idx = min(start_idx + chunk_size - 1, len(sentences) - 1)
-
-                # Get timing from sentences
-                start_ms = int(sentences[start_idx]["start"] * 1000)
-                end_ms = int(sentences[end_idx]["end"] * 1000)
-
-                cur.execute(
-                    """
-                    INSERT INTO review_chunks (
-                        sample_id, chunk_index,
-                        start_sentence_idx, end_sentence_idx,
-                        start_time_ms, end_time_ms
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s
-                    )
-                    RETURNING chunk_id, chunk_index, start_sentence_idx, 
-                              end_sentence_idx, start_time_ms, end_time_ms
-                    """,
-                    (sample_id, chunk_idx, start_idx, end_idx, start_ms, end_ms)
-                )
-                chunk = dict(cur.fetchone())
-                chunks.append(chunk)
-
-                chunk_idx += 1
-                start_idx = end_idx + 1
-
-            conn.commit()
-            return chunks
-
-    except psycopg2.Error as e:
-        conn.rollback()
-        raise Exception(f"Failed to create review chunks: {e}")
     finally:
         conn.close()
 
 
 def init_sentence_reviews(
     sample_id: str,
-    chunks: List[Dict[str, Any]],
-    sentences: List[Dict[str, Any]]
+    sentences: List[Dict[str, Any]],
+    review_dir: Path
 ) -> int:
     """
-    Initialize sentence_reviews records for all chunks.
+    Initialize sentence_reviews records for all sentences in a sample.
 
     Args:
         sample_id: UUID of the sample.
-        chunks: List of chunk dictionaries.
-        sentences: List of sentence dicts.
+        sentences: List of sentence dictionaries.
+        review_dir: Path to review audio directory.
 
     Returns:
         Number of sentence reviews created.
@@ -334,42 +253,38 @@ def init_sentence_reviews(
 
     try:
         with conn.cursor() as cur:
-            for chunk in chunks:
-                chunk_id = chunk["chunk_id"]
-                start_idx = chunk["start_sentence_idx"]
-                end_idx = chunk["end_sentence_idx"]
+            # Delete existing reviews for this sample (re-preparation)
+            cur.execute(
+                "DELETE FROM sentence_reviews WHERE sample_id = %s",
+                (sample_id,)
+            )
 
-                for idx in range(start_idx, end_idx + 1):
-                    sentence = sentences[idx]
+            for idx, sentence in enumerate(sentences):
+                # Build sentence audio path (relative)
+                sentence_audio_path = f"review/{sample_id}/sentences/{idx:04d}.wav"
 
-                    cur.execute(
-                        """
-                        INSERT INTO sentence_reviews (
-                            chunk_id, sample_id, sentence_idx,
-                            original_start_ms, original_end_ms,
-                            original_transcript, original_translation
-                        ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s
-                        )
-                        ON CONFLICT (sample_id, sentence_idx) DO UPDATE SET
-                            chunk_id = EXCLUDED.chunk_id,
-                            original_start_ms = EXCLUDED.original_start_ms,
-                            original_end_ms = EXCLUDED.original_end_ms,
-                            original_transcript = EXCLUDED.original_transcript,
-                            original_translation = EXCLUDED.original_translation,
-                            updated_at = NOW()
-                        """,
-                        (
-                            chunk_id,
-                            sample_id,
-                            idx,
-                            int(sentence["start"] * 1000),
-                            int(sentence["end"] * 1000),
-                            sentence.get("text", ""),
-                            sentence.get("translation", "")
-                        )
+                cur.execute(
+                    """
+                    INSERT INTO sentence_reviews (
+                        sample_id, sentence_idx,
+                        original_start_ms, original_end_ms,
+                        original_transcript, original_translation,
+                        sentence_audio_path
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s
                     )
-                    count += 1
+                    """,
+                    (
+                        sample_id,
+                        idx,
+                        int(sentence["start"] * 1000),
+                        int(sentence["end"] * 1000),
+                        sentence.get("text", ""),
+                        sentence.get("translation", ""),
+                        sentence_audio_path
+                    )
+                )
+                count += 1
 
             conn.commit()
             return count
@@ -430,8 +345,7 @@ def transition_to_review_prepared(
 def process_sample(
     sample: Dict[str, Any],
     data_root: Path,
-    review_root: Path,
-    chunk_size: int = DEFAULT_CHUNK_SIZE
+    review_root: Path
 ) -> bool:
     """
     Process a single sample for review preparation.
@@ -440,7 +354,6 @@ def process_sample(
         sample: Sample dictionary from database.
         data_root: Root directory for input audio files.
         review_root: Root directory for review audio output.
-        chunk_size: Number of sentences per chunk.
 
     Returns:
         True if successful, False otherwise.
@@ -448,7 +361,13 @@ def process_sample(
     sample_id = str(sample["sample_id"])
     external_id = sample["external_id"]
     video_title = sample.get("video_title", external_id)
-    audio_path = data_root / sample["audio_file_path"]
+
+    # Handle audio_file_path: strip leading 'data/' if present
+    audio_file_path = sample["audio_file_path"]
+    if audio_file_path.startswith("data/"):
+        audio_file_path = audio_file_path[5:]
+    audio_path = data_root / audio_file_path
+
     sentence_timestamps = sample["sentence_timestamps"]
 
     print(f"\n{'='*60}")
@@ -475,19 +394,16 @@ def process_sample(
         output_dir = review_root / sample_id
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Step 1: Create review chunks in database
-        print(f"[INFO] Creating review chunks (size={chunk_size})...")
-        chunks = create_review_chunks_for_sample(
-            sample_id=sample_id,
-            sentences=sentence_timestamps,
-            chunk_size=chunk_size
-        )
-        print(f"  Created {len(chunks)} chunks")
+        # Load audio
+        print(f"[INFO] Loading audio: {audio_path}")
+        audio = load_audio(audio_path)
+        audio_duration_ms = len(audio)
+        print(f"[INFO] Audio duration: {audio_duration_ms / 1000:.1f}s")
 
-        # Step 2: Pre-cut sentence audio files
+        # Cut sentence audio files
         print(f"[INFO] Cutting sentence audio files...")
         audio_results = prepare_sentence_audio_files(
-            audio_path=audio_path,
+            audio=audio,
             sentences=sentence_timestamps,
             output_dir=output_dir,
             padding_ms=AUDIO_PADDING_MS
@@ -501,19 +417,17 @@ def process_sample(
 
         print(f"  Cut {len(successful_cuts)}/{sentence_count} sentences")
 
-        # Step 3: Initialize sentence reviews
+        # Initialize sentence reviews
         print(f"[INFO] Initializing sentence reviews...")
         reviews_count = init_sentence_reviews(
             sample_id=sample_id,
-            chunks=chunks,
-            sentences=sentence_timestamps
+            sentences=sentence_timestamps,
+            review_dir=output_dir
         )
         print(f"  Initialized {reviews_count} sentence reviews")
 
-        # Step 4: Transition to REVIEW_PREPARED
+        # Transition to REVIEW_PREPARED
         prep_metadata = {
-            "chunk_size": chunk_size,
-            "chunk_count": len(chunks),
             "sentence_count": sentence_count,
             "audio_cuts_successful": len(successful_cuts),
             "audio_cuts_failed": len(failed_cuts),
@@ -537,16 +451,14 @@ def process_sample(
             execution_time_ms=execution_time_ms,
             input_params={
                 "audio_path": str(audio_path),
-                "sentence_count": sentence_count,
-                "chunk_size": chunk_size
+                "sentence_count": sentence_count
             },
             output_summary=prep_metadata
         )
 
         print(f"\n[SUCCESS] Prepared {external_id} for review")
-        print(f"  Chunks: {len(chunks)}")
         print(f"  Sentences: {sentence_count}")
-        print(f"  Audio files: {len(successful_cuts)}")
+        print(f"  Sentence audio files: {len(successful_cuts)}")
         print(f"  Output: {output_dir}")
         print(f"  Time: {execution_time_ms/1000:.2f}s")
 
@@ -579,7 +491,7 @@ def process_sample(
 def main() -> None:
     """Main entry point for review preparation."""
     parser = argparse.ArgumentParser(
-        description="Prepare review audio files for Label Studio unified review",
+        description="Prepare sentence audio files for Label Studio unified review",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -588,9 +500,6 @@ Examples:
 
     # Process batch of samples
     python prepare_review_audio.py --batch --limit 10
-
-    # Specify custom chunk size
-    python prepare_review_audio.py --batch --chunk-size 20
 
     # Specify directories
     python prepare_review_audio.py --batch --data-root /app/data --review-root /app/data/review
@@ -610,12 +519,6 @@ Examples:
         type=int,
         default=10,
         help="Maximum samples to process in batch mode (default: 10)"
-    )
-    parser.add_argument(
-        "--chunk-size",
-        type=int,
-        default=DEFAULT_CHUNK_SIZE,
-        help=f"Number of sentences per review chunk (default: {DEFAULT_CHUNK_SIZE})"
     )
     parser.add_argument(
         "--data-root",
@@ -652,7 +555,6 @@ Examples:
 
     print(f"Data root: {data_root.absolute()}")
     print(f"Review root: {review_root.absolute()}")
-    print(f"Chunk size: {args.chunk_size} sentences")
 
     if args.dry_run:
         print("\n[DRY RUN MODE - No changes will be made]\n")
@@ -663,9 +565,7 @@ Examples:
             if isinstance(sentences, str):
                 sentences = json.loads(sentences)
             sentence_count = len(sentences)
-            chunk_count = (sentence_count + args.chunk_size - 1) // args.chunk_size
-            print(f"  - {s['external_id']}: {s['duration_seconds']:.1f}s, "
-                  f"{sentence_count} sentences → {chunk_count} chunks")
+            print(f"  - {s['external_id']}: {s['duration_seconds']:.1f}s, {sentence_count} sentences")
         return
 
     # Process samples
@@ -682,7 +582,6 @@ Examples:
                         s.audio_file_path,
                         s.duration_seconds,
                         s.source_metadata->>'title' AS video_title,
-                        tr.revision_id AS transcript_revision_id,
                         tr.sentence_timestamps
                     FROM samples s
                     JOIN transcript_revisions tr 
@@ -694,23 +593,22 @@ Examples:
                 )
                 sample = cur.fetchone()
                 if sample:
-                    process_sample(
-                        dict(sample), data_root, review_root, args.chunk_size
-                    )
+                    process_sample(dict(sample), data_root, review_root)
                 else:
                     print(f"Sample not found: {args.sample_id}")
+                    sys.exit(1)
         finally:
             conn.close()
     else:
         # Batch mode
         samples = get_samples_for_review_prep(limit=args.limit)
-        print(f"\n[INFO] Found {len(samples)} samples to process")
+        print(f"\n[INFO] Found {len(samples)} samples to process\n")
 
         success_count = 0
         fail_count = 0
 
         for sample in samples:
-            if process_sample(sample, data_root, review_root, args.chunk_size):
+            if process_sample(dict(sample), data_root, review_root):
                 success_count += 1
             else:
                 fail_count += 1

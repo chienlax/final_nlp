@@ -15,7 +15,8 @@ Pipeline Stage: RAW → TRANSLATED (with needs_translation_review flag if issues
 Features:
     - Hybrid single-pass: Full context understanding + structured JSON output
     - Few-shot prompting with Vietnamese-English code-switching examples
-    - Audio chunking for files >27 minutes with overlap deduplication
+    - Audio chunking for files >20 minutes with overlap deduplication
+    - Thinking mode with extended reasoning for accurate timestamps (15668 tokens)
     - Translation issue detection and flagging for repair script
 
 Usage:
@@ -59,12 +60,12 @@ from utils.data_utils import get_pg_connection, log_processing
 SUPPORTED_AUDIO_FORMATS = {'.wav', '.mp3', '.aiff', '.aac', '.ogg', '.flac'}
 
 # Gemini settings
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-2.5-pro"
 PRO_MODEL = "gemini-2.5-pro"
 
 # Audio chunking settings
-MAX_AUDIO_DURATION_SECONDS = 27 * 60  # 27 minutes - threshold for chunking
-CHUNK_OVERLAP_SECONDS = 18  # 18 seconds overlap between chunks for consistency
+MAX_AUDIO_DURATION_SECONDS = 20 * 60  # 20 minutes - threshold for chunking
+CHUNK_OVERLAP_SECONDS = 20  # 20 seconds overlap between chunks for consistency
 
 # Overlap deduplication settings
 OVERLAP_TIME_TOLERANCE_SECONDS = 2.0  # ±2 seconds for timestamp overlap
@@ -74,6 +75,9 @@ TEXT_SIMILARITY_THRESHOLD = 0.8  # >80% text similarity for deduplication
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
 RATE_LIMIT_WAIT_SECONDS = 60
+
+# Thinking configuration for Gemini 2.5 Pro
+THINKING_BUDGET = 15668  # Tokens allocated for reasoning about sentence boundaries
 
 # Translation issue markers
 TRANSLATION_MISSING_MARKERS = [
@@ -166,6 +170,51 @@ Audio segment from a history video:
   ]
 }
 ```
+
+**Example 4: Splitting longer continuous speech**
+When a speaker talks for an extended period, segment at natural boundaries:
+
+```json
+{
+  "sentences": [
+    {
+      "text": "Các bạn ơi, hôm nay mình muốn share với các bạn về kinh nghiệm học programming của mình.",
+      "start": 0.0,
+      "end": 7.2,
+      "duration": 7.2,
+      "translation": "Các bạn ơi, hôm nay mình muốn chia sẻ với các bạn về kinh nghiệm học lập trình của mình."
+    },
+    {
+      "text": "Thực ra mình bắt đầu learn code từ năm 2020.",
+      "start": 7.2,
+      "end": 11.5,
+      "duration": 4.3,
+      "translation": "Thực ra mình bắt đầu học lập trình từ năm 2020."
+    },
+    {
+      "text": "Lúc đó mình còn không biết gì về computer science cả.",
+      "start": 11.5,
+      "end": 16.0,
+      "duration": 4.5,
+      "translation": "Lúc đó mình còn không biết gì về khoa học máy tính cả."
+    },
+    {
+      "text": "Nhưng mà sau một thời gian thì mình đã improve rất nhiều.",
+      "start": 16.0,
+      "end": 21.3,
+      "duration": 5.3,
+      "translation": "Nhưng mà sau một thời gian thì mình đã tiến bộ rất nhiều."
+    },
+    {
+      "text": "Và bây giờ mình có thể build được những project khá là complex.",
+      "start": 21.3,
+      "end": 26.5,
+      "duration": 5.2,
+      "translation": "Và bây giờ mình có thể xây dựng được những dự án khá là phức tạp."
+    }
+  ]
+}
+```
 """
 
 
@@ -173,37 +222,52 @@ Audio segment from a history video:
 # STRUCTURED OUTPUT PROMPT
 # =============================================================================
 
-PROCESSING_PROMPT = f"""You are an expert transcriptionist and translator specializing in Vietnamese-English code-switched speech.
+PROCESSING_PROMPT = f"""You are an expert audio transcriptionist and translator for Vietnamese-English code-switched speech.
 
-## Task
-Listen to the ENTIRE audio first to understand the full context, speaker intent, and topic. Then transcribe and translate each sentence with accurate timestamps.
+CRITICAL: TIMESTAMP ACCURACY IS ESSENTIAL
+- The start and end timestamps MUST precisely match when the text is actually spoken
+- Listen carefully to where each sentence begins and ends in the audio
+- Each sentence's timestamps must align exactly with the audio segment
+- Do NOT guess timestamps - they must reflect the actual audio timing
 
-## Guidelines for Transcription
-1. Transcribe EXACTLY what is spoken - preserve code-switching (Vietnamese words as Vietnamese, English words as English)
-2. Use correct Vietnamese diacritics (đ, ă, â, ê, ô, ơ, ư, and all tone marks)
-3. Preserve proper nouns, brand names, and technical terms exactly as spoken
-4. Group words into complete, natural sentences based on audio pauses and intonation
-5. Mark genuinely unclear sections with [unclear]
-6. Timestamps should be in seconds (float), relative to audio start
+TASK:
+1. Listen to the ENTIRE audio first to understand context
+2. Identify all speech segments (skip music, sound effects, jingles)
+3. Segment into natural sentences
+4. Transcribe each sentence preserving code-switching
+5. Translate each sentence to Vietnamese
+6. Assign accurate timestamps that match the spoken audio
 
-## Guidelines for Translation  
-1. Translate ALL English words/phrases into natural Vietnamese
-2. Maintain original meaning, tone, and intent
-3. Use natural Vietnamese expressions, not literal word-for-word translations
-4. Preserve proper nouns (names of people, places, brands) unless they have established Vietnamese forms
-5. If translation is unclear or impossible, output "[translation_missing]"
+TRANSCRIPTION RULES:
+- Preserve code-switching exactly (Vietnamese as Vietnamese, English as English)
+- Use correct Vietnamese diacritics (đ, ă, â, ê, ô, ơ, ư, and all tone marks)
+- Preserve proper nouns, brand names, technical terms as spoken
+- Mark unclear sections with [unclear]
+- Timestamps in seconds (float), relative to audio start
+
+SENTENCE GUIDELINES:
+- Aim for natural sentence lengths (typically 5-15 seconds)
+- Split at natural boundaries: pauses, conjunctions, topic shifts
+- Vietnamese split points: "và", "nhưng", "nên", "vì", "mà", "rồi", "thì"
+- Long continuous speech should be broken into multiple sentences
+
+TRANSLATION RULES:
+- Translate ALL English words/phrases into natural Vietnamese
+- Maintain original meaning and tone
+- Preserve proper nouns unless they have established Vietnamese forms
+- If translation impossible, output "[translation_missing]"
 
 {FEW_SHOT_EXAMPLES}
 
-## Output Format
-Output a valid JSON object with a "sentences" array. Each sentence object must have:
-- "text": The original transcription (code-switched)
-- "start": Start time in seconds (float)
-- "end": End time in seconds (float)  
-- "duration": Duration in seconds (float, should equal end - start)
+OUTPUT FORMAT:
+JSON object with a "sentences" array. Each sentence has:
+- "text": Original transcription (code-switched)
+- "start": Start time in seconds (float) - MUST match audio
+- "end": End time in seconds (float) - MUST match audio
+- "duration": Duration in seconds
 - "translation": Pure Vietnamese translation
 
-Now transcribe and translate the audio:"""
+Now transcribe and translate the audio with accurate timestamps:"""
 
 
 # =============================================================================
@@ -219,15 +283,15 @@ SENTENCE_SCHEMA = {
         },
         "start": {
             "type": "number",
-            "description": "Start time in seconds"
+            "description": "Start time in seconds - must accurately match when the text is spoken"
         },
         "end": {
             "type": "number",
-            "description": "End time in seconds"
+            "description": "End time in seconds - must accurately match when the text ends"
         },
         "duration": {
             "type": "number",
-            "description": "Duration in seconds"
+            "description": "Duration in seconds (end - start)"
         },
         "translation": {
             "type": "string",
@@ -577,16 +641,31 @@ def process_audio_chunk(
     
     print(f"  Processing: {audio_path.name} ({audio_size_mb:.2f} MB)")
     
-    # Initialize client with structured output
+    # Initialize client with structured output and thinking config
     genai.configure(api_key=api_key.api_key)
     
+    # Enhanced generation config with higher temperature for better boundary decisions
     generation_config = {
-        "temperature": 0.1,
+        "temperature": 1.0,  # Higher temp for more creative sentence boundary decisions
         "top_p": 0.95,
         "max_output_tokens": 65536,
         "response_mime_type": "application/json",
         "response_schema": OUTPUT_SCHEMA
     }
+    
+    # Add thinking config for Gemini 2.5 Pro - enables explicit reasoning
+    # about sentence boundaries and segmentation decisions
+    thinking_config = None
+    if "2.5" in model:  # Only for Gemini 2.5 models
+        try:
+            from google.genai import types
+            thinking_config = types.ThinkingConfig(
+                thinking_budget=THINKING_BUDGET  # 15668 tokens for reasoning
+            )
+            generation_config["thinking_config"] = thinking_config
+        except (ImportError, AttributeError):
+            # Fallback if types module not available
+            pass
     
     client = genai.GenerativeModel(
         model_name=model,
@@ -731,12 +810,17 @@ def process_audio_file(
         
         all_metadata["sentence_count"] = len(deduplicated)
         all_metadata["sentences_before_dedup"] = len(all_sentences)
+        all_metadata["sentences_after_dedup"] = len(deduplicated)
         
         return deduplicated, all_metadata
     
     else:
         # Single chunk processing
-        return process_audio_chunk(audio_path, api_key, model, offset_seconds=0.0)
+        sentences, metadata = process_audio_chunk(audio_path, api_key, model, offset_seconds=0.0)
+        
+        metadata["sentence_count"] = len(sentences)
+        
+        return sentences, metadata
 
 
 # =============================================================================

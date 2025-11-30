@@ -1,23 +1,24 @@
 """
-Label Studio synchronization module for the NLP pipeline (v2).
+Label Studio synchronization module for the NLP pipeline (v3 - Sample-level).
 
-Handles pushing review chunks for unified annotation and pulling completed
-annotations back into the database. Supports the new chunked review workflow.
+Handles pushing full samples for unified annotation and pulling completed
+annotations back into the database. Sample-level review (no chunking).
 
-Changes from v1:
-- Supports unified_review task type with review_chunks
-- Push/pull works at chunk level, not sample level
-- Handles sentence-level corrections
-- Supports reopen for partial re-review
+Changes from v2:
+- No chunking - entire sample pushed as single task
+- 5-column inline editing: play | original transcript | revised | original translation | revised
+- Per-sentence TextArea parsing
+- Revision history tracking via update_sentence_review() SQL function
 
 Usage:
-    python label_studio_sync.py push --task-type unified_review --limit 10
-    python label_studio_sync.py pull --task-type unified_review
-    python label_studio_sync.py reopen --chunk-id <uuid>
-    python label_studio_sync.py reopen --sample-id <uuid> --all
+    python label_studio_sync.py push --limit 10
+    python label_studio_sync.py pull
+    python label_studio_sync.py reopen --sample-id <uuid>
+    python label_studio_sync.py status
 """
 
 import argparse
+import html
 import json
 import os
 import sys
@@ -33,10 +34,7 @@ from psycopg2.extras import Json, RealDictCursor
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from utils.data_utils import (
-    get_pg_connection,
-    log_processing,
-)
+from utils.data_utils import get_pg_connection, log_processing
 
 
 # =============================================================================
@@ -51,13 +49,8 @@ LABEL_STUDIO_API_KEY = os.getenv("LABEL_STUDIO_API_KEY", "")
 AUDIO_SERVER_URL = os.getenv("AUDIO_SERVER_URL", "http://localhost:8081")
 AUDIO_PUBLIC_URL = os.getenv("AUDIO_PUBLIC_URL", "http://localhost:8081")
 
-# Task type to Label Studio project mapping
-PROJECT_MAPPING = {
-    'transcript_correction': os.getenv("LS_PROJECT_TRANSCRIPT", "1"),
-    'translation_review': os.getenv("LS_PROJECT_TRANSLATION", "2"),
-    'audio_segmentation': os.getenv("LS_PROJECT_SEGMENTATION", "3"),
-    'unified_review': os.getenv("LS_PROJECT_UNIFIED_REVIEW", "4"),
-}
+# Default project ID for sample review
+LS_PROJECT_ID = os.getenv("LS_PROJECT_SAMPLE_REVIEW", "1")
 
 
 # =============================================================================
@@ -203,20 +196,18 @@ class LabelStudioClient:
 
 
 # =============================================================================
-# DATABASE FUNCTIONS - UNIFIED REVIEW
+# DATABASE FUNCTIONS - SAMPLE-LEVEL REVIEW
 # =============================================================================
 
-def get_chunks_for_review(limit: int = 10) -> List[Dict[str, Any]]:
+def get_samples_for_review(limit: int = 10) -> List[Dict[str, Any]]:
     """
-    Get review chunks ready to be pushed to Label Studio.
-
-    Returns chunks in REVIEW_PREPARED samples that have pending status.
+    Get samples ready to be pushed to Label Studio (REVIEW_PREPARED state).
 
     Args:
-        limit: Maximum number of chunks to return.
+        limit: Maximum number of samples to return.
 
     Returns:
-        List of chunk dictionaries with sample and sentence data.
+        List of sample dictionaries.
     """
     conn = get_pg_connection()
 
@@ -225,22 +216,19 @@ def get_chunks_for_review(limit: int = 10) -> List[Dict[str, Any]]:
             cur.execute(
                 """
                 SELECT 
-                    rc.chunk_id,
-                    rc.sample_id,
-                    rc.chunk_index,
-                    rc.start_sentence_idx,
-                    rc.end_sentence_idx,
-                    rc.start_time_ms,
-                    rc.end_time_ms,
+                    s.sample_id,
                     s.external_id,
+                    s.audio_file_path,
+                    s.duration_seconds,
                     s.source_metadata->>'title' AS video_title,
-                    (SELECT COUNT(*) FROM review_chunks WHERE sample_id = rc.sample_id) AS chunk_count
-                FROM review_chunks rc
-                JOIN samples s ON rc.sample_id = s.sample_id
-                WHERE rc.status = 'pending'
-                  AND s.processing_state = 'REVIEW_PREPARED'
+                    COALESCE(src.channel_name, src.name, 'Unknown Channel') AS channel_name,
+                    (SELECT COUNT(*) FROM sentence_reviews WHERE sample_id = s.sample_id) AS sentence_count
+                FROM samples s
+                LEFT JOIN sources src ON s.source_id = src.source_id
+                WHERE s.processing_state = 'REVIEW_PREPARED'
                   AND s.is_deleted = FALSE
-                ORDER BY s.priority DESC, s.created_at ASC, rc.chunk_index ASC
+                  AND s.label_studio_task_id IS NULL
+                ORDER BY s.priority DESC, s.created_at ASC
                 LIMIT %s
                 """,
                 (limit,)
@@ -250,15 +238,11 @@ def get_chunks_for_review(limit: int = 10) -> List[Dict[str, Any]]:
         conn.close()
 
 
-def get_sentences_for_chunk(
-    chunk_id: str,
-    sample_id: str
-) -> List[Dict[str, Any]]:
+def get_sentences_for_sample(sample_id: str) -> List[Dict[str, Any]]:
     """
-    Get sentence reviews for a chunk to build Label Studio task data.
+    Get sentence reviews for a sample to build Label Studio task data.
 
     Args:
-        chunk_id: UUID of the chunk.
         sample_id: UUID of the sample.
 
     Returns:
@@ -275,32 +259,31 @@ def get_sentences_for_chunk(
                     sr.original_start_ms,
                     sr.original_end_ms,
                     sr.original_transcript,
-                    sr.original_translation
+                    sr.original_translation,
+                    sr.sentence_audio_path
                 FROM sentence_reviews sr
-                WHERE sr.chunk_id = %s
+                WHERE sr.sample_id = %s
                 ORDER BY sr.sentence_idx ASC
                 """,
-                (chunk_id,)
+                (sample_id,)
             )
             return [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
 
 
-def update_chunk_status(
-    chunk_id: str,
-    status: str,
-    label_studio_project_id: Optional[int] = None,
-    label_studio_task_id: Optional[int] = None
+def update_sample_label_studio_info(
+    sample_id: str,
+    project_id: int,
+    task_id: int
 ) -> None:
     """
-    Update review chunk status and Label Studio task info.
+    Update sample with Label Studio project and task IDs.
 
     Args:
-        chunk_id: UUID of the chunk.
-        status: New status (pending, in_progress, completed).
-        label_studio_project_id: Label Studio project ID.
-        label_studio_task_id: Label Studio task ID.
+        sample_id: UUID of the sample.
+        project_id: Label Studio project ID.
+        task_id: Label Studio task ID.
     """
     conn = get_pg_connection()
 
@@ -308,204 +291,424 @@ def update_chunk_status(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                UPDATE review_chunks
-                SET status = %s::annotation_status,
-                    label_studio_project_id = COALESCE(%s, label_studio_project_id),
-                    label_studio_task_id = COALESCE(%s, label_studio_task_id),
+                UPDATE samples
+                SET label_studio_project_id = %s,
+                    label_studio_task_id = %s,
                     updated_at = NOW()
-                WHERE chunk_id = %s
+                WHERE sample_id = %s
                 """,
-                (status, label_studio_project_id, label_studio_task_id, chunk_id)
+                (project_id, task_id, sample_id)
             )
+
+            # Transition to IN_REVIEW state
+            cur.execute(
+                "SELECT transition_sample_state(%s, 'IN_REVIEW'::processing_state, %s)",
+                (sample_id, 'label_studio_sync')
+            )
+
             conn.commit()
     finally:
         conn.close()
 
 
-def save_sentence_reviews(
-    chunk_id: str,
+def save_sample_review_results(
     sample_id: str,
-    results: List[Dict[str, Any]],
+    task_data: Dict[str, Any],
+    annotation_results: List[Dict[str, Any]],
     reviewer: str
-) -> Tuple[int, int]:
+) -> Dict[str, int]:
     """
-    Save sentence-level review results to database.
+    Save review results from Label Studio back to database.
+
+    Parses per-sentence TextArea values and calls update_sentence_review()
+    for each sentence with changes.
 
     Args:
-        chunk_id: UUID of the chunk.
         sample_id: UUID of the sample.
-        results: Label Studio annotation results.
+        task_data: Original task data (has sentence info).
+        annotation_results: Label Studio annotation results.
         reviewer: Reviewer identifier.
 
     Returns:
-        Tuple of (updated_count, rejected_count).
+        Statistics dictionary with counts.
     """
     conn = get_pg_connection()
-    updated_count = 0
-    rejected_count = 0
+    stats = {
+        'updated': 0,
+        'unchanged': 0,
+        'transcript_changes': 0,
+        'translation_changes': 0,
+        'timestamp_changes': 0,
+        'rejected': 0,
+    }
 
     try:
         with conn.cursor() as cur:
-            # Parse results and update each sentence
-            for item in results:
-                item_name = item.get('from_name', '')
+            # Parse annotation results
+            # Extract per-sentence edits from the HyperText embedded form
+            # Results format depends on template - look for textarea results
+            
+            sentence_edits = {}  # idx -> {transcript, translation, start_ms, end_ms, rejected}
+            
+            for result_item in annotation_results:
+                from_name = result_item.get('from_name', '')
+                result_type = result_item.get('type', '')
+                value = result_item.get('value', {})
                 
-                # Extract sentence index from field name (e.g., "transcript_42")
-                if '_' in item_name:
-                    parts = item_name.rsplit('_', 1)
-                    if len(parts) == 2 and parts[1].isdigit():
-                        sentence_idx = int(parts[1])
+                # Parse textarea results with naming convention: revised_transcript_0042, revised_translation_0042
+                if result_type == 'textarea' and '_' in from_name:
+                    parts = from_name.rsplit('_', 1)
+                    if len(parts) == 2:
                         field_type = parts[0]
-                    else:
+                        try:
+                            sentence_idx = int(parts[1])
+                        except ValueError:
+                            continue
+                        
+                        if sentence_idx not in sentence_edits:
+                            sentence_edits[sentence_idx] = {}
+                        
+                        text_value = value.get('text', [''])[0] if isinstance(value.get('text'), list) else value.get('text', '')
+                        
+                        if field_type == 'revised_transcript':
+                            sentence_edits[sentence_idx]['transcript'] = text_value
+                        elif field_type == 'revised_translation':
+                            sentence_edits[sentence_idx]['translation'] = text_value
+                
+                # Parse number inputs for timestamps: start_ms_0042, end_ms_0042
+                elif result_type == 'number' and '_' in from_name:
+                    parts = from_name.rsplit('_', 1)
+                    if len(parts) == 2:
+                        field_type = '_'.join(from_name.split('_')[:-1])  # start_ms or end_ms
+                        try:
+                            sentence_idx = int(parts[1])
+                        except ValueError:
+                            continue
+                        
+                        if sentence_idx not in sentence_edits:
+                            sentence_edits[sentence_idx] = {}
+                        
+                        num_value = value.get('number')
+                        if num_value is not None:
+                            if field_type == 'start_ms':
+                                sentence_edits[sentence_idx]['start_ms'] = int(num_value)
+                            elif field_type == 'end_ms':
+                                sentence_edits[sentence_idx]['end_ms'] = int(num_value)
+                
+                # Parse checkbox for rejection: reject_0042
+                elif result_type == 'choices' and from_name.startswith('reject_'):
+                    try:
+                        sentence_idx = int(from_name.split('_')[1])
+                    except (ValueError, IndexError):
                         continue
-                else:
-                    continue
-
-                value = item.get('value', {})
-
-                # Handle different field types
-                if field_type == 'transcript' and item.get('type') == 'textarea':
-                    text = value.get('text', [''])[0] if isinstance(value.get('text'), list) else value.get('text', '')
-                    if text:
-                        cur.execute(
-                            """
-                            UPDATE sentence_reviews
-                            SET reviewed_transcript = %s,
-                                is_transcript_corrected = TRUE,
-                                updated_at = NOW()
-                            WHERE chunk_id = %s AND sentence_idx = %s
-                            """,
-                            (text, chunk_id, sentence_idx)
-                        )
-                        updated_count += 1
-
-                elif field_type == 'translation' and item.get('type') == 'textarea':
-                    text = value.get('text', [''])[0] if isinstance(value.get('text'), list) else value.get('text', '')
-                    if text:
-                        cur.execute(
-                            """
-                            UPDATE sentence_reviews
-                            SET reviewed_translation = %s,
-                                is_translation_corrected = TRUE,
-                                updated_at = NOW()
-                            WHERE chunk_id = %s AND sentence_idx = %s
-                            """,
-                            (text, chunk_id, sentence_idx)
-                        )
-                        updated_count += 1
-
-                elif field_type == 'flags' and item.get('type') == 'choices':
+                    
+                    if sentence_idx not in sentence_edits:
+                        sentence_edits[sentence_idx] = {}
+                    
                     choices = value.get('choices', [])
-                    
-                    is_rejected = 'reject' in choices
-                    is_boundary_adj = 'boundary_adjust' in choices
-                    is_transcript_issue = 'transcript_issue' in choices
-                    is_translation_issue = 'translation_issue' in choices
+                    sentence_edits[sentence_idx]['rejected'] = len(choices) > 0
 
-                    cur.execute(
-                        """
-                        UPDATE sentence_reviews
-                        SET is_rejected = %s,
-                            is_boundary_adjusted = %s,
-                            is_transcript_corrected = COALESCE(is_transcript_corrected, %s),
-                            is_translation_corrected = COALESCE(is_translation_corrected, %s),
-                            updated_at = NOW()
-                        WHERE chunk_id = %s AND sentence_idx = %s
-                        """,
-                        (is_rejected, is_boundary_adj, is_transcript_issue, 
-                         is_translation_issue, chunk_id, sentence_idx)
-                    )
-                    
-                    if is_rejected:
-                        rejected_count += 1
-
-            # Update chunk status
+            # Get original sentences from database
             cur.execute(
                 """
-                UPDATE review_chunks
-                SET status = 'completed'::annotation_status,
-                    reviewed_by = %s,
-                    reviewed_at = NOW(),
-                    updated_at = NOW()
-                WHERE chunk_id = %s
-                """,
-                (reviewer, chunk_id)
-            )
-
-            conn.commit()
-            return updated_count, rejected_count
-
-    except psycopg2.Error as e:
-        conn.rollback()
-        print(f"Error saving sentence reviews: {e}")
-        return 0, 0
-    finally:
-        conn.close()
-
-
-def check_sample_review_complete(sample_id: str) -> bool:
-    """
-    Check if all chunks for a sample have been reviewed.
-
-    Args:
-        sample_id: UUID of the sample.
-
-    Returns:
-        True if all chunks are completed.
-    """
-    conn = get_pg_connection()
-
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT COUNT(*) = 0 AS all_complete
-                FROM review_chunks
+                SELECT sentence_idx, original_transcript, original_translation,
+                       original_start_ms, original_end_ms
+                FROM sentence_reviews
                 WHERE sample_id = %s
-                  AND status != 'completed'
+                ORDER BY sentence_idx
                 """,
                 (sample_id,)
             )
-            result = cur.fetchone()
-            return result[0] if result else False
+            original_sentences = {
+                row[0]: {
+                    'transcript': row[1], 
+                    'translation': row[2],
+                    'start_ms': row[3],
+                    'end_ms': row[4]
+                } 
+                for row in cur.fetchall()
+            }
+
+            # Process each sentence with edits
+            for sentence_idx, edits in sentence_edits.items():
+                original = original_sentences.get(sentence_idx, {})
+                
+                new_transcript = edits.get('transcript')
+                new_translation = edits.get('translation')
+                new_start_ms = edits.get('start_ms')
+                new_end_ms = edits.get('end_ms')
+                is_rejected = edits.get('rejected', False)
+                
+                orig_transcript = original.get('transcript', '')
+                orig_translation = original.get('translation', '')
+                orig_start_ms = original.get('start_ms', 0)
+                orig_end_ms = original.get('end_ms', 0)
+                
+                transcript_changed = (new_transcript is not None 
+                                      and new_transcript.strip() != orig_transcript.strip())
+                translation_changed = (new_translation is not None 
+                                       and new_translation.strip() != orig_translation.strip())
+                start_changed = (new_start_ms is not None and new_start_ms != orig_start_ms)
+                end_changed = (new_end_ms is not None and new_end_ms != orig_end_ms)
+                
+                has_changes = transcript_changed or translation_changed or start_changed or end_changed or is_rejected
+                
+                if has_changes:
+                    # Call update function that handles revision tracking
+                    cur.execute(
+                        """
+                        SELECT update_sentence_review(
+                            %s, %s, %s, %s, %s, %s, %s, NULL, NULL, %s
+                        )
+                        """,
+                        (
+                            sample_id,
+                            sentence_idx,
+                            new_transcript if transcript_changed else None,
+                            new_translation if translation_changed else None,
+                            new_start_ms if start_changed else None,
+                            new_end_ms if end_changed else None,
+                            is_rejected,
+                            reviewer
+                        )
+                    )
+                    stats['updated'] += 1
+                    
+                    if transcript_changed:
+                        stats['transcript_changes'] += 1
+                    if translation_changed:
+                        stats['translation_changes'] += 1
+                    if start_changed or end_changed:
+                        stats['timestamp_changes'] += 1
+                    if is_rejected:
+                        stats['rejected'] += 1
+                else:
+                    stats['unchanged'] += 1
+
+            # Also parse sample-level decisions
+            decision = None
+            audio_quality = None
+            transcript_quality = None
+            translation_quality = None
+            confidence = None
+            notes = None
+            
+            for result_item in annotation_results:
+                from_name = result_item.get('from_name', '')
+                result_type = result_item.get('type', '')
+                value = result_item.get('value', {})
+                
+                if from_name == 'decision' and result_type == 'choices':
+                    choices = value.get('choices', [])
+                    decision = choices[0] if choices else None
+                elif from_name == 'audio_quality' and result_type == 'choices':
+                    choices = value.get('choices', [])
+                    audio_quality = choices[0] if choices else None
+                elif from_name == 'transcript_quality' and result_type == 'choices':
+                    choices = value.get('choices', [])
+                    transcript_quality = choices[0] if choices else None
+                elif from_name == 'translation_quality' and result_type == 'choices':
+                    choices = value.get('choices', [])
+                    translation_quality = choices[0] if choices else None
+                elif from_name == 'confidence' and result_type == 'rating':
+                    confidence = value.get('rating')
+                elif from_name == 'notes' and result_type == 'textarea':
+                    text = value.get('text', [''])[0] if isinstance(value.get('text'), list) else value.get('text', '')
+                    notes = text if text else None
+
+            # Update sample with review summary
+            review_metadata = {
+                'decision': decision,
+                'audio_quality': audio_quality,
+                'transcript_quality': transcript_quality,
+                'translation_quality': translation_quality,
+                'confidence': confidence,
+                'notes': notes,
+                'reviewer': reviewer,
+                'reviewed_at': datetime.utcnow().isoformat(),
+                'stats': stats,
+            }
+            
+            cur.execute(
+                """
+                UPDATE samples 
+                SET processing_metadata = processing_metadata || %s
+                WHERE sample_id = %s
+                """,
+                (Json({'review_summary': review_metadata}), sample_id)
+            )
+
+            # Transition state based on decision
+            new_state = 'VERIFIED'
+            if decision == 'reject':
+                new_state = 'REJECTED'
+            elif decision == 'needs_revision':
+                new_state = 'REVIEW_PREPARED'  # Re-review needed
+            
+            cur.execute(
+                "SELECT transition_sample_state(%s, %s::processing_state, %s)",
+                (sample_id, new_state, 'label_studio_sync')
+            )
+
+            conn.commit()
+            return stats
+
+    except psycopg2.Error as e:
+        conn.rollback()
+        print(f"Error saving review results: {e}")
+        return stats
     finally:
         conn.close()
 
 
-def transition_sample_to_verified(sample_id: str, executor: str = "label_studio_sync") -> None:
+# =============================================================================
+# HTML GENERATION FOR TASK DATA
+# =============================================================================
+
+def build_sentences_html(
+    sample_id: str,
+    sentences: List[Dict[str, Any]],
+    audio_base_url: str
+) -> str:
     """
-    Transition a sample to VERIFIED state when all chunks are reviewed.
+    Build HTML table for editing sentences (transcript & translation).
+
+    This is the EDITING table - not for audio playback.
+    Audio playback is handled by Label Studio's native Paragraphs + Audio tags.
+
+    Columns: Index | Timestamps | Original Transcript | Revised Transcript | 
+             Original Translation | Revised Translation | Reject
 
     Args:
         sample_id: UUID of the sample.
-        executor: Name of the executor for logging.
+        sentences: List of sentence dictionaries.
+        audio_base_url: Base URL for audio files (not used in this version).
+
+    Returns:
+        HTML string for the editing table.
     """
-    conn = get_pg_connection()
+    rows = []
+    
+    for sent in sentences:
+        idx = sent['sentence_idx']
+        
+        orig_transcript = html.escape(sent.get('original_transcript', ''))
+        orig_translation = html.escape(sent.get('original_translation', ''))
+        
+        start_ms = sent['original_start_ms']
+        end_ms = sent['original_end_ms']
+        start_sec = start_ms / 1000.0
+        end_sec = end_ms / 1000.0
+        
+        # Build row with editing controls
+        row = f'''
+        <tr data-sentence-idx="{idx}" id="row_{idx:04d}">
+            <td style="width: 40px; text-align: center; vertical-align: top; padding: 8px; background: #f5f5f5;">
+                <span style="font-size: 12px; font-weight: 700; background: #667eea; color: white; padding: 3px 8px; border-radius: 12px;">{idx:03d}</span>
+            </td>
+            <td style="width: 80px; text-align: center; vertical-align: top; padding: 6px; background: #fafafa;">
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 10px; color: #666;">{start_sec:.1f}s - {end_sec:.1f}s</span>
+                    <input type="number" name="start_ms_{idx:04d}" value="{start_ms}" step="100" 
+                           style="width: 60px; font-size: 9px; padding: 2px; border: 1px solid #ccc; border-radius: 3px; text-align: center;">
+                    <input type="number" name="end_ms_{idx:04d}" value="{end_ms}" step="100"
+                           style="width: 60px; font-size: 9px; padding: 2px; border: 1px solid #ccc; border-radius: 3px; text-align: center;">
+                </div>
+            </td>
+            <td style="width: 20%; vertical-align: top; padding: 8px; background: #f0f0f0;">
+                <div style="font-size: 12px; line-height: 1.4; white-space: pre-wrap;">{orig_transcript}</div>
+            </td>
+            <td style="width: 20%; vertical-align: top; padding: 4px;">
+                <textarea name="revised_transcript_{idx:04d}" 
+                          style="width: 100%; min-height: 60px; font-size: 12px; border: 1px solid #ddd; border-radius: 4px; padding: 6px; resize: vertical; line-height: 1.4;"
+                          placeholder="Edit transcript...">{orig_transcript}</textarea>
+            </td>
+            <td style="width: 20%; vertical-align: top; padding: 8px; background: #fff8e1;">
+                <div style="font-size: 12px; line-height: 1.4; white-space: pre-wrap;">{orig_translation}</div>
+            </td>
+            <td style="width: 20%; vertical-align: top; padding: 4px;">
+                <textarea name="revised_translation_{idx:04d}" 
+                          style="width: 100%; min-height: 60px; font-size: 12px; border: 1px solid #ddd; border-radius: 4px; padding: 6px; resize: vertical; line-height: 1.4;"
+                          placeholder="Edit translation...">{orig_translation}</textarea>
+            </td>
+            <td style="width: 50px; text-align: center; vertical-align: top; padding: 8px;">
+                <label style="display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer;">
+                    <input type="checkbox" name="reject_{idx:04d}" style="width: 16px; height: 16px;">
+                    <span style="font-size: 9px; color: #c62828;">Reject</span>
+                </label>
+            </td>
+        </tr>'''
+        rows.append(row)
+    
+    # Build complete table
+    table_html = f'''
+<table style="width: 100%; border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px;">
+    <thead>
+        <tr>
+            <th style="width: 40px; text-align: center; background: #667eea; color: white; padding: 8px 4px; font-size: 10px;">#</th>
+            <th style="width: 80px; text-align: center; background: #667eea; color: white; padding: 8px 4px; font-size: 10px;">Time (ms)</th>
+            <th style="width: 20%; background: #667eea; color: white; padding: 8px; text-align: left; font-size: 10px;">Original Transcript</th>
+            <th style="width: 20%; background: #667eea; color: white; padding: 8px; text-align: left; font-size: 10px;">✏️ Revised Transcript</th>
+            <th style="width: 20%; background: #667eea; color: white; padding: 8px; text-align: left; font-size: 10px;">Original Translation</th>
+            <th style="width: 20%; background: #667eea; color: white; padding: 8px; text-align: left; font-size: 10px;">✏️ Revised Translation</th>
+            <th style="width: 50px; text-align: center; background: #667eea; color: white; padding: 8px 4px; font-size: 10px;">❌</th>
+        </tr>
+    </thead>
+    <tbody>
+        {''.join(rows)}
+    </tbody>
+</table>
+'''
+    
+    return table_html
 
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT transition_sample_state(%s, 'VERIFIED'::processing_state, %s)",
-                (sample_id, executor)
-            )
-            conn.commit()
-    finally:
-        conn.close()
+
+def build_paragraphs_data(sentences: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Build paragraphs data for Label Studio's Paragraphs tag.
+
+    Each paragraph has start/end timestamps for audio sync.
+
+    Args:
+        sentences: List of sentence dictionaries.
+
+    Returns:
+        List of paragraph dictionaries for Label Studio.
+    """
+    paragraphs = []
+    
+    for sent in sentences:
+        idx = sent['sentence_idx']
+        start_ms = sent['original_start_ms']
+        end_ms = sent['original_end_ms']
+        transcript = sent.get('original_transcript', '')
+        
+        paragraph = {
+            'idx': f"{idx:03d}",
+            'start': start_ms / 1000.0,  # Convert to seconds
+            'end': end_ms / 1000.0,
+            'text': transcript,
+        }
+        paragraphs.append(paragraph)
+    
+    return paragraphs
 
 
 # =============================================================================
-# PUSH/PULL FUNCTIONS - UNIFIED REVIEW
+# PUSH/PULL FUNCTIONS - SAMPLE-LEVEL REVIEW
 # =============================================================================
 
-def push_unified_review(
+def push_sample_reviews(
     limit: int = 10,
+    project_id: Optional[str] = None,
     dry_run: bool = False
 ) -> Dict[str, int]:
     """
-    Push review chunks to Label Studio as unified review tasks.
+    Push samples to Label Studio as review tasks.
 
     Args:
-        limit: Maximum number of chunks to push.
+        limit: Maximum number of samples to push.
+        project_id: Label Studio project ID (uses env default if not provided).
         dry_run: If True, don't actually create tasks.
 
     Returns:
@@ -513,67 +716,66 @@ def push_unified_review(
     """
     stats = {'pushed': 0, 'skipped': 0, 'errors': 0}
 
-    project_id = PROJECT_MAPPING.get('unified_review')
-    if not project_id:
-        print("Error: unified_review project not configured")
-        return stats
-
+    project_id = project_id or LS_PROJECT_ID
     client = LabelStudioClient()
 
     if not dry_run and not client.check_connection():
         print("Cannot connect to Label Studio.")
         return stats
 
-    chunks = get_chunks_for_review(limit=limit)
-    print(f"Found {len(chunks)} chunks ready for unified review")
+    samples = get_samples_for_review(limit=limit)
+    print(f"Found {len(samples)} samples ready for review")
 
-    for chunk in chunks:
-        chunk_id = str(chunk['chunk_id'])
-        sample_id = str(chunk['sample_id'])
-        external_id = chunk['external_id']
-        video_title = chunk.get('video_title', external_id)
-        chunk_index = chunk['chunk_index']
-        chunk_count = chunk['chunk_count']
+    for sample in samples:
+        sample_id = str(sample['sample_id'])
+        external_id = sample['external_id']
+        video_title = sample.get('video_title', external_id)
+        channel_name = sample.get('channel_name', 'Unknown Channel')
+        duration_seconds = sample.get('duration_seconds', 0)
+        sentence_count = sample.get('sentence_count', 0)
 
-        # Get sentences for this chunk
-        sentences = get_sentences_for_chunk(chunk_id, sample_id)
+        # Get sentences for this sample
+        sentences = get_sentences_for_sample(sample_id)
 
         if not sentences:
-            print(f"  Skipping chunk {chunk_id}: No sentences found")
+            print(f"  Skipping {external_id}: No sentences found")
             stats['skipped'] += 1
             continue
 
-        # Build sentence data for Label Studio
-        sentence_data = []
-        for sent in sentences:
-            sentence_idx = sent['sentence_idx']
-            
-            # Build audio URL: /review/{sample_id}/sentences/{idx:04d}.wav
-            audio_url = f"{AUDIO_PUBLIC_URL}/review/{sample_id}/sentences/{sentence_idx:04d}.wav"
+        # Build paragraphs data for Label Studio's native Paragraphs tag
+        paragraphs = build_paragraphs_data(sentences)
 
-            sentence_data.append({
-                'idx': sentence_idx,
-                'audio_url': audio_url,
-                'start': sent['original_start_ms'] / 1000.0,  # Convert to seconds
-                'end': sent['original_end_ms'] / 1000.0,
-                'text': sent['original_transcript'],
-                'translation': sent['original_translation'],
-            })
+        # Build HTML table for editing (no audio controls - audio handled by Paragraphs tag)
+        sentences_html = build_sentences_html(
+            sample_id=sample_id,
+            sentences=sentences,
+            audio_base_url=AUDIO_PUBLIC_URL
+        )
 
-        # Build task data
+        # Full sample audio URL for Label Studio's Audio tag
+        audio_url = f"{AUDIO_PUBLIC_URL}/audio/{external_id}.wav"
+
+        # Format duration for display
+        duration_min = int(duration_seconds // 60)
+        duration_sec = int(duration_seconds % 60)
+        duration_display = f"{duration_min}:{duration_sec:02d}"
+
+        # Build task data with new format for Paragraphs tag
         task_data = {
             'sample_id': sample_id,
-            'chunk_id': chunk_id,
             'external_id': external_id,
-            'video_title': video_title,
-            'chunk_index': str(chunk_index + 1),  # 1-indexed for display
-            'chunk_count': str(chunk_count),
-            'sentences': sentence_data,
+            'video_title': video_title[:100] if video_title else external_id,
+            'channel_name': channel_name,
+            'sentence_count': str(sentence_count),
+            'duration_display': duration_display,
+            'duration_seconds': str(int(duration_seconds)),
+            'audio_url': audio_url,
+            'paragraphs': paragraphs,
+            'sentences_html': sentences_html,
         }
 
         if dry_run:
-            print(f"  [DRY RUN] Would push chunk {chunk_index + 1}/{chunk_count} "
-                  f"for {external_id} ({len(sentences)} sentences)")
+            print(f"  [DRY RUN] Would push {external_id} ({sentence_count} sentences)")
             stats['pushed'] += 1
             continue
 
@@ -581,39 +783,46 @@ def push_unified_review(
         task_id = client.create_task(project_id, task_data)
 
         if task_id:
-            # Update chunk with Label Studio info
-            update_chunk_status(
-                chunk_id=chunk_id,
-                status='in_progress',
-                label_studio_project_id=int(project_id),
-                label_studio_task_id=task_id
+            # Update sample with Label Studio info
+            update_sample_label_studio_info(
+                sample_id=sample_id,
+                project_id=int(project_id),
+                task_id=task_id
             )
 
-            print(f"  Pushed chunk {chunk_index + 1}/{chunk_count} for {external_id} -> Task {task_id}")
+            print(f"  Pushed {external_id} ({sentence_count} sentences) -> Task {task_id}")
             stats['pushed'] += 1
         else:
+            print(f"  Failed to push {external_id}")
             stats['errors'] += 1
 
     return stats
 
 
-def pull_unified_review(dry_run: bool = False) -> Dict[str, int]:
+def pull_sample_reviews(
+    project_id: Optional[str] = None,
+    dry_run: bool = False
+) -> Dict[str, int]:
     """
-    Pull completed unified review annotations from Label Studio.
+    Pull completed sample review annotations from Label Studio.
 
     Args:
+        project_id: Label Studio project ID.
         dry_run: If True, don't update database.
 
     Returns:
         Statistics dictionary.
     """
-    stats = {'pulled': 0, 'skipped': 0, 'errors': 0, 'samples_completed': 0}
+    stats = {
+        'pulled': 0, 
+        'skipped': 0, 
+        'errors': 0, 
+        'verified': 0,
+        'rejected': 0,
+        'needs_revision': 0,
+    }
 
-    project_id = PROJECT_MAPPING.get('unified_review')
-    if not project_id:
-        print("Error: unified_review project not configured")
-        return stats
-
+    project_id = project_id or LS_PROJECT_ID
     client = LabelStudioClient()
 
     if not client.check_connection():
@@ -621,18 +830,15 @@ def pull_unified_review(dry_run: bool = False) -> Dict[str, int]:
         return stats
 
     completed_tasks = client.get_completed_tasks(project_id)
-    print(f"Found {len(completed_tasks)} completed unified review tasks")
-
-    samples_to_check = set()
+    print(f"Found {len(completed_tasks)} completed review tasks")
 
     for task in completed_tasks:
         task_id = task.get('id')
         task_data = task.get('data', {})
-        chunk_id = task_data.get('chunk_id')
         sample_id = task_data.get('sample_id')
 
-        if not chunk_id or not sample_id:
-            print(f"  Skipping task {task_id}: Missing chunk_id or sample_id")
+        if not sample_id:
+            print(f"  Skipping task {task_id}: Missing sample_id")
             stats['skipped'] += 1
             continue
 
@@ -645,58 +851,59 @@ def pull_unified_review(dry_run: bool = False) -> Dict[str, int]:
         reviewer = str(latest_annotation.get('completed_by', 'annotator'))
 
         if dry_run:
-            print(f"  [DRY RUN] Would pull task {task_id} -> chunk {chunk_id}")
+            print(f"  [DRY RUN] Would pull task {task_id} -> sample {sample_id}")
             stats['pulled'] += 1
-            samples_to_check.add(sample_id)
             continue
 
-        # Save sentence reviews
-        updated_count, rejected_count = save_sentence_reviews(
-            chunk_id=chunk_id,
+        # Save review results
+        result_stats = save_sample_review_results(
             sample_id=sample_id,
-            results=results,
+            task_data=task_data,
+            annotation_results=results,
             reviewer=reviewer
         )
 
         # Log the operation
         log_processing(
-            operation='unified_review_completed',
+            operation='sample_review_completed',
             success=True,
             sample_id=sample_id,
             executor='label_studio_sync',
             output_summary={
-                'chunk_id': chunk_id,
                 'task_id': task_id,
-                'sentences_updated': updated_count,
-                'sentences_rejected': rejected_count,
                 'reviewer': reviewer,
+                **result_stats,
             },
         )
 
-        print(f"  Pulled task {task_id} -> chunk {chunk_id} "
-              f"({updated_count} updated, {rejected_count} rejected)")
-        stats['pulled'] += 1
-        samples_to_check.add(sample_id)
+        # Parse decision for stats
+        decision = None
+        for result_item in results:
+            if result_item.get('from_name') == 'decision':
+                choices = result_item.get('value', {}).get('choices', [])
+                decision = choices[0] if choices else None
+                break
 
-    # Check if any samples are now fully reviewed
-    for sample_id in samples_to_check:
-        if check_sample_review_complete(sample_id):
-            if not dry_run:
-                transition_sample_to_verified(sample_id)
-                print(f"  Sample {sample_id} -> VERIFIED (all chunks complete)")
-            else:
-                print(f"  [DRY RUN] Sample {sample_id} would transition to VERIFIED")
-            stats['samples_completed'] += 1
+        if decision == 'approve':
+            stats['verified'] += 1
+        elif decision == 'reject':
+            stats['rejected'] += 1
+        elif decision == 'needs_revision':
+            stats['needs_revision'] += 1
+
+        print(f"  Pulled task {task_id} -> sample {sample_id} "
+              f"({result_stats['updated']} changes, decision: {decision})")
+        stats['pulled'] += 1
 
     return stats
 
 
-def reopen_chunk(chunk_id: str) -> bool:
+def reopen_sample(sample_id: str) -> bool:
     """
-    Reopen a single chunk for re-review.
+    Reopen a sample for re-review.
 
     Args:
-        chunk_id: UUID of the chunk to reopen.
+        sample_id: UUID of the sample to reopen.
 
     Returns:
         True if successful.
@@ -705,158 +912,75 @@ def reopen_chunk(chunk_id: str) -> bool:
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Get chunk info
+            # Get sample info
             cur.execute(
                 """
-                SELECT rc.chunk_id, rc.sample_id, rc.label_studio_task_id, s.processing_state
-                FROM review_chunks rc
-                JOIN samples s ON rc.sample_id = s.sample_id
-                WHERE rc.chunk_id = %s
+                SELECT sample_id, label_studio_task_id, processing_state
+                FROM samples
+                WHERE sample_id = %s
                 """,
-                (chunk_id,)
+                (sample_id,)
             )
-            chunk = cur.fetchone()
+            sample = cur.fetchone()
 
-            if not chunk:
-                print(f"Chunk not found: {chunk_id}")
+            if not sample:
+                print(f"Sample not found: {sample_id}")
                 return False
 
-            sample_id = chunk['sample_id']
-            task_id = chunk['label_studio_task_id']
+            task_id = sample['label_studio_task_id']
 
             # Delete task from Label Studio if exists
             if task_id:
                 client = LabelStudioClient()
                 client.delete_task(task_id)
 
-            # Reset chunk status
+            # Reset sample Label Studio info
             cur.execute(
                 """
-                UPDATE review_chunks
-                SET status = 'pending'::annotation_status,
-                    label_studio_task_id = NULL,
-                    reviewed_by = NULL,
-                    reviewed_at = NULL,
+                UPDATE samples
+                SET label_studio_task_id = NULL,
+                    label_studio_project_id = NULL,
                     updated_at = NOW()
-                WHERE chunk_id = %s
+                WHERE sample_id = %s
                 """,
-                (chunk_id,)
+                (sample_id,)
             )
 
-            # Reset sentence reviews for this chunk
+            # Reset sentence reviews (keep originals, clear reviewed values)
             cur.execute(
                 """
                 UPDATE sentence_reviews
                 SET reviewed_transcript = NULL,
                     reviewed_translation = NULL,
-                    reviewed_start_ms = NULL,
-                    reviewed_end_ms = NULL,
-                    is_boundary_adjusted = FALSE,
-                    is_transcript_corrected = FALSE,
-                    is_translation_corrected = FALSE,
-                    is_rejected = FALSE,
-                    rejection_reason = NULL,
-                    reviewer_notes = NULL,
+                    is_transcript_changed = FALSE,
+                    is_translation_changed = FALSE,
+                    revision_count = 0,
+                    previous_transcript = NULL,
+                    previous_translation = NULL,
+                    last_revised_at = NULL,
+                    last_revised_by = NULL,
                     updated_at = NOW()
-                WHERE chunk_id = %s
+                WHERE sample_id = %s
                 """,
-                (chunk_id,)
+                (sample_id,)
             )
 
-            # If sample was VERIFIED, transition back to REVIEW_PREPARED
-            if chunk['processing_state'] == 'VERIFIED':
-                cur.execute(
-                    "SELECT transition_sample_state(%s, 'REVIEW_PREPARED'::processing_state, %s)",
-                    (sample_id, 'label_studio_reopen')
-                )
+            # Transition back to REVIEW_PREPARED
+            cur.execute(
+                "SELECT transition_sample_state(%s, 'REVIEW_PREPARED'::processing_state, %s)",
+                (sample_id, 'label_studio_reopen')
+            )
 
             conn.commit()
-            print(f"Reopened chunk {chunk_id}")
+            print(f"Reopened sample {sample_id} for re-review")
             return True
 
     except psycopg2.Error as e:
         conn.rollback()
-        print(f"Error reopening chunk: {e}")
+        print(f"Error reopening sample: {e}")
         return False
     finally:
         conn.close()
-
-
-def reopen_sample(sample_id: str) -> int:
-    """
-    Reopen all chunks for a sample for full re-review.
-
-    Args:
-        sample_id: UUID of the sample to reopen.
-
-    Returns:
-        Number of chunks reopened.
-    """
-    conn = get_pg_connection()
-    count = 0
-
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Get all chunks for the sample
-            cur.execute(
-                "SELECT chunk_id FROM review_chunks WHERE sample_id = %s",
-                (sample_id,)
-            )
-            chunks = cur.fetchall()
-
-            for chunk in chunks:
-                if reopen_chunk(str(chunk['chunk_id'])):
-                    count += 1
-
-            return count
-
-    finally:
-        conn.close()
-
-
-# =============================================================================
-# LEGACY PUSH/PULL FUNCTIONS (kept for backward compatibility)
-# =============================================================================
-
-def push_to_label_studio(
-    task_type: str = 'transcript_correction',
-    limit: Optional[int] = None,
-    dry_run: bool = False
-) -> Dict[str, int]:
-    """
-    Push samples from review queue to Label Studio.
-
-    Note: For unified_review, use push_unified_review instead.
-    This function is kept for backward compatibility with old task types.
-    """
-    if task_type == 'unified_review':
-        return push_unified_review(limit=limit or 10, dry_run=dry_run)
-
-    # Legacy implementation for old task types
-    stats = {'pushed': 0, 'skipped': 0, 'errors': 0}
-    print(f"Warning: Task type '{task_type}' uses legacy implementation")
-    print("Consider migrating to unified_review workflow")
-    return stats
-
-
-def pull_from_label_studio(
-    task_type: str = 'transcript_correction',
-    dry_run: bool = False
-) -> Dict[str, int]:
-    """
-    Pull completed annotations from Label Studio and update database.
-
-    Note: For unified_review, use pull_unified_review instead.
-    This function is kept for backward compatibility with old task types.
-    """
-    if task_type == 'unified_review':
-        return pull_unified_review(dry_run=dry_run)
-
-    # Legacy implementation for old task types
-    stats = {'pulled': 0, 'skipped': 0, 'errors': 0}
-    print(f"Warning: Task type '{task_type}' uses legacy implementation")
-    print("Consider migrating to unified_review workflow")
-    return stats
 
 
 # =============================================================================
@@ -866,43 +990,40 @@ def pull_from_label_studio(
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description='Synchronize annotations with Label Studio.',
+        description='Synchronize sample reviews with Label Studio (v3).',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Push chunks for unified review
-    python label_studio_sync.py push --task-type unified_review --limit 10
+    # Push samples for review
+    python label_studio_sync.py push --limit 10
 
     # Pull completed reviews
-    python label_studio_sync.py pull --task-type unified_review
+    python label_studio_sync.py pull
 
     # Check status
     python label_studio_sync.py status
 
-    # Reopen a single chunk for re-review
-    python label_studio_sync.py reopen --chunk-id <uuid>
+    # Reopen a sample for re-review
+    python label_studio_sync.py reopen --sample-id <uuid>
 
-    # Reopen all chunks for a sample
-    python label_studio_sync.py reopen --sample-id <uuid> --all
+    # Dry run to preview
+    python label_studio_sync.py push --limit 5 --dry-run
         """
     )
     
     subparsers = parser.add_subparsers(dest='action', help='Action to perform')
 
     # Push subcommand
-    push_parser = subparsers.add_parser('push', help='Push items to Label Studio')
-    push_parser.add_argument(
-        '--task-type',
-        choices=['transcript_correction', 'translation_review', 
-                 'audio_segmentation', 'unified_review'],
-        default='unified_review',
-        help='Type of annotation task (default: unified_review)'
-    )
+    push_parser = subparsers.add_parser('push', help='Push samples to Label Studio')
     push_parser.add_argument(
         '--limit',
         type=int,
         default=10,
-        help='Maximum number of items to process (default: 10)'
+        help='Maximum number of samples to push (default: 10)'
+    )
+    push_parser.add_argument(
+        '--project-id',
+        help='Label Studio project ID (default from LS_PROJECT_SAMPLE_REVIEW env)'
     )
     push_parser.add_argument(
         '--dry-run',
@@ -913,11 +1034,8 @@ Examples:
     # Pull subcommand
     pull_parser = subparsers.add_parser('pull', help='Pull completed annotations')
     pull_parser.add_argument(
-        '--task-type',
-        choices=['transcript_correction', 'translation_review',
-                 'audio_segmentation', 'unified_review'],
-        default='unified_review',
-        help='Type of annotation task (default: unified_review)'
+        '--project-id',
+        help='Label Studio project ID (default from LS_PROJECT_SAMPLE_REVIEW env)'
     )
     pull_parser.add_argument(
         '--dry-run',
@@ -929,19 +1047,11 @@ Examples:
     status_parser = subparsers.add_parser('status', help='Check Label Studio status')
 
     # Reopen subcommand
-    reopen_parser = subparsers.add_parser('reopen', help='Reopen chunks for re-review')
-    reopen_parser.add_argument(
-        '--chunk-id',
-        help='UUID of specific chunk to reopen'
-    )
+    reopen_parser = subparsers.add_parser('reopen', help='Reopen sample for re-review')
     reopen_parser.add_argument(
         '--sample-id',
-        help='UUID of sample to reopen (use with --all for all chunks)'
-    )
-    reopen_parser.add_argument(
-        '--all',
-        action='store_true',
-        help='Reopen all chunks for the sample'
+        required=True,
+        help='UUID of sample to reopen'
     )
 
     args = parser.parse_args()
@@ -951,56 +1061,56 @@ Examples:
         return
 
     print("=" * 60)
-    print("Label Studio Sync v2 (Unified Review)")
+    print("Label Studio Sync v3 (Sample-level Review)")
     print("=" * 60)
     print(f"Label Studio URL: {LABEL_STUDIO_URL}")
+    print(f"Project ID: {LS_PROJECT_ID}")
     print(f"Action: {args.action}")
     print()
 
     if args.action == 'push':
-        print(f"Task Type: {args.task_type}")
-        stats = push_to_label_studio(
-            task_type=args.task_type,
+        stats = push_sample_reviews(
             limit=args.limit,
+            project_id=args.project_id,
             dry_run=args.dry_run
         )
-        print(f"\nPushed: {stats['pushed']}, Skipped: {stats['skipped']}, Errors: {stats['errors']}")
+        print(f"\n{'='*40}")
+        print(f"Pushed: {stats['pushed']}")
+        print(f"Skipped: {stats['skipped']}")
+        print(f"Errors: {stats['errors']}")
 
     elif args.action == 'pull':
-        print(f"Task Type: {args.task_type}")
-        stats = pull_from_label_studio(
-            task_type=args.task_type,
+        stats = pull_sample_reviews(
+            project_id=args.project_id,
             dry_run=args.dry_run
         )
-        print(f"\nPulled: {stats['pulled']}, Skipped: {stats['skipped']}, Errors: {stats['errors']}")
-        if 'samples_completed' in stats:
-            print(f"Samples completed: {stats['samples_completed']}")
+        print(f"\n{'='*40}")
+        print(f"Pulled: {stats['pulled']}")
+        print(f"Skipped: {stats['skipped']}")
+        print(f"Errors: {stats['errors']}")
+        print(f"Verified: {stats['verified']}")
+        print(f"Rejected: {stats['rejected']}")
+        print(f"Needs Revision: {stats['needs_revision']}")
 
     elif args.action == 'status':
         client = LabelStudioClient()
         if client.check_connection():
             print("✓ Connected to Label Studio")
-            for task_type, project_id in PROJECT_MAPPING.items():
-                project = client.get_project(project_id)
-                if project:
-                    print(f"  - {task_type}: Project '{project.get('title')}' (ID: {project_id})")
-                else:
-                    print(f"  - {task_type}: Project {project_id} not found")
+            project = client.get_project(LS_PROJECT_ID)
+            if project:
+                print(f"  - Project: '{project.get('title')}' (ID: {LS_PROJECT_ID})")
+                print(f"    Tasks: {project.get('task_number', 0)}")
+            else:
+                print(f"  - Project {LS_PROJECT_ID} not found")
         else:
             print("✗ Cannot connect to Label Studio")
 
     elif args.action == 'reopen':
-        if args.chunk_id:
-            success = reopen_chunk(args.chunk_id)
-            if success:
-                print(f"✓ Chunk {args.chunk_id} reopened for review")
-            else:
-                print(f"✗ Failed to reopen chunk {args.chunk_id}")
-        elif args.sample_id and args.all:
-            count = reopen_sample(args.sample_id)
-            print(f"✓ Reopened {count} chunks for sample {args.sample_id}")
+        success = reopen_sample(args.sample_id)
+        if success:
+            print(f"✓ Sample {args.sample_id} reopened for review")
         else:
-            print("Error: Specify --chunk-id or --sample-id with --all")
+            print(f"✗ Failed to reopen sample {args.sample_id}")
 
 
 if __name__ == "__main__":

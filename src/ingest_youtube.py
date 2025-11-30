@@ -164,9 +164,11 @@ def ingest_to_database(
             cs_ratio = calculate_cs_ratio(transcript_raw)
 
         # Build metadata dictionaries
+        channel_name = entry.get('channel_name', '')
         source_metadata = {
             'url': entry.get('url'),
             'channel_id': entry.get('channel_id'),
+            'channel_name': channel_name,  # YouTube channel display name
             'upload_date': entry.get('upload_date'),
             'title': entry.get('title'),
             'youtube_subtitle_type': youtube_subtitle_type,
@@ -199,7 +201,8 @@ def ingest_to_database(
                 source_type=pipeline_type,
                 external_id=channel_id,
                 url=entry.get('url'),
-                metadata={'channel_id': channel_id}
+                metadata={'channel_id': channel_id},
+                channel_name=channel_name
             )
 
             # Step 2: Insert sample

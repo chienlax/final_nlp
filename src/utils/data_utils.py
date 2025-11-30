@@ -61,7 +61,8 @@ def get_or_create_source(
     external_id: str,
     name: Optional[str] = None,
     url: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None,
+    channel_name: Optional[str] = None
 ) -> str:
     """
     Get existing source or create new one.
@@ -73,6 +74,7 @@ def get_or_create_source(
         name: Human-readable name of the source.
         url: Base URL of the source.
         metadata: Additional metadata as JSONB.
+        channel_name: YouTube channel display name.
 
     Returns:
         The UUID of the source.
@@ -85,8 +87,8 @@ def get_or_create_source(
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT get_or_create_source(%s::source_type, %s, %s, %s, %s)",
-                (source_type, external_id, name, url, Json(metadata or {}))
+                "SELECT get_or_create_source(%s::source_type, %s, %s, %s, %s, %s)",
+                (source_type, external_id, name, url, Json(metadata or {}), channel_name)
             )
             source_id = cur.fetchone()[0]
             conn.commit()
@@ -804,14 +806,14 @@ def log_processing(
     operation: str,
     success: bool,
     sample_id: Optional[str] = None,
-    segment_id: Optional[str] = None,
     previous_state: Optional[str] = None,
     new_state: Optional[str] = None,
     executor: Optional[str] = None,
     execution_time_ms: Optional[int] = None,
     input_params: Optional[Dict[str, Any]] = None,
     output_summary: Optional[Dict[str, Any]] = None,
-    error_message: Optional[str] = None
+    error_message: Optional[str] = None,
+    **kwargs  # Accept and ignore extra args for backward compatibility
 ) -> str:
     """
     Log a processing operation.
@@ -820,7 +822,6 @@ def log_processing(
         operation: Operation name ('state_transition', 'whisperx_alignment', etc.).
         success: Whether the operation succeeded.
         sample_id: UUID of the sample (optional).
-        segment_id: UUID of the segment (optional).
         previous_state: Previous processing state.
         new_state: New processing state.
         executor: Who/what executed the operation.
@@ -839,18 +840,18 @@ def log_processing(
             cur.execute(
                 """
                 INSERT INTO processing_logs (
-                    sample_id, segment_id, operation, previous_state, new_state,
+                    sample_id, operation, previous_state, new_state,
                     executor, execution_time_ms, input_params,
                     output_summary, error_message, success
                 ) VALUES (
-                    %s, %s, %s,
+                    %s, %s,
                     %s::processing_state, %s::processing_state,
                     %s, %s, %s, %s, %s, %s
                 )
                 RETURNING log_id
                 """,
                 (
-                    sample_id, segment_id, operation, previous_state, new_state,
+                    sample_id, operation, previous_state, new_state,
                     executor, execution_time_ms,
                     Json(input_params) if input_params else None,
                     Json(output_summary) if output_summary else None,

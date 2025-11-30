@@ -27,13 +27,15 @@ docker compose logs postgres
 docker compose logs labelstudio
 
 # Verify ports aren't in use
-netstat -an | findstr "5432"
+netstat -an | findstr "5433"
 netstat -an | findstr "8085"
 
 # Rebuild containers
 docker compose down
 docker compose up -d --build
 ```
+
+> **Note**: PostgreSQL uses port 5433 to avoid conflicts with local PostgreSQL installations.
 
 ### Service Health Check
 
@@ -90,21 +92,51 @@ Get-Content init_scripts\02_gemini_process_migration.sql | docker exec -i factor
 
 ## 3. Label Studio
 
-### Audio Not Loading
+### Audio Not Playing
 
-**Symptom**: Red error "There was an issue loading URL from $audio value"
+**Symptom**: Audio player shows but doesn't play, or audio doesn't seek when clicking sentences
 
-**Cause**: Audio URL uses internal Docker hostname
+**Template v4 uses native Label Studio tags**:
+- `<Audio>` tag for the main audio player
+- `<Paragraphs>` tag with `audioUrl` and `sync="audio"` for timestamp-synced playback
 
-**Solution**: Set `AUDIO_PUBLIC_URL=http://localhost:8081` when pushing:
+**Common causes**:
 
+1. **Audio server not running**:
+   ```powershell
+   docker compose ps audio_server
+   # Should show "Up (healthy)"
+   ```
+
+2. **Wrong audio URL**:
+   ```powershell
+   # Test audio file access
+   curl http://localhost:8081/audio/VIDEO_ID.wav
+   ```
+
+3. **CORS issues** (audio server needs proper headers):
+   The nginx audio server is configured with CORS headers. If using a different server, ensure these headers are set:
+   ```
+   Access-Control-Allow-Origin: *
+   Access-Control-Allow-Methods: GET, OPTIONS
+   ```
+
+4. **Audio file doesn't exist**:
+   ```powershell
+   # Check if file exists
+   Test-Path "data/raw/audio/VIDEO_ID.wav"
+   ```
+
+**Verify audio URL in task data**:
 ```powershell
-docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion python src/label_studio_sync.py push --task-type transcript_correction
-```
-
-**Verify audio server**:
-```powershell
-curl http://localhost:8081/audio/VIDEO_ID.wav
+# Check task data in Label Studio
+python -c "
+import requests
+API_KEY = 'YOUR_TOKEN'
+resp = requests.get('http://localhost:8085/api/tasks/TASK_ID/', 
+                    headers={'Authorization': f'Token {API_KEY}'})
+print(resp.json()['data']['audio_url'])
+"
 ```
 
 ### API Token Issues
@@ -175,6 +207,15 @@ Get keys from: https://aistudio.google.com/app/apikey
 - Script retries up to 3 times automatically
 - Usually succeeds on retry
 - If persistent, audio may be too complex for model
+
+### Long Audio Processing
+
+**Symptom**: Audio over 20 minutes processes slowly or inconsistently
+
+- Audio >20 minutes is automatically chunked with 20-second overlap
+- Overlapping sentences are deduplicated after processing
+- Each chunk is processed sequentially with 2-second delay
+- For very long audio (>1 hour), consider splitting manually first
 
 ### Translation Issues Flagged
 
@@ -282,17 +323,20 @@ docker stats
 # Service status
 docker compose ps
 
-# Database connectivity
+# Database connectivity (port 5433)
 docker exec factory_ledger psql -U admin -d data_factory -c "SELECT 1;"
 
 # Audio server
 curl http://localhost:8081/audio/
 
-# Label Studio
+# Label Studio API
 curl http://localhost:8085/api/projects -H "Authorization: Token YOUR_TOKEN"
 
 # Sample states
 docker exec factory_ledger psql -U admin -d data_factory -c "SELECT processing_state, COUNT(*) FROM samples GROUP BY processing_state;"
+
+# Check Label Studio tasks
+docker exec factory_ledger psql -U admin -d data_factory -c "SELECT external_id, label_studio_task_id FROM samples WHERE label_studio_task_id IS NOT NULL;"
 
 # Recent errors
 docker exec factory_ledger psql -U admin -d data_factory -c "SELECT * FROM processing_logs WHERE status='error' ORDER BY created_at DESC LIMIT 5;"

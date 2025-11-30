@@ -8,7 +8,8 @@ Developer documentation for scripts and utility modules.
 
 1. [Ingestion Scripts](#1-ingestion-scripts)
 2. [Preprocessing Scripts](#2-preprocessing-scripts)
-3. [Utility Modules](#3-utility-modules)
+3. [Label Studio Sync](#3-label-studio-sync)
+4. [Utility Modules](#4-utility-modules)
 
 ---
 
@@ -60,17 +61,20 @@ Developer documentation for scripts and utility modules.
 
 - **Hybrid single-pass**: Full audio context + structured JSON output
 - **Few-shot prompting**: Vietnamese-English code-switching examples
-- **Adaptive chunking**: Auto-splits audio >27 minutes with overlap
+- **Adaptive chunking**: Auto-splits audio >20 minutes with overlap
 - **Deduplication**: Removes duplicate sentences from chunk overlaps
 - **Issue flagging**: Marks problematic translations for repair
+- **Thinking mode**: Uses Gemini 2.5 Pro with extended reasoning for accurate timestamps
 
 #### Constants
 
 ```python
-MAX_AUDIO_DURATION_SECONDS = 27 * 60  # Chunking threshold
-CHUNK_OVERLAP_SECONDS = 18            # Overlap between chunks
+MAX_AUDIO_DURATION_SECONDS = 20 * 60  # Chunking threshold (20 minutes)
+CHUNK_OVERLAP_SECONDS = 20            # Overlap between chunks
 TEXT_SIMILARITY_THRESHOLD = 0.8       # Deduplication threshold
 OVERLAP_TIME_TOLERANCE_SECONDS = 2.0  # Timestamp tolerance
+THINKING_BUDGET = 15668               # Tokens for reasoning
+# temperature = 1.0                   # For creative boundary decisions
 ```
 
 #### Output Schema
@@ -189,7 +193,98 @@ def repair_sentence_translations(
 
 ---
 
-## 3. Utility Modules
+## 3. Label Studio Sync
+
+### label_studio_sync.py
+
+**Location:** `src/label_studio_sync.py`
+
+**Purpose:** Sync samples between database and Label Studio for human review.
+
+#### Template: unified_review.xml (v4)
+
+Uses Label Studio's native `<Paragraphs>` tag with audio synchronization:
+
+```xml
+<!-- Main audio player -->
+<Audio name="audio" value="$audio_url" sync="paragraphs" hotkey="space"/>
+
+<!-- Timestamp-synced sentences -->
+<Paragraphs name="paragraphs" 
+            value="$paragraphs" 
+            layout="dialogue" 
+            textKey="text" 
+            nameKey="idx"
+            audioUrl="$audio_url"
+            sync="audio"
+            showplayer="false"
+            contextscroll="true"/>
+```
+
+#### Task Data Format
+
+```json
+{
+  "sample_id": "uuid",
+  "external_id": "youtube_id",
+  "video_title": "...",
+  "channel_name": "...",
+  "sentence_count": "45",
+  "duration_display": "3:25",
+  "audio_url": "http://localhost:8081/audio/{external_id}.wav",
+  "paragraphs": [
+    {"start": 0.0, "end": 5.2, "text": "...", "idx": "000"},
+    {"start": 5.2, "end": 10.1, "text": "...", "idx": "001"}
+  ],
+  "sentences_html": "<table>...</table>"
+}
+```
+
+#### Key Functions
+
+```python
+def build_paragraphs_data(sentences: List[Dict]) -> List[Dict]:
+    """
+    Build paragraphs data for Label Studio's Paragraphs tag.
+    
+    Returns list of dicts with:
+    - idx: Sentence index (e.g., "000")
+    - start: Start time in seconds
+    - end: End time in seconds
+    - text: Original transcript text
+    """
+
+def push_sample_reviews(
+    limit: int = 10,
+    project_id: str = None,
+    dry_run: bool = False
+) -> Dict[str, int]:
+    """
+    Push REVIEW_PREPARED samples to Label Studio.
+    
+    Returns: {'pushed': N, 'skipped': N, 'errors': N}
+    """
+
+def pull_sample_reviews(
+    project_id: str = None,
+    dry_run: bool = False
+) -> Dict[str, int]:
+    """
+    Pull completed annotations from Label Studio.
+    
+    Returns: {'pulled': N, 'skipped': N, 'errors': N}
+    """
+```
+
+#### State Transitions
+
+- **Push**: Requires `processing_state = 'REVIEW_PREPARED'`
+- **Pull**: Updates sentence corrections in `sentence_reviews` table
+- **After all reviews complete**: Sample can transition to `FINAL`
+
+---
+
+## 4. Utility Modules
 
 ### data_utils.py
 

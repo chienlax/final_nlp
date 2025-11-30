@@ -34,14 +34,16 @@ docker compose run --rm ingestion python src/ingest_youtube.py "https://www.yout
 # Gemini transcription + translation
 docker compose run --rm ingestion python src/preprocessing/gemini_process.py --batch --limit 5
 
-# Prepare for unified review (cut sentence audio)
+# Prepare for sample review (cut sentence audio)
 docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch
 
-# Push to Label Studio (unified review)
-docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion python src/label_studio_sync.py push unified_review
+# Push to Label Studio (sample-level review)
+$env:DATABASE_URL = "postgresql://admin:secret_password@localhost:5433/data_factory"
+$env:LABEL_STUDIO_API_KEY = "YOUR_40_CHAR_TOKEN"
+python src/label_studio_sync.py push --limit 10
 
 # Pull completed reviews
-docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review
+python src/label_studio_sync.py pull
 
 # Apply corrections and create final output
 docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch
@@ -92,10 +94,12 @@ docker compose logs -f audio_server
 
 | Service | Container | Port | Purpose |
 |---------|-----------|------|---------|
-| postgres | `factory_ledger` | 5432 | Database |
+| postgres | `factory_ledger` | 5433 | Database |
 | labelstudio | `labelstudio` | 8085 | Annotation UI |
 | audio_server | `audio_server` | 8081 | Serve audio files |
 | ingestion | `factory_ingestion` | - | Run scripts |
+
+> **Note**: PostgreSQL uses port 5433 (not 5432) to avoid conflicts with local installations.
 
 ---
 
@@ -186,71 +190,80 @@ docker compose run --rm ingestion python src/preprocessing/gemini_repair_transla
 
 ---
 
-## 5. Label Studio Sync (Unified Review)
+## 5. Label Studio Sync (Sample-Level Review)
 
 ### Script: `src/label_studio_sync.py`
 
-Sync between database and Label Studio for unified review workflow.
+Sync between database and Label Studio for sample-level review workflow.
 
 ### Push Samples for Review
 
 ```powershell
+# Set environment variables
+$env:DATABASE_URL = "postgresql://admin:secret_password@localhost:5433/data_factory"
+$env:LABEL_STUDIO_URL = "http://localhost:8085"
+$env:LABEL_STUDIO_API_KEY = "YOUR_40_CHAR_TOKEN"
+
 # Push all REVIEW_PREPARED samples
-docker compose run --rm `
-  -e AUDIO_PUBLIC_URL=http://localhost:8081 `
-  -e LS_PROJECT_UNIFIED_REVIEW=1 `
-  ingestion python src/label_studio_sync.py push unified_review
+python src/label_studio_sync.py push --limit 10
 
-# Specific sample
-docker compose run --rm `
-  -e AUDIO_PUBLIC_URL=http://localhost:8081 `
-  ingestion python src/label_studio_sync.py push unified_review --sample-id <UUID>
-
-# With limit
-docker compose run --rm `
-  -e AUDIO_PUBLIC_URL=http://localhost:8081 `
-  ingestion python src/label_studio_sync.py push unified_review --limit 10
+# Dry run
+python src/label_studio_sync.py push --limit 10 --dry-run
 ```
 
 ### Pull Completed Annotations
 
 ```powershell
 # Pull all completed reviews
-docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review
-
-# Specific sample
-docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review --sample-id <UUID>
+python src/label_studio_sync.py pull
 
 # Dry run
-docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review --dry-run
+python src/label_studio_sync.py pull --dry-run
 ```
 
 ### Reopen Tasks for Re-review
 
 ```powershell
-# Reopen all chunks for a sample
-docker compose run --rm ingestion python src/label_studio_sync.py reopen --sample-id <UUID>
-
-# Reopen specific chunk
-docker compose run --rm ingestion python src/label_studio_sync.py reopen --sample-id <UUID> --chunk-index 2
+# Reopen a sample
+python src/label_studio_sync.py reopen --sample-id <UUID>
 ```
 
 ### Check Status
 
 ```powershell
-docker compose run --rm ingestion python src/label_studio_sync.py status
+python src/label_studio_sync.py status
 ```
 
 | Argument | Description |
 |----------|-------------|
-| `push unified_review` | Push samples for unified review |
-| `pull unified_review` | Pull completed annotations |
+| `push` | Push REVIEW_PREPARED samples to Label Studio |
+| `pull` | Pull completed annotations |
 | `reopen` | Reopen tasks for re-review |
 | `status` | Check connection and pending tasks |
 | `--sample-id <UUID>` | Process specific sample |
-| `--chunk-index N` | Specific chunk for reopen |
 | `--limit N` | Max items to process |
 | `--dry-run` | Preview without changes |
+
+### Label Studio Template (v4 - Paragraphs)
+
+The template uses Label Studio's native `<Paragraphs>` tag with audio synchronization:
+
+- **Full sample audio** via `<Audio>` tag (plays entire sample)
+- **Timestamp-synced sentences** via `<Paragraphs>` tag (click to seek & play)
+- **Editing table** via `<HyperText>` (5-column layout)
+- **No JavaScript required** - all audio handled natively
+
+Task data format:
+```json
+{
+  "audio_url": "http://localhost:8081/audio/{external_id}.wav",
+  "paragraphs": [
+    {"start": 0.0, "end": 5.2, "text": "...", "idx": "000"},
+    ...
+  ],
+  "sentences_html": "<table>...</table>"
+}
+```
 
 ---
 
@@ -449,58 +462,68 @@ docker compose up -d
 ### Complete Pipeline (Recommended)
 
 ```powershell
+# Set environment variables (Windows PowerShell)
+$env:DATABASE_URL = "postgresql://admin:secret_password@localhost:5433/data_factory"
+$env:LABEL_STUDIO_URL = "http://localhost:8085"
+$env:LABEL_STUDIO_API_KEY = "YOUR_40_CHAR_TOKEN"
+
 # 1. Ingest from YouTube
-docker compose run --rm ingestion python src/ingest_youtube.py "URL"
+python src/ingest_youtube.py "URL"
 
 # 2. Process with Gemini (transcription + translation)
-docker compose run --rm ingestion python src/preprocessing/gemini_process.py --batch
+python src/preprocessing/gemini_process.py --batch
 
 # 3. Repair any translation issues
-docker compose run --rm ingestion python src/preprocessing/gemini_repair_translation.py --batch
+python src/preprocessing/gemini_repair_translation.py --batch
 
-# 4. Prepare for unified review (cut sentence audio)
-docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch
+# 4. Prepare for sample review (cut sentence audio)
+python src/preprocessing/prepare_review_audio.py --batch
 
-# 5. Push to Label Studio (15 sentences per task)
-docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion python src/label_studio_sync.py push unified_review
+# 5. Push to Label Studio (sample-level review with Paragraphs audio sync)
+python src/label_studio_sync.py push --limit 10
 
-# 6. (Human reviews in Label Studio - transcript, translation, timing)
+# 6. (Human reviews in Label Studio - click sentences to play audio)
+#    - Review transcript and translation
+#    - Adjust timestamps if needed
+#    - Mark sample quality and approval
 
 # 7. Pull completed reviews
-docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review
+python src/label_studio_sync.py pull
 
 # 8. Apply corrections, create final audio
-docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch
+python src/preprocessing/apply_review.py --batch
 
 # 9. Export to training dataset
-docker compose run --rm ingestion python src/export_reviewed.py --batch
+python src/export_reviewed.py --batch
 ```
 
 ### Daily Review Workflow
 
 ```powershell
+# Set environment variables
+$env:DATABASE_URL = "postgresql://admin:secret_password@localhost:5433/data_factory"
+$env:LABEL_STUDIO_URL = "http://localhost:8085"
+$env:LABEL_STUDIO_API_KEY = "YOUR_40_CHAR_TOKEN"
+
 # Pull completed reviews
-docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review
+python src/label_studio_sync.py pull
 
 # Apply corrections
-docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch
+python src/preprocessing/apply_review.py --batch
 
 # Export to dataset
-docker compose run --rm ingestion python src/export_reviewed.py --batch
+python src/export_reviewed.py --batch
 
 # Backup
-docker compose run --rm ingestion python src/db_backup.py
-docker compose run --rm ingestion dvc push
+python src/db_backup.py
+dvc push
 ```
 
 ### Re-review a Sample
 
 ```powershell
-# Reopen all chunks
-docker compose run --rm ingestion python src/label_studio_sync.py reopen --sample-id <UUID>
-
-# Or reopen specific chunk
-docker compose run --rm ingestion python src/label_studio_sync.py reopen --sample-id <UUID> --chunk-index 2
+# Reopen sample for re-review
+python src/label_studio_sync.py reopen --sample-id <UUID>
 ```
 
 ### Data Sync

@@ -20,23 +20,25 @@ Technical overview of the Vietnamese-English Code-Switching Speech Translation p
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌──────────────────┐    ┌─────────────┐
-│   YouTube   │───►│   Gemini     │───►│  Unified Review  │───►│  Training   │
+│   YouTube   │───►│   Gemini     │───►│  Sample Review   │───►│  Training   │
 │  Ingestion  │    │  Processing  │    │  (Label Studio)  │    │   Export    │
 └─────────────┘    └──────────────┘    └──────────────────┘    └─────────────┘
      RAW            TRANSLATED          REVIEW_PREPARED         FINAL
                                            ↓
-                                    15 sentences/task
-                                    sentence-level audio
+                                    Full sample per task
+                                    Paragraphs tag with
+                                    timestamp-synced audio
 ```
 
 ### Key Design Decisions
 
 | Decision | Rationale |
-|----------|-----------|
+|----------|----------|
 | YouTube-only source | Focus on videos with existing transcripts |
 | Transcript required | Only process videos with manual/auto subtitles |
 | Unified Gemini processing | Single-pass transcription + translation |
-| Unified review (15 sentences/task) | Efficient chunked review with sentence-level audio |
+| Sample-level review | Full sample per task with Paragraphs tag for timestamp-synced audio playback |
+| Native Label Studio audio | Uses Paragraphs + Audio tags (no JavaScript needed) |
 | Sentence-level output | Individual sentence WAVs for training flexibility |
 
 ### Architecture Diagram
@@ -105,10 +107,18 @@ FINAL ──► Training Export
 |-------|--------|---------------|-------------|
 | RAW | `ingest_youtube.py` | No | Downloaded from YouTube with transcript |
 | TRANSLATED | `gemini_process.py` | No | Gemini transcription + translation |
-| REVIEW_PREPARED | `prepare_review_audio.py` | No | Sentence audio cut, chunks created |
-| (In Label Studio) | `label_studio_sync.py push` | **Yes** | Unified review of transcript, translation, timing |
+| REVIEW_PREPARED | `prepare_review_audio.py` | No | Sentence audio cut for review |
+| (In Label Studio) | `label_studio_sync.py push` | **Yes** | Sample-level review with Paragraphs tag audio sync |
 | (Review complete) | `label_studio_sync.py pull` | No | Corrections saved to database |
 | FINAL | `apply_review.py` | No | Final audio cut with corrections |
+
+### Label Studio Review Features (v4)
+
+- **Full sample audio**: Single audio player loads the entire sample
+- **Timestamp-synced playback**: Click any sentence in Paragraphs to seek and play
+- **Native audio tags**: Uses Label Studio's `<Audio>` + `<Paragraphs>` (no JavaScript)
+- **5-column editing table**: Index | Time | Original Transcript | Revised | Original Translation | Revised
+- **Sample-level decisions**: Audio quality, transcript quality, translation quality, confidence, approval
 
 ---
 
@@ -348,11 +358,7 @@ final_nlp/
 │   ├── 01_schema.sql
 │   └── 02_review_system_migration.sql  # NEW: Review tables
 ├── label_studio_templates/
-│   ├── unified_review.xml            # NEW: Single review template
-│   └── archive/                      # Legacy templates
-│       ├── transcript_correction.xml
-│       ├── segment_review.xml
-│       └── translation_review.xml
+│   └── unified_review.xml            # v4: Paragraphs + Audio tags
 ├── docker-compose.yml
 └── requirements.txt
 ```

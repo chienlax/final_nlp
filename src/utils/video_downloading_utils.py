@@ -63,6 +63,8 @@ def progress_hook(d: Dict[str, Any]) -> None:
 
         video_id = info.get('id', 'unknown')
         channel_id = info.get('channel_id', 'unknown')
+        # Capture channel display name (try 'channel' first, fallback to 'uploader')
+        channel_name = info.get('channel', info.get('uploader', ''))
         duration = info.get('duration', 0)
 
         # Construct metadata following the required JSONL schema
@@ -75,6 +77,7 @@ def progress_hook(d: Dict[str, Any]) -> None:
             'captured_at': datetime.now().strftime('%Y-%m-%d'),
             # Extended metadata for source_metadata JSONB
             'channel_id': channel_id,
+            'channel_name': channel_name,  # YouTube channel display name
             'upload_date': info.get('upload_date', ''),
             'title': info.get('title', ''),
             # Acoustic metadata for acoustic_meta JSONB

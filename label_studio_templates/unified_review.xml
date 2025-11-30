@@ -1,200 +1,153 @@
 <!--
-Label Studio Template: Unified Review
-Task: Review sentence audio + transcript + translation together in chunks
+Label Studio Template: Unified Review v4 (Sample-level with Paragraphs)
+Task: Review ALL sentences for a complete sample - full transcript + translation
+
+Features:
+  - Uses Label Studio's native Paragraphs tag with audio sync
+  - Single audio player for the whole sample
+  - Click on any paragraph to seek and play that segment
+  - Per-sentence editing with TextAreas
+  - Timestamp display and editing
 
 Pipeline Stage: REVIEW_PREPARED → (review) → VERIFIED
-
-Interface:
-- Chunk header with sample/chunk info
-- Scrollable list of sentence cards (15 per chunk)
-- Each card: Audio player + editable transcript + editable translation
-- Boundary adjustment markers
-- Quality flags and rejection options
-
-Schema Version: 4.0 (Unified Review System)
 
 Data format expected:
 {
   "sample_id": "uuid",
-  "external_id": "youtube_id",
-  "chunk_index": 0,
-  "chunk_count": 5,
+  "external_id": "youtube_id", 
   "video_title": "...",
-  "sentences": [
-    {
-      "idx": 0,
-      "audio_url": "http://.../review/{sample_id}/sentences/0000.wav",
-      "start": 0.0,
-      "end": 3.5,
-      "text": "Original transcript...",
-      "translation": "Vietnamese translation..."
-    },
+  "channel_name": "...",
+  "sentence_count": 45,
+  "duration_seconds": 180.5,
+  "audio_url": "http://localhost:8081/audio/sample_id.wav",
+  "paragraphs": [
+    {"start": 0.0, "end": 5.2, "text": "Original transcript...", "idx": "000"},
     ...
-  ]
+  ],
+  "sentences_html": "<table>...</table>"
 }
 -->
 <View>
   <!-- Header -->
-  <Header value="🎯 Unified Review - Audio + Transcript + Translation"/>
+  <Header value="🎯 Sample Review - Transcript &amp; Translation Editing"/>
   
-  <!-- Chunk Metadata -->
-  <View style="display: flex; gap: 20px; margin-bottom: 15px; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; color: white;">
-    <View>
-      <Header value="Video" size="5" style="color: white;"/>
+  <!-- Sample Metadata -->
+  <View style="display: flex; gap: 20px; margin-bottom: 15px; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; flex-wrap: wrap;">
+    <View style="min-width: 150px;">
+      <Header value="📺 Channel" size="5" style="color: white; margin-bottom: 4px;"/>
+      <Text name="channel_name_display" value="$channel_name" style="color: white; font-weight: bold;"/>
+    </View>
+    <View style="min-width: 200px; flex: 1;">
+      <Header value="🎬 Video" size="5" style="color: white; margin-bottom: 4px;"/>
       <Text name="video_title_display" value="$video_title" style="color: white; font-weight: bold;"/>
     </View>
     <View>
-      <Header value="Chunk" size="5" style="color: white;"/>
-      <Text name="chunk_display" value="$chunk_index" style="color: white;"/>
+      <Header value="📊 Sentences" size="5" style="color: white; margin-bottom: 4px;"/>
+      <Text name="sentence_count_display" value="$sentence_count" style="color: white;"/>
     </View>
     <View>
-      <Header value="Total Chunks" size="5" style="color: white;"/>
-      <Text name="chunk_count_display" value="$chunk_count" style="color: white;"/>
+      <Header value="⏱️ Duration" size="5" style="color: white; margin-bottom: 4px;"/>
+      <Text name="duration_display" value="$duration_display" style="color: white;"/>
     </View>
     <View>
-      <Header value="Sample ID" size="5" style="color: white;"/>
-      <Text name="sample_id_display" value="$external_id" style="color: white; font-family: monospace;"/>
+      <Header value="🆔 Sample" size="5" style="color: white; margin-bottom: 4px;"/>
+      <Text name="sample_id_display" value="$external_id" style="color: white; font-family: monospace; font-size: 12px;"/>
     </View>
+  </View>
+  
+  <!-- Main Audio Player - loads the full sample audio -->
+  <View style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #2196f3;">
+    <Header value="🎧 Audio Player - Click on any sentence below to play that segment" size="4"/>
+    <Audio name="audio" value="$audio_url" sync="paragraphs" hotkey="space"/>
   </View>
   
   <!-- Instructions -->
-  <View style="background: #d4edda; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
+  <View style="background: #e8f5e9; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #4caf50;">
     <Header value="📋 Review Instructions" size="4"/>
-    <View style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-      <View>
-        <Text name="inst_title_1" value="🎧 For each sentence:"/>
-        <View style="margin-left: 15px; font-size: 13px;">
-          <Text name="inst_1" value="1. Listen to audio (click play or use space)"/>
-          <Text name="inst_2" value="2. Verify transcript matches audio"/>
-          <Text name="inst_3" value="3. Check translation captures meaning"/>
-          <Text name="inst_4" value="4. Edit if corrections needed"/>
-        </View>
-      </View>
-      <View>
-        <Text name="inst_title_2" value="⚡ Keyboard shortcuts:"/>
-        <View style="margin-left: 15px; font-size: 13px;">
-          <Text name="key_1" value="Space: Play/pause current audio"/>
-          <Text name="key_2" value="Tab: Move to next field"/>
-          <Text name="key_3" value="Ctrl+Enter: Submit when done"/>
-        </View>
-      </View>
-    </View>
+    <Text name="inst_1" value="1. Click on any sentence to play its audio segment"/>
+    <Text name="inst_2" value="2. Use the audio waveform or press SPACE to play/pause"/>
+    <Text name="inst_3" value="3. Review and edit transcript/translation in the Editing section"/>
+    <Text name="inst_4" value="4. Mark sentences for rejection or adjust timestamps as needed"/>
+    <Text name="inst_5" value="5. Submit when all sentences are reviewed"/>
   </View>
   
-  <!-- Sentence Cards using Paragraphs -->
-  <View style="max-height: 70vh; overflow-y: auto; padding-right: 10px;">
-    <Paragraphs name="sentences" 
-                value="$sentences" 
-                layout="dialogue"
-                contextScroll="true"
-                granularity="paragraph">
+  <!-- Paragraphs with audio sync - click to play that segment -->
+  <View style="background: #fafafa; padding: 15px; border-radius: 8px; margin-bottom: 15px; max-height: 400px; overflow-y: auto;">
+    <Header value="📝 Transcript (click sentence to play audio)" size="4"/>
+    <Paragraphs name="paragraphs" 
+                value="$paragraphs" 
+                layout="dialogue" 
+                textKey="text" 
+                nameKey="idx"
+                audioUrl="$audio_url"
+                sync="audio"
+                showplayer="false"
+                contextscroll="true"/>
+  </View>
+  
+  <!-- Editable sentences table -->
+  <View style="background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #e0e0e0;">
+    <Header value="✏️ Edit Sentences" size="4"/>
+    <HyperText name="sentences_table" value="$sentences_html"/>
+  </View>
+  
+  <!-- Sample-level Summary -->
+  <View style="background: #fce4ec; padding: 15px; border-radius: 8px; margin-top: 15px; border-left: 4px solid #e91e63;">
+    <Header value="📊 Sample Summary" size="4"/>
+    
+    <View style="display: flex; gap: 30px; flex-wrap: wrap;">
+      <View style="min-width: 200px;">
+        <Header value="🔊 Overall Audio Quality" size="5"/>
+        <Choices name="audio_quality" toName="paragraphs" choice="single" showInLine="true">
+          <Choice value="good" hotkey="g"/>
+          <Choice value="fair" hotkey="f"/>
+          <Choice value="poor" hotkey="p"/>
+        </Choices>
+      </View>
       
-      <!-- Each sentence rendered as a card -->
-      <View style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 15px; margin-bottom: 12px;">
-        
-        <!-- Sentence Header -->
-        <View style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #dee2e6;">
-          <View style="display: flex; gap: 15px; align-items: center;">
-            <Text name="sentence_idx" value="Sentence #$idx" style="font-weight: bold; color: #495057;"/>
-            <Text name="timing" value="[$start - $end]" style="font-family: monospace; color: #6c757d; font-size: 12px;"/>
-          </View>
-        </View>
-        
-        <!-- Audio Player -->
-        <View style="background: #e9ecef; padding: 10px; border-radius: 6px; margin-bottom: 12px;">
-          <Audio name="sentence_audio_$idx" value="$audio_url" hotkey="space"/>
-        </View>
-        
-        <!-- Two Column: Transcript + Translation -->
-        <View style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-          
-          <!-- Transcript Column -->
-          <View>
-            <Header value="📝 Transcript (CS)" size="5" style="color: #1976d2;"/>
-            <TextArea name="transcript_$idx"
-                      value="$text"
-                      rows="3"
-                      placeholder="Corrected transcript..."
-                      editable="true"
-                      style="border: 2px solid #1976d2; border-radius: 4px;"/>
-          </View>
-          
-          <!-- Translation Column -->
-          <View>
-            <Header value="🇻🇳 Translation (VI)" size="5" style="color: #388e3c;"/>
-            <TextArea name="translation_$idx"
-                      value="$translation"
-                      rows="3"
-                      placeholder="Corrected Vietnamese translation..."
-                      editable="true"
-                      style="border: 2px solid #388e3c; border-radius: 4px;"/>
-          </View>
-        </View>
-        
-        <!-- Sentence-level flags -->
-        <View style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #dee2e6;">
-          <View style="display: flex; gap: 20px; flex-wrap: wrap;">
-            <Choices name="flags_$idx" choice="multiple" showInLine="true">
-              <Choice value="boundary_adjust" hint="Start/end timing needs adjustment"/>
-              <Choice value="transcript_issue" hint="Significant transcript correction"/>
-              <Choice value="translation_issue" hint="Significant translation correction"/>
-              <Choice value="reject" hint="Exclude this sentence from training"/>
-            </Choices>
-          </View>
-        </View>
-        
-      </View>
-    </Paragraphs>
-  </View>
-  
-  <!-- Chunk-level Summary -->
-  <View style="background: #fff3e0; padding: 15px; border-radius: 8px; margin-top: 15px;">
-    <Header value="📊 Chunk Summary" size="4"/>
-    
-    <!-- Overall Quality -->
-    <View style="display: flex; gap: 30px; margin-bottom: 15px;">
-      <View>
-        <Header value="Overall Audio Quality" size="5"/>
-        <Choices name="audio_quality" choice="single" showInLine="true">
-          <Choice value="good" hint="Clear, easy to understand"/>
-          <Choice value="fair" hint="Some noise/issues but usable"/>
-          <Choice value="poor" hint="Significant quality issues"/>
+      <View style="min-width: 200px;">
+        <Header value="📝 Transcript Quality" size="5"/>
+        <Choices name="transcript_quality" toName="paragraphs" choice="single" showInLine="true">
+          <Choice value="excellent"/>
+          <Choice value="needs_minor_fixes"/>
+          <Choice value="needs_major_fixes"/>
         </Choices>
       </View>
-      <View>
-        <Header value="Gemini Translation Quality" size="5"/>
-        <Choices name="translation_quality" choice="single" showInLine="true">
-          <Choice value="excellent" hint="Minimal corrections needed"/>
-          <Choice value="good" hint="Some corrections needed"/>
-          <Choice value="poor" hint="Significant rewriting needed"/>
+      
+      <View style="min-width: 200px;">
+        <Header value="🇻🇳 Translation Quality" size="5"/>
+        <Choices name="translation_quality" toName="paragraphs" choice="single" showInLine="true">
+          <Choice value="excellent"/>
+          <Choice value="needs_minor_fixes"/>
+          <Choice value="needs_major_fixes"/>
         </Choices>
       </View>
     </View>
     
-    <!-- Chunk-level Flags -->
-    <View style="margin-bottom: 15px;">
-      <Header value="Chunk Issues" size="5"/>
-      <Choices name="chunk_issues" choice="multiple" showInLine="true">
-        <Choice value="background_noise" hint="Consistent background noise"/>
-        <Choice value="multiple_speakers" hint="More than one speaker"/>
-        <Choice value="fast_speech" hint="Speech too fast to follow"/>
-        <Choice value="heavy_cs" hint="Heavy code-switching, hard to parse"/>
-        <Choice value="context_gap" hint="Missing context from previous chunk"/>
+    <View style="margin-top: 15px; display: flex; gap: 30px; align-items: center;">
+      <View>
+        <Header value="⭐ Confidence" size="5"/>
+        <Rating name="confidence" toName="paragraphs" maxRating="5"/>
+      </View>
+      
+      <View style="flex: 1;">
+        <Header value="📝 Additional Notes" size="5"/>
+        <TextArea name="notes" 
+                  toName="paragraphs" 
+                  rows="2" 
+                  placeholder="Any notes about this sample..."
+                  maxSubmissions="1"/>
+      </View>
+    </View>
+    
+    <!-- Sample Decision -->
+    <View style="margin-top: 15px;">
+      <Header value="✅ Final Decision" size="5"/>
+      <Choices name="decision" toName="paragraphs" choice="single" showInLine="true" required="true">
+        <Choice value="approve" hotkey="a"/>
+        <Choice value="needs_revision" hotkey="r"/>
+        <Choice value="reject" hotkey="x"/>
       </Choices>
-    </View>
-    
-    <!-- Confidence Rating -->
-    <View style="margin-bottom: 15px;">
-      <Header value="⭐ Confidence in Review" size="5"/>
-      <Rating name="confidence" maxRating="5" icon="star" size="medium"/>
-    </View>
-    
-    <!-- Notes -->
-    <View>
-      <Header value="📝 Reviewer Notes" size="5"/>
-      <TextArea name="notes"
-                rows="2"
-                placeholder="Any notes about this chunk..."/>
     </View>
   </View>
 </View>
