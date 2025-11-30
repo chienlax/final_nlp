@@ -179,7 +179,7 @@ def export_table(
                 ORDER BY created_at ASC
             """
             cur.execute(query, (since,))
-        elif since and table_name == 'sample_lineage':
+        elif since and table_name in ('segments', 'segment_translations'):
             query = f"""
                 SELECT * FROM {table_name}
                 WHERE created_at > %s
@@ -293,14 +293,15 @@ def run_backup(
     else:
         logger.info("Full backup (no previous sync found or --full specified)")
 
-    # Tables to export
+    # Tables to export (must exist in database schema)
     tables = [
         'sources',
         'samples',
         'transcript_revisions',
         'translation_revisions',
         'annotations',
-        'sample_lineage',
+        'segments',
+        'segment_translations',
         'processing_logs',
     ]
 
@@ -329,7 +330,7 @@ def run_backup(
                         )
                     elif last_sync and table in (
                         'transcript_revisions', 'translation_revisions',
-                        'processing_logs', 'sample_lineage'
+                        'processing_logs', 'segments', 'segment_translations'
                     ):
                         cur.execute(
                             f"SELECT COUNT(*) FROM {table} WHERE created_at > %s",

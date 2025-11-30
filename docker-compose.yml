@@ -120,3 +120,6 @@ services:
       - LABEL_STUDIO_URL=http://labelstudio:8085
       - LABEL_STUDIO_API_KEY=${LABEL_STUDIO_API_KEY:-}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/.secrets/client_secret_952625721816-dc9kkk15i2leugvjl8f885rqkut975bo.apps.googleusercontent.com.json
+      # Gemini API keys for transcription/translation
+      - GEMINI_API_KEY_1=${GEMINI_API_KEY_1:-}
+      - GEMINI_API_KEY_2=${GEMINI_API_KEY_2:-}

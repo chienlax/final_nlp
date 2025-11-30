@@ -16,11 +16,15 @@ WORKDIR /app
 # - youtube-transcript-api: For downloading transcripts
 # - psycopg2-binary: For connecting to Postgres
 # - dvc[gdrive]: For version control (if running DVC inside container)
+# - google-generativeai: For Gemini transcription/translation
+# - pydub: For audio processing and chunking
 RUN pip install --no-cache-dir \
     yt-dlp \
     youtube-transcript-api \
     psycopg2-binary \
-    dvc[gdrive]
+    dvc[gdrive] \
+    google-generativeai>=0.3.0 \
+    pydub
 
 # 4. Copy your actual code (we will do this via volume mount in dev, but good for prod)
 # COPY . .

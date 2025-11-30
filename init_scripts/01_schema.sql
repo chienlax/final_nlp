@@ -171,6 +171,9 @@ CREATE TABLE samples (
     is_gold_standard BOOLEAN DEFAULT FALSE,
     gold_score NUMERIC(3, 2),
     
+    -- Gemini processing flags
+    needs_translation_review BOOLEAN DEFAULT FALSE,  -- Set when translation has issues
+    
     -- Audit
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -257,14 +260,20 @@ CREATE TABLE transcript_revisions (
     transcript_text TEXT NOT NULL,
     
     -- Revision metadata
-    revision_type VARCHAR(50) NOT NULL, -- 'youtube_raw', 'human_corrected', 'whisperx_aligned'
-    revision_source VARCHAR(100),       -- 'youtube_api', 'annotator_email', 'whisperx'
+    -- Valid revision_type: 'youtube_raw', 'human_corrected', 'whisperx_aligned', 'gemini_processed'
+    revision_type VARCHAR(50) NOT NULL,
+    revision_source VARCHAR(100),       -- 'youtube_api', 'annotator_email', 'whisperx', 'gemini-2.5-flash'
     
     -- Word-level timestamps (from WhisperX alignment)
     word_timestamps JSONB,              -- [{word, start, end, score}, ...]
     
     -- Sentence-level timestamps (for segmentation)
-    sentence_timestamps JSONB,          -- [{text, start, end, words: [...]}, ...]
+    -- For gemini_processed: [{text, start, end, duration, translation}, ...]
+    sentence_timestamps JSONB,
+    
+    -- Translation issue tracking (for gemini_processed revisions)
+    has_translation_issues BOOLEAN DEFAULT FALSE,  -- Set when some sentences failed translation
+    translation_issue_indices INTEGER[],           -- Array of sentence indices needing re-translation
     
     -- Metadata
     metadata JSONB DEFAULT '{}',        -- Model version, confidence, etc.
@@ -630,7 +639,9 @@ CREATE OR REPLACE FUNCTION add_transcript_revision(
     p_revision_source VARCHAR(100) DEFAULT NULL,
     p_word_timestamps JSONB DEFAULT NULL,
     p_sentence_timestamps JSONB DEFAULT NULL,
-    p_created_by VARCHAR(255) DEFAULT 'system'
+    p_created_by VARCHAR(255) DEFAULT 'system',
+    p_has_translation_issues BOOLEAN DEFAULT FALSE,
+    p_translation_issue_indices INTEGER[] DEFAULT NULL
 )
 RETURNS UUID AS $$
 DECLARE
@@ -642,10 +653,12 @@ BEGIN
     
     INSERT INTO transcript_revisions (
         sample_id, version, transcript_text, revision_type, 
-        revision_source, word_timestamps, sentence_timestamps, created_by
+        revision_source, word_timestamps, sentence_timestamps, created_by,
+        has_translation_issues, translation_issue_indices
     ) VALUES (
         p_sample_id, v_new_version, p_transcript_text, p_revision_type,
-        p_revision_source, p_word_timestamps, p_sentence_timestamps, p_created_by
+        p_revision_source, p_word_timestamps, p_sentence_timestamps, p_created_by,
+        p_has_translation_issues, p_translation_issue_indices
     ) RETURNING revision_id INTO v_revision_id;
     
     UPDATE samples 

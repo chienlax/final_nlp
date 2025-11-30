@@ -1,116 +1,107 @@
 # Vietnamese-English Code-Switching Speech Translation
 
-An End-to-End (E2E) Speech Translation pipeline for Vietnamese-English Code-Switching (CS) data. The system ingests code-switched audio from **YouTube videos with transcripts**, processes them through a streamlined pipeline with human-in-the-loop review, and produces aligned transcripts with translations ready for training.
+End-to-End Speech Translation pipeline for Vietnamese-English Code-Switching data. Ingests audio from **YouTube videos with transcripts**, processes with Gemini for transcription + translation, and includes human-in-the-loop review via Label Studio.
 
 ## Features
 
-- **YouTube-Only Pipeline**: Focus on audio-first workflow with mandatory transcripts
-- **Human-in-the-Loop**: 3-stage Label Studio review (transcript → segment → translation)
-- **WhisperX Alignment**: Forced alignment with Vietnamese language model for word-level timestamps
-- **Segment-Based Processing**: 10-30s audio chunks optimized for training
-- **Gemini Translation**: Multi-key rotation strategy with rate limit handling
-- **DeepFilterNet Denoising**: Background noise removal for clean training data
-- **Data Versioning**: DVC integration with Google Drive remote storage
-- **PostgreSQL Backend**: Multi-table schema with revision tracking and audit logs
+- **YouTube-Only Pipeline**: Mandatory transcripts for quality control
+- **Gemini Processing**: Single-pass transcription + translation with structured output
+- **Human-in-the-Loop**: 3-stage Label Studio review
+- **Adaptive Chunking**: Auto-splits long audio with overlap deduplication
+- **DVC Integration**: Google Drive remote for data versioning
+- **PostgreSQL Backend**: Revision tracking with audit logs
 
-## Quick Start
+---
 
-### 1. Prerequisites
+## Quick Start (5 Minutes)
 
-- Python 3.10+
-- PostgreSQL 15+
-- ffmpeg
-- DVC
+### 1. Start Services
 
-### 2. Setup
-
-```bash
-# Clone and setup virtual environment
+```powershell
 git clone <repo-url>
 cd final_nlp
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-# or: source .venv/bin/activate  # Linux/Mac
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Start database
-docker-compose up -d postgres
-
-# Initialize DVC
-dvc pull
+docker compose up -d
 ```
 
-### 3. Ingest Data
+### 2. Setup Label Studio
 
-```bash
-# YouTube video (requires transcript)
-python src/ingest_youtube.py https://www.youtube.com/@SomeChannel
+1. Open http://localhost:8085 and **sign up**
+2. Enable legacy tokens:
+   ```powershell
+   docker exec -it factory_ledger psql -U admin -d label_studio -c "UPDATE django_site SET domain='localhost:8085', name='localhost:8085' WHERE id=1;"
+   ```
+3. Get API token: User icon → **Account & Settings** → **Access Token**
+4. Update `.env` with your token
 
-# Re-ingest existing metadata (no download)
-python src/ingest_youtube.py --skip-download
+### 3. Ingest & Process
 
-# Dry run (no database changes)
-python src/ingest_youtube.py --skip-download --dry-run
+```powershell
+# Ingest YouTube video
+docker compose run --rm ingestion python src/ingest_youtube.py "https://www.youtube.com/watch?v=VIDEO_ID"
 
-# Version new data
-dvc add data/raw
-git add data/raw.dvc
-git commit -m "Add new data"
-dvc push
+# Run Gemini transcription + translation
+docker compose run --rm ingestion python src/preprocessing/gemini_process.py --batch
+
+# Push to Label Studio for review
+docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion python src/label_studio_sync.py push --task-type translation_review
 ```
+
+📖 **Full setup guide**: [docs/01_getting_started.md](docs/01_getting_started.md)
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [01_getting_started.md](docs/01_getting_started.md) | Setup guide, credentials, quick start |
+| [02_architecture.md](docs/02_architecture.md) | Pipeline workflow, database schema, data specs |
+| [03_command_reference.md](docs/03_command_reference.md) | All commands and options |
+| [04_troubleshooting.md](docs/04_troubleshooting.md) | Common issues and solutions |
+| [05_api_reference.md](docs/05_api_reference.md) | Developer API documentation |
+| [CHANGELOG.md](CHANGELOG.md) | Project history and updates |
+
+---
+
+## Pipeline Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           PIPELINE FLOW                                  │
+│                                                                          │
+│  YouTube  ──►  Gemini Processing  ──►  Label Studio  ──►  Training      │
+│  Ingest       (Transcribe+Translate)    Review           Export          │
+│                                                                          │
+│  RAW ─────────► TRANSLATED ─────────► VERIFIED ─────────► FINAL         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
 
 ## Project Structure
 
 ```
 final_nlp/
 ├── data/
-│   ├── raw/                    # DVC-tracked raw data
-│   │   ├── audio/              # Full video audio (16kHz mono WAV)
-│   │   ├── text/               # Transcripts (JSON with timestamps)
-│   │   └── metadata.jsonl      # Ingestion metadata
+│   ├── raw/                    # DVC-tracked (audio + transcripts)
 │   ├── segments/               # Segmented audio chunks
-│   │   └── {sample_id}/        # Per-sample segment folder
-│   └── teencode.txt            # Vietnamese teencode dictionary
+│   └── db_sync/                # Database backups
 ├── src/
-│   ├── ingest_youtube.py       # YouTube ingestion (transcript required)
+│   ├── ingest_youtube.py       # YouTube ingestion
 │   ├── label_studio_sync.py    # Label Studio integration
-│   ├── preprocessing/          # Audio processing pipeline
-│   │   ├── whisperx_align.py   # WhisperX forced alignment
-│   │   ├── segment_audio.py    # Audio segmentation (10-30s)
-│   │   ├── translate.py        # Gemini translation with key rotation
-│   │   └── denoise_audio.py    # DeepFilterNet noise removal
-│   └── utils/
-│       ├── data_utils.py       # Database utilities
-│       ├── video_downloading_utils.py
-│       ├── transcript_downloading_utils.py
-│       └── text_utils.py
-├── init_scripts/
-│   ├── 00_create_label_studio_db.sql  # Label Studio DB setup
-│   └── 01_schema.sql                  # Current schema
-├── label_studio_templates/
-│   ├── transcript_correction.xml   # Round 1: Transcript review
-│   ├── segment_review.xml          # Round 2: Segment verification
-│   └── translation_review.xml      # Round 3: Translation review
+│   └── preprocessing/
+│       ├── gemini_process.py   # Transcription + translation
+│       ├── gemini_repair_translation.py
+│       ├── whisperx_align.py   # Word-level alignment
+│       ├── segment_audio.py    # Audio segmentation
+│       └── denoise_audio.py    # Noise removal
+├── init_scripts/               # Database schema
+├── label_studio_templates/     # Annotation templates
 ├── docs/                       # Documentation
-├── Dockerfile.preprocess       # GPU preprocessing container
-├── docker-compose.yml
-├── requirements.txt
-└── README.md
+└── docker-compose.yml
 ```
 
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [01_setup_project.md](docs/01_setup_project.md) | Environment setup, Docker, DVC configuration |
-| [02_project_progress.md](docs/02_project_progress.md) | Development progress and milestones |
-| [03_data_requirements.md](docs/03_data_requirements.md) | Audio/text specifications, quality criteria |
-| [04_workflow.md](docs/04_workflow.md) | **Current** pipeline workflow |
-| [05_scripts_details.md](docs/05_scripts_details.md) | Script reference with parameters and examples |
-| [06_database_design.md](docs/06_database_design.md) | Database schema, tables, indexes, functions |
-| [07_label_studio.md](docs/07_label_studio.md) | Label Studio setup and integration |
+---
 
 ## Audio Specifications
 
@@ -119,54 +110,20 @@ final_nlp/
 | Sample Rate | 16 kHz |
 | Channels | Mono |
 | Format | WAV (PCM 16-bit) |
-| Video Duration | 2-60 minutes per video |
-| Segment Duration | 10-30 seconds per segment |
+| Video Duration | 2-60 minutes |
+| Segment Duration | 10-30 seconds |
 
-## Pipeline Overview
+---
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         YOUTUBE PIPELINE                                │
-│                                                                         │
-│  RAW → TRANSCRIPT_REVIEW → TRANSCRIPT_VERIFIED → ALIGNED → SEGMENTED   │
-│      → SEGMENT_REVIEW → SEGMENT_VERIFIED → TRANSLATED                  │
-│      → TRANSLATION_REVIEW → DENOISED → FINAL                           │
-└─────────────────────────────────────────────────────────────────────────┘
+## Service Ports
 
-Human Review Stages:
-  ├── Round 1: TRANSCRIPT_REVIEW (fix transcript errors)
-  ├── Round 2: SEGMENT_REVIEW (verify segment boundaries)
-  └── Round 3: TRANSLATION_REVIEW (verify translations)
-```
+| Service | Port | URL |
+|---------|------|-----|
+| PostgreSQL | 5432 | `localhost:5432` |
+| Label Studio | 8085 | http://localhost:8085 |
+| Audio Server | 8081 | http://localhost:8081 |
 
-### Processing Scripts
-
-```bash
-# Build GPU preprocessing container
-docker build -f Dockerfile.preprocess -t nlp-preprocess .
-
-# Run with GPU
-docker run --gpus all -v $(pwd):/app nlp-preprocess
-
-# Individual preprocessing steps
-python src/preprocessing/whisperx_align.py --batch --limit 10
-python src/preprocessing/segment_audio.py --batch --limit 10
-python src/preprocessing/translate.py --batch --limit 10
-python src/preprocessing/denoise_audio.py --batch --limit 10
-```
-
-## Development
-
-```bash
-# Run tests (when available)
-pytest tests/
-
-# Check for syntax errors
-python -m py_compile src/ingest_youtube.py
-
-# Database access
-docker exec -it postgres_nlp psql -U admin -d data_factory
-```
+---
 
 ## License
 
