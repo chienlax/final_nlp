@@ -19,11 +19,14 @@ Technical overview of the Vietnamese-English Code-Switching Speech Translation p
 ### High-Level Flow
 
 ```
-┌─────────────┐    ┌──────────────┐    ┌──────────────┐    ┌─────────────┐
-│   YouTube   │───►│   Gemini     │───►│ Label Studio │───►│  Training   │
-│  Ingestion  │    │  Processing  │    │   Review     │    │   Export    │
-└─────────────┘    └──────────────┘    └──────────────┘    └─────────────┘
-     RAW            TRANSLATED          VERIFIED             FINAL
+┌─────────────┐    ┌──────────────┐    ┌──────────────────┐    ┌─────────────┐
+│   YouTube   │───►│   Gemini     │───►│  Unified Review  │───►│  Training   │
+│  Ingestion  │    │  Processing  │    │  (Label Studio)  │    │   Export    │
+└─────────────┘    └──────────────┘    └──────────────────┘    └─────────────┘
+     RAW            TRANSLATED          REVIEW_PREPARED         FINAL
+                                           ↓
+                                    15 sentences/task
+                                    sentence-level audio
 ```
 
 ### Key Design Decisions
@@ -33,8 +36,8 @@ Technical overview of the Vietnamese-English Code-Switching Speech Translation p
 | YouTube-only source | Focus on videos with existing transcripts |
 | Transcript required | Only process videos with manual/auto subtitles |
 | Unified Gemini processing | Single-pass transcription + translation |
-| 3-stage human review | Transcript → Segment → Translation verification |
-| Segment-level output | 10-30s chunks optimized for training |
+| Unified review (15 sentences/task) | Efficient chunked review with sentence-level audio |
+| Sentence-level output | Individual sentence WAVs for training flexibility |
 
 ### Architecture Diagram
 
@@ -66,16 +69,9 @@ Technical overview of the Vietnamese-English Code-Switching Speech Translation p
 ```sql
 CREATE TYPE processing_state AS ENUM (
     'RAW',                  -- Just ingested from YouTube
-    'TRANSCRIPT_REVIEW',    -- In Label Studio (Round 1)
-    'TRANSCRIPT_VERIFIED',  -- Human approved transcript
-    'ALIGNED',              -- WhisperX alignment complete
-    'SEGMENTED',            -- Audio chunked (10-30s)
-    'SEGMENT_REVIEW',       -- In Label Studio (Round 2)
-    'SEGMENT_VERIFIED',     -- Human approved segments
-    'TRANSLATED',           -- Gemini translation complete
-    'TRANSLATION_REVIEW',   -- In Label Studio (Round 3)
-    'DENOISED',             -- DeepFilterNet complete
-    'FINAL',                -- Ready for training
+    'TRANSLATED',           -- Gemini transcription + translation complete
+    'REVIEW_PREPARED',      -- Sentence audio cut, review chunks created
+    'FINAL',                -- Review applied, ready for training
     'REJECTED'              -- Failed QC
 );
 ```
@@ -85,30 +81,20 @@ CREATE TYPE processing_state AS ENUM (
 ```
 RAW
  │
- ├──► TRANSCRIPT_REVIEW ──► TRANSCRIPT_VERIFIED
- │                                   │
- │         (Optional: WhisperX)      ▼
- │                               ALIGNED
- │                                   │
- │                                   ▼
- │                               SEGMENTED
- │                                   │
- │                                   ▼
- │                          SEGMENT_REVIEW ──► SEGMENT_VERIFIED
- │                                                    │
- │              (gemini_process.py)                   │
- │                      │                             │
- │                      ▼                             ▼
- │               TRANSLATED ◄─────────────────────────┘
- │                      │
- │                      ▼
- │             TRANSLATION_REVIEW
- │                      │
- │                      ▼
- │                  DENOISED
- │                      │
- │                      ▼
- │                   FINAL
+ │  (gemini_process.py)
+ ▼
+TRANSLATED
+ │
+ │  (prepare_review_audio.py)
+ ▼
+REVIEW_PREPARED ──► Label Studio (Unified Review)
+ │                    - 15 sentences per task
+ │                    - Sentence-level audio playback
+ │                    - Transcript + Translation + Timing corrections
+ │
+ │  (apply_review.py)
+ ▼
+FINAL ──► Training Export
  │
  └──► REJECTED (at any stage)
 ```
@@ -118,16 +104,11 @@ RAW
 | Stage | Script | Human Review? | Description |
 |-------|--------|---------------|-------------|
 | RAW | `ingest_youtube.py` | No | Downloaded from YouTube with transcript |
-| TRANSCRIPT_REVIEW | `label_studio_sync.py` | **Yes** | Correct transcript errors |
-| TRANSCRIPT_VERIFIED | - | No | Transcript approved |
-| ALIGNED | `whisperx_align.py` | No | Word-level timestamps added |
-| SEGMENTED | `segment_audio.py` | No | Split into 10-30s chunks |
-| SEGMENT_REVIEW | `label_studio_sync.py` | **Yes** | Verify segment boundaries |
-| SEGMENT_VERIFIED | - | No | Segments approved |
-| TRANSLATED | `gemini_process.py` | No | Transcription + translation via Gemini |
-| TRANSLATION_REVIEW | `label_studio_sync.py` | **Yes** | Review translation accuracy |
-| DENOISED | `denoise_audio.py` | No | Background noise removed |
-| FINAL | `export_reviewed.py` | No | Ready for training |
+| TRANSLATED | `gemini_process.py` | No | Gemini transcription + translation |
+| REVIEW_PREPARED | `prepare_review_audio.py` | No | Sentence audio cut, chunks created |
+| (In Label Studio) | `label_studio_sync.py push` | **Yes** | Unified review of transcript, translation, timing |
+| (Review complete) | `label_studio_sync.py pull` | No | Corrections saved to database |
+| FINAL | `apply_review.py` | No | Final audio cut with corrections |
 
 ---
 
@@ -207,15 +188,17 @@ The `gemini_process.py` script produces structured JSON:
        ┌───────────────────┼───────────────────┐
        ▼                   ▼                   ▼
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│   segments   │    │ transcript_  │    │ translation_ │
-│ (10-30s      │    │ revisions    │    │ revisions    │
-│  chunks)     │    │              │    │              │
-└──────┬───────┘    └──────────────┘    └──────────────┘
+│ review_      │    │ transcript_  │    │ translation_ │
+│ chunks       │    │ revisions    │    │ revisions    │
+│ (15 sent/    │    │              │    │              │
+│  chunk)      │    └──────────────┘    └──────────────┘
+└──────┬───────┘
        │ 1:N
        ▼
 ┌──────────────────┐
-│ segment_         │
-│ translations     │
+│ sentence_        │
+│ reviews          │
+│ (corrections)    │
 └──────────────────┘
 ```
 
@@ -234,6 +217,44 @@ CREATE TABLE samples (
     cs_ratio NUMERIC(5, 4),               -- Code-switching ratio
     needs_translation_review BOOLEAN,      -- Flag for Gemini issues
     created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+#### review_chunks (NEW)
+
+```sql
+CREATE TABLE review_chunks (
+    chunk_id UUID PRIMARY KEY,
+    sample_id UUID REFERENCES samples(sample_id),
+    chunk_index INTEGER NOT NULL,         -- 0-based chunk number
+    start_sentence_idx INTEGER NOT NULL,  -- First sentence index (inclusive)
+    end_sentence_idx INTEGER NOT NULL,    -- Last sentence index (exclusive)
+    ls_task_id INTEGER,                   -- Label Studio task ID
+    is_completed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    UNIQUE (sample_id, chunk_index)
+);
+```
+
+#### sentence_reviews (NEW)
+
+```sql
+CREATE TABLE sentence_reviews (
+    review_id UUID PRIMARY KEY,
+    chunk_id UUID REFERENCES review_chunks(chunk_id),
+    sentence_idx INTEGER NOT NULL,         -- Index within sample
+    original_text TEXT NOT NULL,
+    reviewed_text TEXT,                    -- Corrected transcript
+    original_translation TEXT NOT NULL,
+    reviewed_translation TEXT,             -- Corrected translation
+    original_start_ms INTEGER NOT NULL,
+    original_end_ms INTEGER NOT NULL,
+    reviewed_start_ms INTEGER,             -- Adjusted timing
+    reviewed_end_ms INTEGER,               -- Adjusted timing
+    is_deleted BOOLEAN DEFAULT FALSE,      -- Sentence marked for removal
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (chunk_id, sentence_idx)
 );
 ```
 
@@ -266,23 +287,6 @@ CREATE TABLE translation_revisions (
 );
 ```
 
-#### segments
-
-```sql
-CREATE TABLE segments (
-    segment_id UUID PRIMARY KEY,
-    sample_id UUID REFERENCES samples(sample_id),
-    segment_index INTEGER NOT NULL,
-    audio_file_path TEXT NOT NULL,
-    start_time NUMERIC(10, 3),
-    end_time NUMERIC(10, 3),
-    transcript_text TEXT NOT NULL,
-    word_timestamps JSONB,
-    is_verified BOOLEAN DEFAULT FALSE,
-    UNIQUE (sample_id, segment_index)
-);
-```
-
 ### Useful Views
 
 ```sql
@@ -303,35 +307,78 @@ SELECT * FROM v_export_ready_segments;
 ```
 final_nlp/
 ├── data/
-│   ├── raw/                    # DVC-tracked
+│   ├── raw/                    # DVC-tracked: Ingested audio
 │   │   ├── audio/              # {video_id}.wav (16kHz mono)
 │   │   ├── text/               # {video_id}_transcript.json
 │   │   └── metadata.jsonl
-│   ├── segments/               # Segmented chunks
+│   ├── review/                 # Sentence audio for Label Studio
 │   │   └── {sample_id}/
-│   │       ├── 0000.wav
-│   │       └── ...
+│   │       └── sentences/
+│   │           ├── 0000.wav    # Individual sentence audio (with padding)
+│   │           ├── 0001.wav
+│   │           └── ...
+│   ├── final/                  # Final output after review
+│   │   └── {sample_id}/
+│   │       └── sentences/
+│   │           ├── 0000.wav    # Sentence audio (reviewed timing)
+│   │           ├── manifest.tsv
+│   │           └── ...
+│   ├── dataset/                # DVC-tracked: Training export
+│   │   └── {sample_id}/
+│   │       ├── sentences/
+│   │       ├── manifest.tsv
+│   │       └── metadata.json
 │   └── db_sync/                # Database backups (DVC-tracked)
 ├── src/
 │   ├── ingest_youtube.py
-│   ├── label_studio_sync.py
+│   ├── label_studio_sync.py          # Unified review push/pull
+│   ├── export_reviewed.py            # Export FINAL to dataset
 │   ├── preprocessing/
-│   │   ├── gemini_process.py        # Unified transcription + translation
+│   │   ├── gemini_process.py         # Transcription + translation
 │   │   ├── gemini_repair_translation.py
-│   │   ├── whisperx_align.py
-│   │   ├── segment_audio.py
-│   │   └── denoise_audio.py
+│   │   ├── prepare_review_audio.py   # NEW: Cut sentence audio, create chunks
+│   │   ├── apply_review.py           # NEW: Apply corrections, create final
+│   │   ├── whisperx_align.py         # (Optional)
+│   │   ├── segment_audio.py          # (Legacy)
+│   │   └── denoise_audio.py          # (Optional)
 │   └── utils/
 │       ├── data_utils.py
 │       └── text_utils.py
 ├── init_scripts/
-│   └── 01_schema.sql
+│   ├── 01_schema.sql
+│   └── 02_review_system_migration.sql  # NEW: Review tables
 ├── label_studio_templates/
-│   ├── transcript_correction.xml
-│   ├── segment_review.xml
-│   └── translation_review.xml
+│   ├── unified_review.xml            # NEW: Single review template
+│   └── archive/                      # Legacy templates
+│       ├── transcript_correction.xml
+│       ├── segment_review.xml
+│       └── translation_review.xml
 ├── docker-compose.yml
 └── requirements.txt
+```
+
+### Data Flow
+
+```
+data/raw/audio/{video_id}.wav
+         │
+         │ prepare_review_audio.py
+         ▼
+data/review/{sample_id}/sentences/{idx}.wav   (0.2s padding each side)
+         │
+         │ Label Studio (unified_review.xml)
+         │ label_studio_sync.py push/pull
+         │
+         │ apply_review.py
+         ▼
+data/final/{sample_id}/sentences/{idx}.wav    (reviewed timing, no padding)
+         │                manifest.tsv
+         │
+         │ export_reviewed.py
+         ▼
+data/dataset/{sample_id}/sentences/{idx}.wav  (DVC-tracked)
+                        manifest.tsv
+                        metadata.json
 ```
 
 ---

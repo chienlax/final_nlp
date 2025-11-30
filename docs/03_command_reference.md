@@ -34,11 +34,20 @@ docker compose run --rm ingestion python src/ingest_youtube.py "https://www.yout
 # Gemini transcription + translation
 docker compose run --rm ingestion python src/preprocessing/gemini_process.py --batch --limit 5
 
-# Push to Label Studio
-docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion python src/label_studio_sync.py push --task-type transcript_correction
+# Prepare for unified review (cut sentence audio)
+docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch
 
-# Pull annotations
-docker compose run --rm ingestion python src/label_studio_sync.py pull --task-type transcript_correction
+# Push to Label Studio (unified review)
+docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion python src/label_studio_sync.py push unified_review
+
+# Pull completed reviews
+docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review
+
+# Apply corrections and create final output
+docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch
+
+# Export to training dataset
+docker compose run --rm ingestion python src/export_reviewed.py --batch
 
 # Check pipeline status
 docker exec factory_ledger psql -U admin -d data_factory -c "SELECT processing_state, COUNT(*) FROM samples GROUP BY processing_state;"
@@ -177,44 +186,53 @@ docker compose run --rm ingestion python src/preprocessing/gemini_repair_transla
 
 ---
 
-## 5. Label Studio Sync
+## 5. Label Studio Sync (Unified Review)
 
 ### Script: `src/label_studio_sync.py`
 
-Sync between database and Label Studio.
+Sync between database and Label Studio for unified review workflow.
 
 ### Push Samples for Review
 
 ```powershell
-# Transcript correction (Round 1)
+# Push all REVIEW_PREPARED samples
 docker compose run --rm `
   -e AUDIO_PUBLIC_URL=http://localhost:8081 `
-  -e LS_PROJECT_TRANSCRIPT=1 `
-  ingestion python src/label_studio_sync.py push --task-type transcript_correction
+  -e LS_PROJECT_UNIFIED_REVIEW=1 `
+  ingestion python src/label_studio_sync.py push unified_review
 
-# Translation review (Round 3)
+# Specific sample
 docker compose run --rm `
   -e AUDIO_PUBLIC_URL=http://localhost:8081 `
-  -e LS_PROJECT_TRANSLATION=2 `
-  ingestion python src/label_studio_sync.py push --task-type translation_review
+  ingestion python src/label_studio_sync.py push unified_review --sample-id <UUID>
 
 # With limit
 docker compose run --rm `
   -e AUDIO_PUBLIC_URL=http://localhost:8081 `
-  ingestion python src/label_studio_sync.py push --task-type transcript_correction --limit 10
+  ingestion python src/label_studio_sync.py push unified_review --limit 10
 ```
 
 ### Pull Completed Annotations
 
 ```powershell
-# Pull transcript corrections
-docker compose run --rm ingestion python src/label_studio_sync.py pull --task-type transcript_correction
+# Pull all completed reviews
+docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review
 
-# Pull translation reviews
-docker compose run --rm ingestion python src/label_studio_sync.py pull --task-type translation_review
+# Specific sample
+docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review --sample-id <UUID>
 
 # Dry run
-docker compose run --rm ingestion python src/label_studio_sync.py pull --task-type transcript_correction --dry-run
+docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review --dry-run
+```
+
+### Reopen Tasks for Re-review
+
+```powershell
+# Reopen all chunks for a sample
+docker compose run --rm ingestion python src/label_studio_sync.py reopen --sample-id <UUID>
+
+# Reopen specific chunk
+docker compose run --rm ingestion python src/label_studio_sync.py reopen --sample-id <UUID> --chunk-index 2
 ```
 
 ### Check Status
@@ -223,25 +241,72 @@ docker compose run --rm ingestion python src/label_studio_sync.py pull --task-ty
 docker compose run --rm ingestion python src/label_studio_sync.py status
 ```
 
-### Create Projects
-
-```powershell
-docker compose run --rm ingestion python src/create_project.py --task-type transcript_correction
-docker compose run --rm ingestion python src/create_project.py --task-type translation_review
-```
-
 | Argument | Description |
 |----------|-------------|
-| `push` | Push samples to Label Studio |
-| `pull` | Pull completed annotations |
+| `push unified_review` | Push samples for unified review |
+| `pull unified_review` | Pull completed annotations |
+| `reopen` | Reopen tasks for re-review |
 | `status` | Check connection and pending tasks |
-| `--task-type` | `transcript_correction`, `translation_review`, `audio_segmentation` |
+| `--sample-id <UUID>` | Process specific sample |
+| `--chunk-index N` | Specific chunk for reopen |
 | `--limit N` | Max items to process |
 | `--dry-run` | Preview without changes |
 
 ---
 
 ## 6. Preprocessing
+
+### Prepare Review Audio (NEW)
+
+Cut sentence-level audio files and create review chunks for Label Studio.
+
+```powershell
+# Batch processing (TRANSLATED → REVIEW_PREPARED)
+docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch --limit 10
+
+# Specific sample
+docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --sample-id <UUID>
+
+# Custom chunk size
+docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch --chunk-size 20
+
+# Dry run
+docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch --dry-run
+```
+
+| Argument | Description |
+|----------|-------------|
+| `--sample-id <UUID>` | Process specific sample |
+| `--batch` | Process all TRANSLATED samples |
+| `--limit N` | Max samples to process |
+| `--chunk-size N` | Sentences per chunk (default: 15) |
+| `--dry-run` | Preview without changes |
+
+**Output**: Creates `data/review/{sample_id}/sentences/{idx:04d}.wav` with 0.2s padding.
+
+### Apply Review Corrections (NEW)
+
+Apply corrections from unified review and create final output.
+
+```powershell
+# Batch processing (REVIEW_PREPARED → FINAL)
+docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch --limit 10
+
+# Specific sample (requires all chunks completed)
+docker compose run --rm ingestion python src/preprocessing/apply_review.py --sample-id <UUID>
+
+# Dry run
+docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch --dry-run
+```
+
+| Argument | Description |
+|----------|-------------|
+| `--sample-id <UUID>` | Process specific sample |
+| `--batch` | Process all samples with completed reviews |
+| `--limit N` | Max samples to process |
+| `--dry-run` | Preview without changes |
+
+**Output**: Creates `data/final/{sample_id}/sentences/{idx:04d}.wav` + `manifest.tsv`.
 
 ### WhisperX Alignment
 
@@ -378,29 +443,64 @@ docker compose up -d
 # Wait 30-60 seconds
 # Open http://localhost:8085, create account
 # Get API token from Label Studio UI
-
-docker compose run --rm ingestion python src/create_project.py --task-type transcript_correction
+# Create unified review project with label_studio_templates/unified_review.xml
 ```
 
-### Daily Ingestion
+### Complete Pipeline (Recommended)
 
 ```powershell
-# 1. Ingest
+# 1. Ingest from YouTube
 docker compose run --rm ingestion python src/ingest_youtube.py "URL"
 
-# 2. Process with Gemini
+# 2. Process with Gemini (transcription + translation)
 docker compose run --rm ingestion python src/preprocessing/gemini_process.py --batch
 
-# 3. Repair any issues
+# 3. Repair any translation issues
 docker compose run --rm ingestion python src/preprocessing/gemini_repair_translation.py --batch
 
-# 4. Push for review
-docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion python src/label_studio_sync.py push --task-type translation_review
+# 4. Prepare for unified review (cut sentence audio)
+docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch
 
-# 5. (Human reviews in Label Studio)
+# 5. Push to Label Studio (15 sentences per task)
+docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion python src/label_studio_sync.py push unified_review
 
-# 6. Pull results
-docker compose run --rm ingestion python src/label_studio_sync.py pull --task-type translation_review
+# 6. (Human reviews in Label Studio - transcript, translation, timing)
+
+# 7. Pull completed reviews
+docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review
+
+# 8. Apply corrections, create final audio
+docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch
+
+# 9. Export to training dataset
+docker compose run --rm ingestion python src/export_reviewed.py --batch
+```
+
+### Daily Review Workflow
+
+```powershell
+# Pull completed reviews
+docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review
+
+# Apply corrections
+docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch
+
+# Export to dataset
+docker compose run --rm ingestion python src/export_reviewed.py --batch
+
+# Backup
+docker compose run --rm ingestion python src/db_backup.py
+docker compose run --rm ingestion dvc push
+```
+
+### Re-review a Sample
+
+```powershell
+# Reopen all chunks
+docker compose run --rm ingestion python src/label_studio_sync.py reopen --sample-id <UUID>
+
+# Or reopen specific chunk
+docker compose run --rm ingestion python src/label_studio_sync.py reopen --sample-id <UUID> --chunk-index 2
 ```
 
 ### Data Sync
@@ -408,7 +508,7 @@ docker compose run --rm ingestion python src/label_studio_sync.py pull --task-ty
 ```powershell
 # Backup → Push
 docker compose run --rm ingestion python src/db_backup.py
-docker compose run --rm ingestion dvc add data/raw data/db_sync
+docker compose run --rm ingestion dvc add data/raw data/db_sync data/dataset
 docker compose run --rm ingestion dvc push
 
 # Pull → Restore
@@ -423,6 +523,8 @@ docker compose run --rm ingestion python src/db_restore.py
 docker compose down -v
 Remove-Item -Recurse -Force data/raw/audio/*
 Remove-Item -Recurse -Force data/raw/text/*
+Remove-Item -Recurse -Force data/review/*
+Remove-Item -Recurse -Force data/final/*
 Remove-Item -Recurse -Force data/db_sync/*
 docker compose up -d
 ```

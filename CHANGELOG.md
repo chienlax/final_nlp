@@ -7,21 +7,51 @@ All notable changes to the Vietnamese-English Code-Switching Speech Translation 
 ## [Unreleased]
 
 ### Added
-- Unified `gemini_process.py` script for single-pass transcription + translation
-- `gemini_repair_translation.py` for fixing problematic translations
-- Adaptive audio chunking for files >27 minutes with overlap deduplication
-- Translation issue flagging with `has_translation_issues` and `translation_issue_indices` columns
-- New database columns: `needs_translation_review`, `sentence_translations` JSONB
-- Migration script `02_gemini_process_migration.sql` for existing databases
+
+#### Unified Review System
+- **`prepare_review_audio.py`**: Pre-cut sentence audio for Label Studio review
+  - Creates `data/review/{sample_id}/sentences/{idx:04d}.wav` with 0.2s padding
+  - Groups sentences into review chunks (default 15 per task)
+  - Transitions: TRANSLATED → REVIEW_PREPARED
+  
+- **`apply_review.py`**: Apply corrections from unified review
+  - Re-cuts audio with reviewed timestamps (or original if unchanged)
+  - Creates `data/final/{sample_id}/sentences/` with TSV manifest
+  - Cleans up review audio after successful apply
+  - Transitions: REVIEW_PREPARED → FINAL
+
+- **`unified_review.xml`**: Single Label Studio template for all review tasks
+  - Paragraphs tag with `contextScroll="true"` for audio region playback
+  - Sentence-level audio with individual playback controls
+  - Editable transcript, translation, and timing per sentence
+  - Delete sentence option for bad segments
+
+- **Database Schema (`02_review_system_migration.sql`)**:
+  - `REVIEW_PREPARED` processing state
+  - `review_chunks` table (sample_id, chunk_index, sentence range, ls_task_id)
+  - `sentence_reviews` table (corrections per sentence)
+  - Helper functions: `create_review_chunk()`, `save_sentence_review()`, `check_chunk_completion()`
+
+- **Nginx location blocks** for `/review/` and `/final/` audio serving
 
 ### Changed
-- Documentation reorganized from 8 files to 5 focused documents
-- Audio chunking now uses adaptive sizing instead of fixed 28-minute chunks
-- Chunk overlap reduced from 30s to 18s for better deduplication
+- **`label_studio_sync.py`**: Complete rewrite for unified review workflow (v2)
+  - Commands: `push unified_review`, `pull unified_review`, `reopen`, `status`
+  - Creates Paragraphs predictions with sentence boundaries
+  - Extracts sentence-level corrections from annotations
+  
+- **`export_reviewed.py`**: Updated for FINAL state workflow (v2)
+  - Exports from `data/final/` instead of database exports
+  - Generates TSV manifest + metadata.json per sample
+  - Supports `--sample-id` and `--batch` modes
 
-### Removed
-- Deprecated `translate.py` (replaced by `gemini_process.py`)
-- Deprecated `gemini_transcribe.py` (merged into `gemini_process.py`)
+- Simplified processing states: RAW → TRANSLATED → REVIEW_PREPARED → FINAL
+
+### Deprecated
+- Legacy 3-stage review workflow (transcript → segment → translation)
+- Old Label Studio templates archived to `label_studio_templates/archive/`
+- Old sync script backed up to `label_studio_sync_v1.py`
+- Old export script backed up to `export_reviewed_v1.py`
 
 ---
 
@@ -114,16 +144,17 @@ All notable changes to the Vietnamese-English Code-Switching Speech Translation 
 ### Completed ✅
 - YouTube ingestion pipeline
 - Database schema with versioned revisions
-- Label Studio integration (3-stage review)
+- **Unified Label Studio review system (NEW)**
+  - 15 sentences per task
+  - Sentence-level audio playback
+  - Transcript + Translation + Timing corrections
 - Gemini unified processing (transcription + translation)
 - DVC data versioning with Google Drive
-- WhisperX alignment
-- Audio segmentation
-- DeepFilterNet denoising
+- Training data export pipeline
 
-### In Progress 🔄
-- Translation review workflow
-- Training data export
+### Optional Preprocessing
+- WhisperX alignment (if needed)
+- DeepFilterNet denoising (if needed)
 
 ### Planned 📋
 - Training pipeline implementation

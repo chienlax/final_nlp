@@ -1,31 +1,43 @@
+#!/usr/bin/env python3
 """
-Export reviewed samples to DVC-tracked output directory.
+Export final samples to DVC-tracked dataset directory (v2).
 
-Exports samples that have completed human review into a structured
-format suitable for training data preparation.
+Exports samples that have completed unified review (FINAL state) into a
+structured format suitable for training data preparation. Uses sentence-level
+audio files created by apply_review.py.
 
 Output Structure:
-    data/reviewed/{task_type}/{sample_id}/
-        ├── audio.wav           # Original audio file
-        ├── transcript.json     # Final reviewed transcript
-        ├── translation.json    # Final reviewed translation (if applicable)
-        └── metadata.json       # Sample metadata and review info
+    dataset/
+        ├── audio/
+        │   ├── train/{sample_id}_{sentence_idx:04d}.wav
+        │   ├── dev/{sample_id}_{sentence_idx:04d}.wav
+        │   └── test/{sample_id}_{sentence_idx:04d}.wav
+        ├── train.tsv           # Training manifest (HuggingFace format)
+        ├── dev.tsv             # Development manifest
+        ├── test.tsv            # Test manifest
+        └── db/
+            └── metadata.sqlite # SQLite for filtering/analysis
 
 Usage:
-    python src/export_reviewed.py                    # Export all reviewed samples
-    python src/export_reviewed.py --task-type transcript_correction
+    python src/export_reviewed.py                    # Export all FINAL samples
     python src/export_reviewed.py --limit 100
+    python src/export_reviewed.py --split 80:10:10  # Train:Dev:Test ratio
     python src/export_reviewed.py --dry-run
 """
 
 import argparse
 import json
 import logging
+import random
 import shutil
+import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # Configure logging
 logging.basicConfig(
@@ -40,311 +52,429 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from utils.data_utils import get_pg_connection
 
-# Output directory
-OUTPUT_DIR = PROJECT_ROOT / 'data' / 'reviewed'
+# Default output directory
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / 'dataset'
+DEFAULT_FINAL_ROOT = PROJECT_ROOT / 'data' / 'final'
 
 
-def get_reviewed_samples(
-    task_type: Optional[str] = None,
-    limit: Optional[int] = None,
-    skip_exported: bool = True,
-) -> List[Dict[str, Any]]:
+# =============================================================================
+# DATABASE FUNCTIONS
+# =============================================================================
+
+def get_final_samples(limit: Optional[int] = None) -> List[Dict[str, Any]]:
     """
-    Fetch samples that have completed human review.
+    Get samples in FINAL state with review statistics.
 
     Args:
-        task_type: Filter by annotation task type.
         limit: Maximum number of samples to return.
-        skip_exported: Skip samples already exported.
 
     Returns:
-        List of sample dictionaries with review information.
+        List of sample dictionaries.
     """
     conn = get_pg_connection()
 
     try:
-        with conn.cursor() as cur:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             query = """
                 SELECT 
                     s.sample_id,
                     s.external_id,
-                    s.content_type,
-                    s.pipeline_type::TEXT,
-                    s.processing_state::TEXT,
                     s.audio_file_path,
-                    s.text_file_path,
                     s.duration_seconds,
                     s.cs_ratio,
-                    s.source_metadata,
-                    s.dvc_commit_hash,
                     s.is_gold_standard,
-                    s.gold_score,
+                    s.source_metadata,
+                    s.processing_metadata,
                     s.created_at,
                     s.updated_at,
-                    -- Latest transcript
                     tr.transcript_text,
-                    tr.revision_type AS transcript_revision_type,
-                    tr.timestamps AS transcript_timestamps,
-                    tr.created_at AS transcript_created_at,
-                    tr.created_by AS transcript_created_by,
-                    -- Latest translation
-                    tl.translation_text,
-                    tl.target_language,
-                    tl.revision_type AS translation_revision_type,
-                    tl.created_at AS translation_created_at,
-                    tl.created_by AS translation_created_by,
-                    -- Annotation info
-                    a.task_type::TEXT,
-                    a.completed_at AS annotation_completed_at,
-                    a.assigned_to AS annotator_id
+                    tr.sentence_timestamps,
+                    tl.translation_text
                 FROM samples s
-                LEFT JOIN LATERAL (
-                    SELECT * FROM transcript_revisions 
-                    WHERE sample_id = s.sample_id 
-                    ORDER BY version DESC LIMIT 1
-                ) tr ON TRUE
-                LEFT JOIN LATERAL (
-                    SELECT * FROM translation_revisions 
-                    WHERE sample_id = s.sample_id 
-                    ORDER BY version DESC LIMIT 1
-                ) tl ON TRUE
-                LEFT JOIN annotations a ON s.sample_id = a.sample_id 
-                    AND a.status = 'completed'
-                WHERE s.processing_state = 'REVIEWED'
+                LEFT JOIN transcript_revisions tr 
+                    ON s.sample_id = tr.sample_id 
+                    AND tr.version = s.current_transcript_version
+                LEFT JOIN translation_revisions tl 
+                    ON s.sample_id = tl.sample_id 
+                    AND tl.version = s.current_translation_version
+                WHERE s.processing_state = 'FINAL'
                   AND s.is_deleted = FALSE
+                ORDER BY s.updated_at DESC
             """
 
-            params = []
-
-            if task_type:
-                query += " AND a.task_type = %s::annotation_task"
-                params.append(task_type)
-
-            if skip_exported:
-                query += " AND NOT COALESCE((s.processing_metadata->>'exported')::BOOLEAN, FALSE)"
-
-            query += " ORDER BY s.updated_at DESC"
-
             if limit:
-                query += " LIMIT %s"
-                params.append(limit)
+                query += f" LIMIT {limit}"
 
-            cur.execute(query, params)
-            columns = [desc[0] for desc in cur.description]
-            return [dict(zip(columns, row)) for row in cur.fetchall()]
+            cur.execute(query)
+            return [dict(row) for row in cur.fetchall()]
 
     finally:
         conn.close()
 
 
-def export_sample(
-    sample: Dict[str, Any],
-    base_output_dir: Path,
-    dry_run: bool = False,
-) -> Optional[Path]:
+def get_sentence_data(sample_id: str) -> List[Dict[str, Any]]:
     """
-    Export a single reviewed sample to the output directory.
-
-    Args:
-        sample: Sample dictionary from database.
-        base_output_dir: Base output directory.
-        dry_run: If True, don't write files.
-
-    Returns:
-        Path to exported directory, or None if failed.
-    """
-    sample_id = str(sample['sample_id'])
-    task_type = sample.get('task_type', 'general')
-    
-    # Create output directory structure
-    output_dir = base_output_dir / task_type / sample_id
-
-    if dry_run:
-        logger.info(f"[DRY RUN] Would export sample {sample_id} to {output_dir}")
-        return output_dir
-
-    try:
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Copy audio file if exists
-        if sample.get('audio_file_path'):
-            src_audio = PROJECT_ROOT / sample['audio_file_path']
-            if src_audio.exists():
-                dst_audio = output_dir / 'audio.wav'
-                shutil.copy2(src_audio, dst_audio)
-                logger.debug(f"  Copied audio: {dst_audio}")
-            else:
-                logger.warning(f"  Audio file not found: {src_audio}")
-
-        # Export transcript
-        if sample.get('transcript_text'):
-            transcript_data = {
-                'text': sample['transcript_text'],
-                'revision_type': sample.get('transcript_revision_type'),
-                'timestamps': sample.get('transcript_timestamps'),
-                'created_at': _serialize_datetime(sample.get('transcript_created_at')),
-                'created_by': sample.get('transcript_created_by'),
-            }
-            transcript_path = output_dir / 'transcript.json'
-            with open(transcript_path, 'w', encoding='utf-8') as f:
-                json.dump(transcript_data, f, ensure_ascii=False, indent=2)
-            logger.debug(f"  Wrote transcript: {transcript_path}")
-
-        # Export translation
-        if sample.get('translation_text'):
-            translation_data = {
-                'text': sample['translation_text'],
-                'target_language': sample.get('target_language'),
-                'revision_type': sample.get('translation_revision_type'),
-                'created_at': _serialize_datetime(sample.get('translation_created_at')),
-                'created_by': sample.get('translation_created_by'),
-            }
-            translation_path = output_dir / 'translation.json'
-            with open(translation_path, 'w', encoding='utf-8') as f:
-                json.dump(translation_data, f, ensure_ascii=False, indent=2)
-            logger.debug(f"  Wrote translation: {translation_path}")
-
-        # Export metadata
-        metadata = {
-            'sample_id': sample_id,
-            'external_id': sample.get('external_id'),
-            'content_type': sample.get('content_type'),
-            'pipeline_type': sample.get('pipeline_type'),
-            'duration_seconds': float(sample['duration_seconds']) if sample.get('duration_seconds') else None,
-            'cs_ratio': float(sample['cs_ratio']) if sample.get('cs_ratio') else None,
-            'source_metadata': sample.get('source_metadata'),
-            'dvc_commit_hash': sample.get('dvc_commit_hash'),
-            'is_gold_standard': sample.get('is_gold_standard', False),
-            'gold_score': float(sample['gold_score']) if sample.get('gold_score') else None,
-            'annotation': {
-                'task_type': task_type,
-                'annotator_id': sample.get('annotator_id'),
-                'completed_at': _serialize_datetime(sample.get('annotation_completed_at')),
-            },
-            'exported_at': datetime.now().isoformat(),
-        }
-        metadata_path = output_dir / 'metadata.json'
-        with open(metadata_path, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
-        logger.debug(f"  Wrote metadata: {metadata_path}")
-
-        return output_dir
-
-    except Exception as e:
-        logger.error(f"Failed to export sample {sample_id}: {e}")
-        return None
-
-
-def mark_sample_exported(sample_id: str) -> bool:
-    """
-    Mark a sample as exported in the database.
+    Get final sentence data for a sample.
 
     Args:
         sample_id: UUID of the sample.
 
     Returns:
-        True if successful.
+        List of sentence dictionaries.
     """
     conn = get_pg_connection()
 
     try:
-        with conn.cursor() as cur:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                UPDATE samples
-                SET processing_metadata = COALESCE(processing_metadata, '{}') || 
-                    jsonb_build_object(
-                        'exported', TRUE,
-                        'exported_at', %s
-                    ),
-                    updated_at = NOW()
-                WHERE sample_id = %s
+                SELECT 
+                    sr.sentence_idx,
+                    COALESCE(sr.reviewed_transcript, sr.original_transcript) AS transcript,
+                    COALESCE(sr.reviewed_translation, sr.original_translation) AS translation,
+                    COALESCE(sr.reviewed_start_ms, sr.original_start_ms) AS start_ms,
+                    COALESCE(sr.reviewed_end_ms, sr.original_end_ms) AS end_ms,
+                    sr.is_rejected
+                FROM sentence_reviews sr
+                WHERE sr.sample_id = %s
+                  AND sr.is_rejected = FALSE
+                ORDER BY sr.sentence_idx ASC
                 """,
-                (datetime.now().isoformat(), sample_id)
+                (sample_id,)
             )
-            conn.commit()
-            return True
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Failed to mark sample {sample_id} as exported: {e}")
-        return False
+            return [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
 
 
-def _serialize_datetime(dt) -> Optional[str]:
-    """Convert datetime to ISO string."""
-    if dt is None:
-        return None
-    if hasattr(dt, 'isoformat'):
-        return dt.isoformat()
-    return str(dt)
+# =============================================================================
+# EXPORT FUNCTIONS
+# =============================================================================
 
-
-def generate_manifest(output_dir: Path) -> Path:
+def parse_split_ratio(split_str: str) -> Tuple[float, float, float]:
     """
-    Generate a manifest file listing all exported samples.
+    Parse split ratio string like "80:10:10".
 
     Args:
-        output_dir: Base output directory.
+        split_str: Colon-separated ratio string.
 
     Returns:
-        Path to manifest file.
+        Tuple of (train, dev, test) ratios as decimals.
     """
-    manifest = {
-        'generated_at': datetime.now().isoformat(),
-        'total_samples': 0,
-        'task_types': {},
-        'samples': [],
+    parts = split_str.split(':')
+    if len(parts) != 3:
+        raise ValueError(f"Invalid split ratio: {split_str}. Expected format: train:dev:test")
+
+    train, dev, test = [int(p) for p in parts]
+    total = train + dev + test
+
+    return train / total, dev / total, test / total
+
+
+def assign_split(
+    samples: List[Dict[str, Any]],
+    split_ratios: Tuple[float, float, float],
+    seed: int = 42
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Assign samples to train/dev/test splits.
+
+    Args:
+        samples: List of sample dictionaries.
+        split_ratios: Tuple of (train, dev, test) ratios.
+        seed: Random seed for reproducibility.
+
+    Returns:
+        Dictionary with 'train', 'dev', 'test' keys.
+    """
+    random.seed(seed)
+    shuffled = samples.copy()
+    random.shuffle(shuffled)
+
+    n = len(shuffled)
+    train_end = int(n * split_ratios[0])
+    dev_end = train_end + int(n * split_ratios[1])
+
+    return {
+        'train': shuffled[:train_end],
+        'dev': shuffled[train_end:dev_end],
+        'test': shuffled[dev_end:],
     }
 
-    for task_type_dir in output_dir.iterdir():
-        if not task_type_dir.is_dir():
-            continue
 
-        task_type = task_type_dir.name
-        manifest['task_types'][task_type] = 0
+def export_sample_sentences(
+    sample: Dict[str, Any],
+    final_root: Path,
+    output_dir: Path,
+    split: str,
+    dry_run: bool = False
+) -> List[Dict[str, Any]]:
+    """
+    Export sentence audio files for a sample.
 
-        for sample_dir in task_type_dir.iterdir():
-            if not sample_dir.is_dir():
+    Args:
+        sample: Sample dictionary.
+        final_root: Directory containing final audio files.
+        output_dir: Base output directory.
+        split: Split name ('train', 'dev', 'test').
+        dry_run: If True, don't copy files.
+
+    Returns:
+        List of exported sentence metadata.
+    """
+    sample_id = str(sample['sample_id'])
+    external_id = sample['external_id']
+
+    # Get sentence data
+    sentences = get_sentence_data(sample_id)
+    if not sentences:
+        logger.warning(f"No sentences found for sample {sample_id}")
+        return []
+
+    # Source directory
+    source_dir = final_root / sample_id / 'sentences'
+    if not source_dir.exists() and not dry_run:
+        logger.warning(f"Final audio directory not found: {source_dir}")
+        return []
+
+    # Destination directory
+    dest_dir = output_dir / 'audio' / split
+    if not dry_run:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+    exported = []
+    
+    for idx, sent in enumerate(sentences):
+        sentence_idx = sent['sentence_idx']
+        
+        # Source file (indexed by position in final, not original index)
+        source_file = source_dir / f"{idx:04d}.wav"
+        
+        # Destination file: {sample_id}_{idx}.wav (short sample_id for filename)
+        short_id = external_id if len(external_id) <= 11 else sample_id[:8]
+        dest_filename = f"{short_id}_{idx:04d}.wav"
+        dest_file = dest_dir / dest_filename
+
+        if not dry_run:
+            if source_file.exists():
+                shutil.copy2(source_file, dest_file)
+            else:
+                logger.warning(f"Source file not found: {source_file}")
                 continue
 
-            # Read metadata if exists
-            metadata_path = sample_dir / 'metadata.json'
-            if metadata_path.exists():
-                with open(metadata_path, 'r', encoding='utf-8') as f:
-                    metadata = json.load(f)
+        # Calculate duration
+        duration_ms = sent['end_ms'] - sent['start_ms']
 
-                manifest['samples'].append({
-                    'sample_id': metadata.get('sample_id'),
-                    'task_type': task_type,
-                    'external_id': metadata.get('external_id'),
-                    'duration_seconds': metadata.get('duration_seconds'),
-                    'cs_ratio': metadata.get('cs_ratio'),
-                    'is_gold_standard': metadata.get('is_gold_standard', False),
-                })
+        exported.append({
+            'sample_id': sample_id,
+            'external_id': external_id,
+            'sentence_idx': sentence_idx,
+            'final_idx': idx,
+            'audio_path': f"audio/{split}/{dest_filename}",
+            'transcript': sent['transcript'],
+            'translation': sent['translation'],
+            'duration_ms': duration_ms,
+            'split': split,
+        })
 
-                manifest['total_samples'] += 1
-                manifest['task_types'][task_type] += 1
+    return exported
 
-    manifest_path = output_dir / 'manifest.json'
-    with open(manifest_path, 'w', encoding='utf-8') as f:
-        json.dump(manifest, f, ensure_ascii=False, indent=2)
 
-    logger.info(f"Generated manifest: {manifest_path}")
-    return manifest_path
+def create_manifest_files(
+    exported: Dict[str, List[Dict[str, Any]]],
+    output_dir: Path,
+    dry_run: bool = False
+) -> None:
+    """
+    Create TSV manifest files for each split.
 
+    Format (HuggingFace compatible):
+        audio_path<TAB>transcript<TAB>translation<TAB>duration_ms
+
+    Args:
+        exported: Dictionary with split -> sentences mapping.
+        output_dir: Output directory.
+        dry_run: If True, don't write files.
+    """
+    for split, sentences in exported.items():
+        if not sentences:
+            continue
+
+        manifest_path = output_dir / f"{split}.tsv"
+
+        if dry_run:
+            logger.info(f"[DRY RUN] Would create {manifest_path} with {len(sentences)} entries")
+            continue
+
+        with open(manifest_path, 'w', encoding='utf-8') as f:
+            # Header
+            f.write("audio_path\ttranscript\ttranslation\tduration_ms\n")
+
+            # Data rows
+            for sent in sentences:
+                # Escape tabs and newlines in text
+                transcript = sent['transcript'].replace('\t', ' ').replace('\n', ' ')
+                translation = sent['translation'].replace('\t', ' ').replace('\n', ' ')
+
+                f.write(f"{sent['audio_path']}\t{transcript}\t{translation}\t{sent['duration_ms']}\n")
+
+        logger.info(f"Created manifest: {manifest_path} ({len(sentences)} entries)")
+
+
+def create_sqlite_db(
+    exported: Dict[str, List[Dict[str, Any]]],
+    output_dir: Path,
+    dry_run: bool = False
+) -> None:
+    """
+    Create SQLite database for metadata and filtering.
+
+    Args:
+        exported: Dictionary with split -> sentences mapping.
+        output_dir: Output directory.
+        dry_run: If True, don't create database.
+    """
+    if dry_run:
+        logger.info("[DRY RUN] Would create SQLite database")
+        return
+
+    db_dir = output_dir / 'db'
+    db_dir.mkdir(parents=True, exist_ok=True)
+    db_path = db_dir / 'metadata.sqlite'
+
+    # Remove existing database
+    if db_path.exists():
+        db_path.unlink()
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Create table
+    cursor.execute('''
+        CREATE TABLE sentences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sample_id TEXT NOT NULL,
+            external_id TEXT NOT NULL,
+            sentence_idx INTEGER NOT NULL,
+            final_idx INTEGER NOT NULL,
+            audio_path TEXT NOT NULL,
+            transcript TEXT NOT NULL,
+            translation TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            split TEXT NOT NULL
+        )
+    ''')
+
+    # Create indexes
+    cursor.execute('CREATE INDEX idx_sample_id ON sentences(sample_id)')
+    cursor.execute('CREATE INDEX idx_split ON sentences(split)')
+    cursor.execute('CREATE INDEX idx_duration ON sentences(duration_ms)')
+
+    # Insert data
+    all_sentences = []
+    for split, sentences in exported.items():
+        all_sentences.extend(sentences)
+
+    cursor.executemany('''
+        INSERT INTO sentences 
+        (sample_id, external_id, sentence_idx, final_idx, audio_path, 
+         transcript, translation, duration_ms, split)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', [
+        (s['sample_id'], s['external_id'], s['sentence_idx'], s['final_idx'],
+         s['audio_path'], s['transcript'], s['translation'], s['duration_ms'], s['split'])
+        for s in all_sentences
+    ])
+
+    conn.commit()
+    conn.close()
+
+    logger.info(f"Created SQLite database: {db_path} ({len(all_sentences)} sentences)")
+
+
+def create_summary_json(
+    exported: Dict[str, List[Dict[str, Any]]],
+    output_dir: Path,
+    dry_run: bool = False
+) -> None:
+    """
+    Create summary JSON file with dataset statistics.
+
+    Args:
+        exported: Dictionary with split -> sentences mapping.
+        output_dir: Output directory.
+        dry_run: If True, don't write file.
+    """
+    if dry_run:
+        logger.info("[DRY RUN] Would create summary.json")
+        return
+
+    summary = {
+        'generated_at': datetime.now().isoformat(),
+        'splits': {},
+        'totals': {
+            'sentences': 0,
+            'samples': 0,
+            'duration_ms': 0,
+        }
+    }
+
+    all_samples = set()
+
+    for split, sentences in exported.items():
+        if not sentences:
+            continue
+
+        split_samples = set(s['sample_id'] for s in sentences)
+        split_duration = sum(s['duration_ms'] for s in sentences)
+
+        summary['splits'][split] = {
+            'sentences': len(sentences),
+            'samples': len(split_samples),
+            'duration_ms': split_duration,
+            'duration_hours': round(split_duration / 3600000, 2),
+        }
+
+        summary['totals']['sentences'] += len(sentences)
+        summary['totals']['duration_ms'] += split_duration
+        all_samples.update(split_samples)
+
+    summary['totals']['samples'] = len(all_samples)
+    summary['totals']['duration_hours'] = round(summary['totals']['duration_ms'] / 3600000, 2)
+
+    summary_path = output_dir / 'summary.json'
+    with open(summary_path, 'w', encoding='utf-8') as f:
+        json.dump(summary, f, indent=2)
+
+    logger.info(f"Created summary: {summary_path}")
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
 
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description='Export reviewed samples to DVC-tracked output directory.'
-    )
-    parser.add_argument(
-        '--task-type',
-        choices=['transcript_verification', 'timestamp_alignment', 
-                 'translation_review', 'quality_assessment'],
-        help='Filter by annotation task type'
+        description='Export FINAL samples to training dataset directory.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    # Export all FINAL samples with default 80:10:10 split
+    python export_reviewed.py
+
+    # Export with custom split
+    python export_reviewed.py --split 70:15:15
+
+    # Limit number of samples
+    python export_reviewed.py --limit 100
+
+    # Dry run to preview
+    python export_reviewed.py --dry-run
+
+    # Custom output directory
+    python export_reviewed.py --output-dir /path/to/dataset
+        """
     )
     parser.add_argument(
         '--limit',
@@ -352,25 +482,33 @@ def main():
         help='Maximum number of samples to export'
     )
     parser.add_argument(
-        '--output-dir',
-        type=Path,
-        default=OUTPUT_DIR,
-        help=f'Output directory (default: {OUTPUT_DIR})'
+        '--split',
+        type=str,
+        default='80:10:10',
+        help='Train:Dev:Test split ratio (default: 80:10:10)'
     )
     parser.add_argument(
-        '--include-exported',
-        action='store_true',
-        help='Include samples that have already been exported'
+        '--output-dir',
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help=f'Output directory (default: {DEFAULT_OUTPUT_DIR})'
+    )
+    parser.add_argument(
+        '--final-root',
+        type=Path,
+        default=DEFAULT_FINAL_ROOT,
+        help=f'Final audio root directory (default: {DEFAULT_FINAL_ROOT})'
+    )
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=42,
+        help='Random seed for split assignment (default: 42)'
     )
     parser.add_argument(
         '--dry-run',
         action='store_true',
         help='Preview export without writing files'
-    )
-    parser.add_argument(
-        '--no-manifest',
-        action='store_true',
-        help='Skip manifest generation'
     )
     parser.add_argument(
         '-v', '--verbose',
@@ -384,62 +522,93 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
 
     logger.info("=" * 60)
-    logger.info("Export Reviewed Samples")
+    logger.info("Export Final Samples (v2)")
     logger.info("=" * 60)
     logger.info(f"Output directory: {args.output_dir}")
-    if args.task_type:
-        logger.info(f"Task type filter: {args.task_type}")
+    logger.info(f"Final audio root: {args.final_root}")
+    logger.info(f"Split ratio: {args.split}")
+    logger.info(f"Random seed: {args.seed}")
     if args.limit:
         logger.info(f"Limit: {args.limit}")
     if args.dry_run:
         logger.info("DRY RUN MODE - No files will be written")
     logger.info("")
 
-    # Fetch reviewed samples
-    samples = get_reviewed_samples(
-        task_type=args.task_type,
-        limit=args.limit,
-        skip_exported=not args.include_exported,
-    )
+    # Parse split ratio
+    try:
+        split_ratios = parse_split_ratio(args.split)
+    except ValueError as e:
+        logger.error(str(e))
+        return 1
 
-    logger.info(f"Found {len(samples)} reviewed samples to export")
+    # Fetch FINAL samples
+    samples = get_final_samples(limit=args.limit)
+    logger.info(f"Found {len(samples)} samples in FINAL state")
 
     if not samples:
         logger.info("No samples to export.")
         return 0
 
-    # Export each sample
-    stats = {'exported': 0, 'failed': 0}
+    # Assign splits
+    splits = assign_split(samples, split_ratios, seed=args.seed)
+    logger.info(f"Split assignment: train={len(splits['train'])}, "
+                f"dev={len(splits['dev'])}, test={len(splits['test'])}")
 
-    for sample in samples:
-        sample_id = str(sample['sample_id'])
-        logger.info(f"Exporting {sample_id}...")
+    # Create output directory
+    if not args.dry_run:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
 
-        output_path = export_sample(
-            sample=sample,
-            base_output_dir=args.output_dir,
-            dry_run=args.dry_run,
-        )
+    # Export sentences by split
+    exported = {'train': [], 'dev': [], 'test': []}
 
-        if output_path:
-            stats['exported'] += 1
-            # Mark as exported (unless dry run)
-            if not args.dry_run:
-                mark_sample_exported(sample_id)
-        else:
-            stats['failed'] += 1
+    for split_name, split_samples in splits.items():
+        logger.info(f"\nExporting {split_name} split ({len(split_samples)} samples)...")
 
-    # Generate manifest
-    if not args.dry_run and not args.no_manifest:
-        generate_manifest(args.output_dir)
+        for sample in split_samples:
+            sample_id = str(sample['sample_id'])
+            logger.debug(f"  Processing {sample['external_id']}...")
 
-    # Summary
+            sentences = export_sample_sentences(
+                sample=sample,
+                final_root=args.final_root,
+                output_dir=args.output_dir,
+                split=split_name,
+                dry_run=args.dry_run
+            )
+
+            exported[split_name].extend(sentences)
+
+        logger.info(f"  Exported {len(exported[split_name])} sentences")
+
+    # Create manifest files
+    logger.info("\nCreating manifest files...")
+    create_manifest_files(exported, args.output_dir, dry_run=args.dry_run)
+
+    # Create SQLite database
+    logger.info("Creating SQLite database...")
+    create_sqlite_db(exported, args.output_dir, dry_run=args.dry_run)
+
+    # Create summary
+    logger.info("Creating summary...")
+    create_summary_json(exported, args.output_dir, dry_run=args.dry_run)
+
+    # Final summary
+    total_sentences = sum(len(s) for s in exported.values())
+    total_duration_ms = sum(s['duration_ms'] for split in exported.values() for s in split)
+
     logger.info("")
     logger.info("=" * 60)
-    logger.info(f"Export complete: {stats['exported']} exported, {stats['failed']} failed")
+    logger.info("Export Complete")
+    logger.info("=" * 60)
+    logger.info(f"Total samples: {len(samples)}")
+    logger.info(f"Total sentences: {total_sentences}")
+    logger.info(f"Total duration: {total_duration_ms / 3600000:.2f} hours")
+    logger.info(f"  Train: {len(exported['train'])} sentences")
+    logger.info(f"  Dev: {len(exported['dev'])} sentences")
+    logger.info(f"  Test: {len(exported['test'])} sentences")
     logger.info("=" * 60)
 
-    return 0 if stats['failed'] == 0 else 1
+    return 0
 
 
 if __name__ == "__main__":

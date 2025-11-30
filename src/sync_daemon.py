@@ -58,8 +58,27 @@ def run_dvc_pull(verbose: bool = True, allow_overwrite: bool = True) -> bool:
     start_time = time.time()
 
     try:
-        # Pull only the .dvc tracked files, not pipeline outputs
-        cmd = ['dvc', 'pull', 'data/raw.dvc', 'data/db_sync.dvc']
+        # Pull all DVC tracked data directories
+        # - raw: ingested YouTube audio/transcripts
+        # - db_sync: database backups
+        # - review: sentence audio for Label Studio review (if exists)
+        # - final: processed audio after review (if exists)
+        # - dataset: exported training data (if exists)
+        dvc_files = [
+            'data/raw.dvc',
+            'data/db_sync.dvc',
+        ]
+        # Add optional .dvc files if they exist
+        optional_dvc = [
+            'data/review.dvc',
+            'data/final.dvc',
+            'data/dataset.dvc',
+        ]
+        for dvc_file in optional_dvc:
+            if (PROJECT_ROOT / dvc_file).exists():
+                dvc_files.append(dvc_file)
+        
+        cmd = ['dvc', 'pull'] + dvc_files
         if allow_overwrite:
             cmd.append('--force')
 
@@ -287,23 +306,54 @@ def get_data_stats() -> dict:
         Dictionary with file counts and sizes.
     """
     stats = {
-        'audio_files': 0,
-        'text_files': 0,
+        'raw_audio': 0,
+        'raw_text': 0,
+        'review_samples': 0,
+        'final_samples': 0,
+        'dataset_samples': 0,
         'total_size_mb': 0,
     }
 
+    # Raw data (ingested from YouTube)
     audio_dir = DATA_DIR / 'raw' / 'audio'
     text_dir = DATA_DIR / 'raw' / 'text'
 
     if audio_dir.exists():
         audio_files = list(audio_dir.glob('*.wav'))
-        stats['audio_files'] = len(audio_files)
+        stats['raw_audio'] = len(audio_files)
         stats['total_size_mb'] += sum(f.stat().st_size for f in audio_files) / (1024 * 1024)
 
     if text_dir.exists():
         text_files = list(text_dir.glob('**/*.json'))
-        stats['text_files'] = len(text_files)
+        stats['raw_text'] = len(text_files)
         stats['total_size_mb'] += sum(f.stat().st_size for f in text_files) / (1024 * 1024)
+
+    # Review data (sentence audio for Label Studio)
+    review_dir = DATA_DIR / 'review'
+    if review_dir.exists():
+        review_samples = [d for d in review_dir.iterdir() if d.is_dir()]
+        stats['review_samples'] = len(review_samples)
+        for sample_dir in review_samples:
+            wav_files = list(sample_dir.glob('**/*.wav'))
+            stats['total_size_mb'] += sum(f.stat().st_size for f in wav_files) / (1024 * 1024)
+
+    # Final data (after review corrections)
+    final_dir = DATA_DIR / 'final'
+    if final_dir.exists():
+        final_samples = [d for d in final_dir.iterdir() if d.is_dir()]
+        stats['final_samples'] = len(final_samples)
+        for sample_dir in final_samples:
+            wav_files = list(sample_dir.glob('**/*.wav'))
+            stats['total_size_mb'] += sum(f.stat().st_size for f in wav_files) / (1024 * 1024)
+
+    # Dataset (exported for training)
+    dataset_dir = DATA_DIR / 'dataset'
+    if dataset_dir.exists():
+        dataset_samples = [d for d in dataset_dir.iterdir() if d.is_dir()]
+        stats['dataset_samples'] = len(dataset_samples)
+        for sample_dir in dataset_samples:
+            wav_files = list(sample_dir.glob('**/*.wav'))
+            stats['total_size_mb'] += sum(f.stat().st_size for f in wav_files) / (1024 * 1024)
 
     stats['total_size_mb'] = round(stats['total_size_mb'], 2)
     return stats
@@ -334,7 +384,11 @@ def run_sync_loop(interval_minutes: int = 5, force_restore: bool = False):
 
         # Check current data stats
         stats = get_data_stats()
-        logger.info(f"Current data: {stats['audio_files']} audio, {stats['text_files']} text, {stats['total_size_mb']} MB")
+        logger.info(
+            f"Current data: raw={stats['raw_audio']} audio/{stats['raw_text']} text, "
+            f"review={stats['review_samples']}, final={stats['final_samples']}, "
+            f"dataset={stats['dataset_samples']}, total={stats['total_size_mb']} MB"
+        )
 
         sync_success = True
 
@@ -366,10 +420,17 @@ def run_sync_loop(interval_minutes: int = 5, force_restore: bool = False):
         if sync_success:
             # Check stats after sync
             new_stats = get_data_stats()
-            if new_stats['audio_files'] != stats['audio_files']:
-                logger.info(f"Audio files changed: {stats['audio_files']} -> {new_stats['audio_files']}")
-            if new_stats['text_files'] != stats['text_files']:
-                logger.info(f"Text files changed: {stats['text_files']} -> {new_stats['text_files']}")
+            changes = []
+            if new_stats['raw_audio'] != stats['raw_audio']:
+                changes.append(f"raw_audio: {stats['raw_audio']} -> {new_stats['raw_audio']}")
+            if new_stats['review_samples'] != stats['review_samples']:
+                changes.append(f"review: {stats['review_samples']} -> {new_stats['review_samples']}")
+            if new_stats['final_samples'] != stats['final_samples']:
+                changes.append(f"final: {stats['final_samples']} -> {new_stats['final_samples']}")
+            if new_stats['dataset_samples'] != stats['dataset_samples']:
+                changes.append(f"dataset: {stats['dataset_samples']} -> {new_stats['dataset_samples']}")
+            if changes:
+                logger.info(f"Changes detected: {', '.join(changes)}")
         else:
             logger.warning(f"Sync failed. Total errors: {error_count}")
 
@@ -391,7 +452,11 @@ def run_once(force_restore: bool = False):
 
     # Show current stats
     stats = get_data_stats()
-    logger.info(f"Before sync: {stats['audio_files']} audio, {stats['text_files']} text, {stats['total_size_mb']} MB")
+    logger.info(
+        f"Before sync: raw={stats['raw_audio']} audio/{stats['raw_text']} text, "
+        f"review={stats['review_samples']}, final={stats['final_samples']}, "
+        f"dataset={stats['dataset_samples']}, total={stats['total_size_mb']} MB"
+    )
 
     # Check status
     status = check_dvc_status()
@@ -417,7 +482,11 @@ def run_once(force_restore: bool = False):
         run_dvc_push()
 
         new_stats = get_data_stats()
-        logger.info(f"After sync: {new_stats['audio_files']} audio, {new_stats['text_files']} text, {new_stats['total_size_mb']} MB")
+        logger.info(
+            f"After sync: raw={new_stats['raw_audio']} audio/{new_stats['raw_text']} text, "
+            f"review={new_stats['review_samples']}, final={new_stats['final_samples']}, "
+            f"dataset={new_stats['dataset_samples']}, total={new_stats['total_size_mb']} MB"
+        )
         logger.info("Sync completed successfully!")
         return 0
     else:

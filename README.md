@@ -6,8 +6,8 @@ End-to-End Speech Translation pipeline for Vietnamese-English Code-Switching dat
 
 - **YouTube-Only Pipeline**: Mandatory transcripts for quality control
 - **Gemini Processing**: Single-pass transcription + translation with structured output
-- **Human-in-the-Loop**: 3-stage Label Studio review
-- **Adaptive Chunking**: Auto-splits long audio with overlap deduplication
+- **Unified Review**: Single-pass Label Studio review (15 sentences per task)
+- **Sentence-Level Output**: Individual WAV files per sentence for training flexibility
 - **DVC Integration**: Google Drive remote for data versioning
 - **PostgreSQL Backend**: Revision tracking with audit logs
 
@@ -42,8 +42,18 @@ docker compose run --rm ingestion python src/ingest_youtube.py "https://www.yout
 # Run Gemini transcription + translation
 docker compose run --rm ingestion python src/preprocessing/gemini_process.py --batch
 
+# Prepare for unified review (cut sentence audio)
+docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch
+
 # Push to Label Studio for review
-docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion python src/label_studio_sync.py push --task-type translation_review
+docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion python src/label_studio_sync.py push unified_review
+
+# After human review, pull corrections
+docker compose run --rm ingestion python src/label_studio_sync.py pull unified_review
+
+# Apply corrections and export
+docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch
+docker compose run --rm ingestion python src/export_reviewed.py --batch
 ```
 
 📖 **Full setup guide**: [docs/01_getting_started.md](docs/01_getting_started.md)
@@ -69,10 +79,14 @@ docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion pyth
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                           PIPELINE FLOW                                  │
 │                                                                          │
-│  YouTube  ──►  Gemini Processing  ──►  Label Studio  ──►  Training      │
-│  Ingest       (Transcribe+Translate)    Review           Export          │
+│  YouTube  ──►  Gemini Processing  ──►  Prepare Review  ──►  Label Studio│
+│  Ingest       (Transcribe+Translate)   (Cut Sentences)      (15/task)   │
 │                                                                          │
-│  RAW ─────────► TRANSLATED ─────────► VERIFIED ─────────► FINAL         │
+│  RAW ─────────► TRANSLATED ─────────► REVIEW_PREPARED ──► (human review)│
+│                                                                          │
+│           Apply Corrections  ──►  Export to Dataset  ──►  Training      │
+│                                                                          │
+│  ─────────────► FINAL ───────────────► dataset/ ─────────────►          │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -84,19 +98,24 @@ docker compose run --rm -e AUDIO_PUBLIC_URL=http://localhost:8081 ingestion pyth
 final_nlp/
 ├── data/
 │   ├── raw/                    # DVC-tracked (audio + transcripts)
-│   ├── segments/               # Segmented audio chunks
+│   ├── review/                 # Sentence audio for Label Studio
+│   ├── final/                  # Processed audio after review
+│   ├── dataset/                # DVC-tracked (exported for training)
 │   └── db_sync/                # Database backups
 ├── src/
 │   ├── ingest_youtube.py       # YouTube ingestion
-│   ├── label_studio_sync.py    # Label Studio integration
+│   ├── label_studio_sync.py    # Unified review push/pull
+│   ├── export_reviewed.py      # Export FINAL to dataset
+│   ├── sync_daemon.py          # DVC sync automation
 │   └── preprocessing/
-│       ├── gemini_process.py   # Transcription + translation
+│       ├── gemini_process.py           # Transcription + translation
 │       ├── gemini_repair_translation.py
-│       ├── whisperx_align.py   # Word-level alignment
-│       ├── segment_audio.py    # Audio segmentation
-│       └── denoise_audio.py    # Noise removal
+│       ├── prepare_review_audio.py     # Cut sentence audio
+│       ├── apply_review.py             # Apply corrections
+│       ├── whisperx_align.py           # Optional: word alignment
+│       └── denoise_audio.py            # Optional: noise removal
 ├── init_scripts/               # Database schema
-├── label_studio_templates/     # Annotation templates
+├── label_studio_templates/     # unified_review.xml
 ├── docs/                       # Documentation
 └── docker-compose.yml
 ```
@@ -111,7 +130,7 @@ final_nlp/
 | Channels | Mono |
 | Format | WAV (PCM 16-bit) |
 | Video Duration | 2-60 minutes |
-| Segment Duration | 10-30 seconds |
+| Output | Sentence-level WAV files |
 
 ---
 
