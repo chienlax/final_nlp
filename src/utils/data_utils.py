@@ -16,7 +16,6 @@ Changes from v2:
 
 import os
 import re
-import warnings
 from typing import Optional, Dict, Any, List
 
 import psycopg2
@@ -1053,19 +1052,3 @@ def update_annotation_status(
         raise Exception(f"Failed to update annotation: {e}")
     finally:
         conn.close()
-
-
-# =============================================================================
-# LEGACY COMPATIBILITY (Deprecated)
-# =============================================================================
-
-def insert_raw_sample(*args, **kwargs):
-    """DEPRECATED: Use insert_sample() instead."""
-    warnings.warn(
-        "insert_raw_sample is deprecated. Use insert_sample() instead.",
-        DeprecationWarning,
-        stacklevel=2
-    )
-    raise NotImplementedError(
-        "insert_raw_sample is no longer supported. Use insert_sample() with v3 schema."
-    )

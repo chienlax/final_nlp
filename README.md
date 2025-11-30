@@ -112,7 +112,6 @@ final_nlp/
 │       ├── gemini_repair_translation.py
 │       ├── prepare_review_audio.py     # Cut sentence audio
 │       ├── apply_review.py             # Apply corrections
-│       ├── whisperx_align.py           # Optional: word alignment
 │       └── denoise_audio.py            # Optional: noise removal
 ├── init_scripts/               # Database schema
 ├── label_studio_templates/     # unified_review.xml
@@ -138,7 +137,7 @@ final_nlp/
 
 | Service | Port | URL |
 |---------|------|-----|
-| PostgreSQL | 5432 | `localhost:5432` |
+| PostgreSQL | 5433 | `localhost:5433` |
 | Label Studio | 8085 | http://localhost:8085 |
 | Audio Server | 8081 | http://localhost:8081 |
 

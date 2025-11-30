@@ -195,11 +195,6 @@ LABEL_STUDIO_API_KEY=$lsApiKey
 # Project ID for unified review (transcription + translation)
 LS_PROJECT_UNIFIED_REVIEW=1
 
-# Legacy project IDs (deprecated - kept for compatibility)
-LS_PROJECT_TRANSCRIPT=1
-LS_PROJECT_TRANSLATION=2
-LS_PROJECT_SEGMENTATION=3
-
 # -----------------------------------------------------------------------------
 # Audio Server Configuration
 # -----------------------------------------------------------------------------
