@@ -27,6 +27,6 @@ You are acting as a Senior MLOps Engineer and Python Developer for an NLP projec
 ## Project Context
 
 * **Domain:** E2E Speech Translation (ST).
-* **Data:** Code-switched Audio (YouTube/Blogs) -> Text (Transcript) -> Translation.
+* **Data:** Code-switched Audio (YouTube) -> Text (Transcript) -> Translation.
 * **Audio Standard:** 16kHz, Mono, .wav.
 * **Database:** Postgres.

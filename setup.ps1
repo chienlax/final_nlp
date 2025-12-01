@@ -447,34 +447,152 @@ Write-Step 7 "Generating Team Access Information"
 # Get all network adapters and their IPs
 Write-Info "Detecting server IP addresses..."
 
+# Check for Tailscale IP first (preferred for remote access)
+$tailscaleIP = $null
+try {
+    $tailscaleIP = (tailscale ip -4 2>$null)
+    if ($tailscaleIP) {
+        Write-Success "Tailscale detected: $tailscaleIP"
+    }
+} catch {
+    Write-Info "Tailscale not installed or not running"
+}
+
+# Also check from .env file if Tailscale IP is configured
+$envContent = Get-Content $envFile -Raw
+if ($envContent -match "TAILSCALE_IP=([0-9.]+)") {
+    $configuredTailscaleIP = $Matches[1].Trim()
+    if (-not $tailscaleIP) {
+        $tailscaleIP = $configuredTailscaleIP
+        Write-Info "Using Tailscale IP from .env: $tailscaleIP"
+    }
+}
+
 $networkInfo = Get-NetIPAddress -AddressFamily IPv4 | 
     Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
     Select-Object IPAddress, InterfaceAlias
 
-$primaryIP = $null
+$lanIP = $null
 foreach ($net in $networkInfo) {
-    # Prefer Ethernet or Wi-Fi adapters
-    if ($net.InterfaceAlias -match "Ethernet|Wi-Fi|WLAN|LAN") {
-        $primaryIP = $net.IPAddress
+    # Prefer Ethernet or Wi-Fi adapters (skip Tailscale interface for LAN IP)
+    if ($net.InterfaceAlias -match "Ethernet|Wi-Fi|WLAN|LAN" -and $net.InterfaceAlias -notmatch "Tailscale") {
+        $lanIP = $net.IPAddress
         break
     }
 }
 
-# Fallback to first non-localhost IP
-if (-not $primaryIP -and $networkInfo.Count -gt 0) {
-    $primaryIP = $networkInfo[0].IPAddress
+# Fallback to first non-localhost, non-Tailscale IP
+if (-not $lanIP -and $networkInfo.Count -gt 0) {
+    $lanIP = ($networkInfo | Where-Object { $_.InterfaceAlias -notmatch "Tailscale" } | Select-Object -First 1).IPAddress
 }
 
-if (-not $primaryIP) {
-    Write-Warn "Could not detect server IP. Using localhost."
-    $primaryIP = "localhost"
+if (-not $lanIP) {
+    Write-Warn "Could not detect LAN IP. Using localhost."
+    $lanIP = "localhost"
 }
 
-Write-Success "Server IP: $primaryIP"
+Write-Success "LAN IP: $lanIP"
+
+# Determine primary IP for team access (prefer Tailscale for remote teams)
+$primaryIP = if ($tailscaleIP) { $tailscaleIP } else { $lanIP }
 
 # Generate TEAM_ACCESS.txt
 $teamAccessFile = Join-Path $ProjectRoot "TEAM_ACCESS.txt"
-$teamAccessContent = @"
+
+# Build access content based on whether Tailscale is available
+if ($tailscaleIP) {
+    $teamAccessContent = @"
+================================================================================
+   Vietnamese-English Code-Switching Speech Translation Project
+   Team Access Information (via Tailscale VPN)
+================================================================================
+
+Generated: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+Server: $env:COMPUTERNAME
+
+--------------------------------------------------------------------------------
+TAILSCALE REMOTE ACCESS (for team on different networks)
+--------------------------------------------------------------------------------
+
+IMPORTANT: You must have Tailscale installed and connected to access this server!
+
+1. Install Tailscale: https://tailscale.com/download
+2. Sign in with your team invite link (ask the admin)
+3. Once connected, access Label Studio at:
+
+   Label Studio:  http://${tailscaleIP}:$LABEL_STUDIO_PORT
+   Audio Server:  http://${tailscaleIP}:$AUDIO_SERVER_PORT
+
+--------------------------------------------------------------------------------
+LOCAL NETWORK ACCESS (same WiFi/LAN only)
+--------------------------------------------------------------------------------
+
+URL: http://${lanIP}:$LABEL_STUDIO_PORT
+
+--------------------------------------------------------------------------------
+DEFAULT ACCOUNTS
+--------------------------------------------------------------------------------
+
+  Admin:      admin@nlp-project.local / admin123
+  Annotator:  annotator1@nlp-project.local / annotate123
+  Annotator:  annotator2@nlp-project.local / annotate123
+
+Or sign up with your own email at the URL above.
+
+--------------------------------------------------------------------------------
+QUICK START FOR TEAM MEMBERS
+--------------------------------------------------------------------------------
+
+1. Install Tailscale and connect to the team network
+2. Open Label Studio URL in your browser (Chrome recommended)
+3. Log in with your assigned account or create a new one
+4. Go to "Projects" and select the annotation project
+5. Click on a task to start annotating
+6. Your work is auto-saved to the server
+
+--------------------------------------------------------------------------------
+TROUBLESHOOTING
+--------------------------------------------------------------------------------
+
+Can't connect via Tailscale?
+  - Ensure Tailscale is running (check system tray icon)
+  - Verify you're connected: run 'tailscale status' in terminal
+  - Check if server is online: ping $tailscaleIP
+  - Make sure you've accepted the invite to the Tailscale network
+
+Audio not playing?
+  - Make sure your browser allows autoplay
+  - Try refreshing the page
+  - Check if audio server is accessible: http://${tailscaleIP}:$AUDIO_SERVER_PORT
+
+--------------------------------------------------------------------------------
+FOR SERVER ADMIN ONLY
+--------------------------------------------------------------------------------
+
+Tailscale IP: $tailscaleIP
+LAN IP:       $lanIP
+
+Server Local Access:
+  Label Studio: http://localhost:$LABEL_STUDIO_PORT
+  Audio Server: http://localhost:$AUDIO_SERVER_PORT
+  PostgreSQL:   localhost:$POSTGRES_PORT
+
+Docker Commands:
+  View logs:    docker compose logs -f
+  Restart:      docker compose restart
+  Stop:         docker compose down
+  Start:        docker compose up -d
+
+Tailscale Admin:
+  Invite users: https://login.tailscale.com/admin/users
+  View devices: tailscale status
+
+API Token (for scripts): Check .env file
+
+================================================================================
+"@
+} else {
+    $teamAccessContent = @"
 ================================================================================
    Vietnamese-English Code-Switching Speech Translation Project
    Team Access Information
@@ -487,7 +605,10 @@ Server: $env:COMPUTERNAME
 LABEL STUDIO ACCESS (for annotation)
 --------------------------------------------------------------------------------
 
-URL: http://${primaryIP}:$LABEL_STUDIO_PORT
+URL: http://${lanIP}:$LABEL_STUDIO_PORT
+
+NOTE: This URL only works on the same local network (WiFi/LAN).
+For remote access, install Tailscale and run setup again.
 
 Default Accounts:
   Admin:      admin@nlp-project.local / admin123
@@ -513,12 +634,12 @@ TROUBLESHOOTING
 Can't connect to Label Studio?
   - Make sure you're on the same network as the server ($env:COMPUTERNAME)
   - Ask the server admin if the firewall is configured
-  - Try: ping $primaryIP
+  - Try: ping $lanIP
 
 Audio not playing?
   - Make sure your browser allows autoplay
   - Try refreshing the page
-  - Check if audio server is accessible: http://${primaryIP}:$AUDIO_SERVER_PORT
+  - Check if audio server is accessible: http://${lanIP}:$AUDIO_SERVER_PORT
 
 Need help?
   - Contact the project admin
@@ -543,6 +664,7 @@ API Token (for scripts): Check .env file
 
 ================================================================================
 "@
+}
 
 Set-Content -Path $teamAccessFile -Value $teamAccessContent -Encoding UTF8
 Write-Success "Created TEAM_ACCESS.txt"

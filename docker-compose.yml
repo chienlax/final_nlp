@@ -91,7 +91,7 @@ services:
       - DATABASE_URL=postgresql://admin:secret_password@postgres:5432/data_factory
       - SYNC_INTERVAL_MINUTES=5
       - AUDIO_SERVER_URL=http://audio_server:80
-      - AUDIO_PUBLIC_URL=http://localhost:8081
+      - AUDIO_PUBLIC_URL=${AUDIO_PUBLIC_URL:-http://100.66.225.46:8081}
       - LABEL_STUDIO_URL=http://labelstudio:8085
       - LABEL_STUDIO_API_KEY=${LABEL_STUDIO_API_KEY:-}
       - LS_PROJECT_UNIFIED_REVIEW=${LS_PROJECT_UNIFIED_REVIEW:-1}
