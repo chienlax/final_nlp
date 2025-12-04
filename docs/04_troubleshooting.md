@@ -6,341 +6,501 @@ Common issues and solutions for the Vietnamese-English Code-Switching Speech Tra
 
 ## Table of Contents
 
-1. [Docker & Services](#1-docker--services)
-2. [Database](#2-database)
-3. [Label Studio](#3-label-studio)
+1. [Setup & Environment](#1-setup--environment)
+2. [SQLite Database](#2-sqlite-database)
+3. [Streamlit Review App](#3-streamlit-review-app)
 4. [Gemini API](#4-gemini-api)
-5. [DVC & Data Sync](#5-dvc--data-sync)
-6. [GPU & Preprocessing](#6-gpu--preprocessing)
+5. [Audio Processing](#5-audio-processing)
+6. [DVC & Data Sync](#6-dvc--data-sync)
+7. [Tailscale & Network](#7-tailscale--network)
 
 ---
 
-## 1. Docker & Services
+## 1. Setup & Environment
 
-### Container Won't Start
+### Python Version Issues
 
-**Symptom**: `docker compose up` fails or container exits immediately
-
-```powershell
-# Check logs
-docker compose logs postgres
-docker compose logs labelstudio
-
-# Verify ports aren't in use
-netstat -an | findstr "5433"
-netstat -an | findstr "8085"
-
-# Rebuild containers
-docker compose down
-docker compose up -d --build
-```
-
-> **Note**: PostgreSQL uses port 5433 to avoid conflicts with local PostgreSQL installations.
-
-### Service Health Check
+**Symptom**: `setup.ps1` fails with Python version error
 
 ```powershell
-docker compose ps
-docker inspect factory_ledger --format='{{.State.Health.Status}}'
+# Check Python version
+python --version
+
+# Requires Python 3.10+
+# Download from: https://www.python.org/downloads/
 ```
 
-### Internal vs External Hostnames
+### Virtual Environment Not Activating
 
-| Context | PostgreSQL | Label Studio | Audio Server |
-|---------|------------|--------------|--------------|
-| Inside Docker | `postgres` | `labelstudio` | `audio_server` |
-| From Host | `localhost` | `localhost` | `localhost` |
+**Symptom**: Commands fail with "module not found"
 
-**Example**: `DATABASE_URL` uses `postgres` inside containers, `localhost` from host.
+```powershell
+# Manually activate
+.\.venv\Scripts\Activate.ps1
+
+# If activation script blocked by execution policy
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# Verify activation (should show .venv path)
+Get-Command python | Select-Object Source
+```
+
+### Requirements Installation Failed
+
+**Symptom**: `pip install` errors during setup
+
+```powershell
+# Upgrade pip
+python -m pip install --upgrade pip
+
+# Install with verbose output
+pip install -r requirements.txt -v
+
+# If specific package fails, install separately
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install deepfilternet
+```
+
+### FFmpeg Not Found
+
+**Symptom**: Audio processing fails with "ffmpeg not found"
+
+```powershell
+# Check if FFmpeg is installed
+ffmpeg -version
+
+# Install via winget
+winget install ffmpeg
+
+# Or via chocolatey
+choco install ffmpeg
+
+# Restart terminal after installation
+```
 
 ---
 
-## 2. Database
+## 2. SQLite Database
 
-### Connection Failed
+### Database Locked
 
-**Symptom**: `connection refused` or `password authentication failed`
+**Symptom**: `database is locked` error
 
+**Causes**:
+1. Multiple processes accessing database simultaneously
+2. Streamlit app is running while running batch scripts
+
+**Solutions**:
 ```powershell
-# Check postgres is running
-docker compose ps postgres
+# Stop Streamlit before running batch operations
+# Ctrl+C in terminal running Streamlit
 
-# Test connection
-docker exec factory_ledger psql -U admin -d data_factory -c "SELECT 1;"
+# Check for processes using database
+Get-Process python | Where-Object {$_.MainWindowTitle -like "*streamlit*"}
 
-# Default credentials (in docker-compose.yml):
-# User: admin
-# Password: secret_password
+# Force close (if needed)
+Stop-Process -Name python -Force
 ```
 
-### Schema Issues
+### Database Corruption
+
+**Symptom**: `database disk image is malformed`
 
 ```powershell
-# Apply schema manually
-Get-Content init_scripts\01_schema.sql | docker exec -i factory_ledger psql -U admin -d data_factory
+# Check database integrity
+sqlite3 data/lab_data.db "PRAGMA integrity_check;"
 
-# Apply migration
-Get-Content init_scripts\02_gemini_process_migration.sql | docker exec -i factory_ledger psql -U admin -d data_factory
+# If corrupted, restore from backup
+Copy-Item "data/backups/lab_data_YYYYMMDD_HHMMSS.db" "data/lab_data.db"
+
+# Or restore from DVC
+dvc pull data/db_sync.dvc
 ```
 
-### Data Lost After Restart
+### WAL File Issues
 
-- `docker compose down` preserves volumes ✅
-- `docker compose down -v` **DELETES** all data ❌
+**Symptom**: Database shows stale data or `-wal` file is large
+
+```powershell
+# Force WAL checkpoint (merges WAL into main database)
+sqlite3 data/lab_data.db "PRAGMA wal_checkpoint(TRUNCATE);"
+
+# Check WAL mode status
+sqlite3 data/lab_data.db "PRAGMA journal_mode;"
+```
+
+### Missing Tables
+
+**Symptom**: `no such table` error
+
+```powershell
+# Re-initialize schema
+sqlite3 data/lab_data.db < init_scripts/sqlite_schema.sql
+
+# Verify tables exist
+sqlite3 data/lab_data.db ".tables"
+```
 
 ---
 
-## 3. Label Studio
+## 3. Streamlit Review App
+
+### App Won't Start
+
+**Symptom**: `streamlit run` fails or shows errors
+
+```powershell
+# Check if port 8501 is in use
+netstat -an | findstr "8501"
+
+# Kill process using port (if needed)
+Get-Process -Id (Get-NetTCPConnection -LocalPort 8501).OwningProcess | Stop-Process
+
+# Start with explicit port
+streamlit run src/review_app.py --server.port 8502
+```
 
 ### Audio Not Playing
 
-**Symptom**: Audio player shows but doesn't play, or audio doesn't seek when clicking sentences
-
-**Template v4 uses native Label Studio tags**:
-- `<Audio>` tag for the main audio player
-- `<Paragraphs>` tag with `audioUrl` and `sync="audio"` for timestamp-synced playback
-
-**Common causes**:
-
-1. **Audio server not running**:
-   ```powershell
-   docker compose ps audio_server
-   # Should show "Up (healthy)"
-   ```
-
-2. **Wrong audio URL**:
-   ```powershell
-   # Test audio file access
-   curl http://localhost:8081/audio/VIDEO_ID.wav
-   ```
-
-3. **CORS issues** (audio server needs proper headers):
-   The nginx audio server is configured with CORS headers. If using a different server, ensure these headers are set:
-   ```
-   Access-Control-Allow-Origin: *
-   Access-Control-Allow-Methods: GET, OPTIONS
-   ```
-
-4. **Audio file doesn't exist**:
-   ```powershell
-   # Check if file exists
-   Test-Path "data/raw/audio/VIDEO_ID.wav"
-   ```
-
-**Verify audio URL in task data**:
-```powershell
-# Check task data in Label Studio
-python -c "
-import requests
-API_KEY = 'YOUR_TOKEN'
-resp = requests.get('http://localhost:8085/api/tasks/TASK_ID/', 
-                    headers={'Authorization': f'Token {API_KEY}'})
-print(resp.json()['data']['audio_url'])
-"
-```
-
-### API Token Issues
-
-**Symptom**: `401 Unauthorized` or `Invalid token`
+**Symptom**: Audio player doesn't work in Streamlit
 
 **Causes**:
 
-1. **Wrong token format**: Copy **Access Token** (40-char hex), NOT JWT
-   - ✅ `8a467af13f65511a4f8cc9dd93dff4fe847477e0`
-   - ❌ `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
-
-2. **Legacy tokens disabled**: Run this SQL:
+1. **Audio file path incorrect**:
    ```powershell
-   docker exec -it factory_ledger psql -U admin -d label_studio -c "UPDATE django_site SET domain='localhost:8085', name='localhost:8085' WHERE id=1;"
+   # Check if segment audio exists
+   Test-Path "data/segments/VIDEO_ID/segment_000.wav"
    ```
 
-### "No samples ready" When Pushing
+2. **Audio server not running** (for Docker deployment):
+   ```powershell
+   docker compose ps audio_server
+   docker compose logs audio_server
+   ```
 
-**Symptom**: `Found 0 samples ready for transcript_correction`
+3. **Browser blocking autoplay**:
+   - Click the audio player manually
+   - Check browser console for errors
 
-**Check sample states**:
+### Session State Lost
+
+**Symptom**: Progress resets when navigating
+
+**Solution**: This is expected Streamlit behavior. The app saves changes to database immediately, so data is not lost.
+
+### Slow Performance
+
+**Symptom**: App is sluggish with many segments
+
 ```powershell
-docker exec factory_ledger psql -U admin -d data_factory -c "SELECT external_id, processing_state, label_studio_task_id FROM samples;"
+# Check segment count
+sqlite3 data/lab_data.db "SELECT COUNT(*) FROM segments;"
+
+# If very large (>10000), consider:
+# 1. Process videos in smaller batches
+# 2. Export and archive completed videos
 ```
 
-**Requirements**:
-- `processing_state = 'RAW'` for transcript_correction
-- `label_studio_task_id = NULL` (not already pushed)
+### Cannot Connect Remotely
 
-### Docker Hostname Resolution
-
-**Symptom**: `Failed to resolve 'labelstudio'`
+**Symptom**: Tailscale IP doesn't load Streamlit
 
 ```powershell
-docker compose down
-docker compose up -d postgres audio_server labelstudio
+# Start with network binding
+streamlit run src/review_app.py --server.address 0.0.0.0
+
+# Check Tailscale status
+tailscale status
+
+# Verify firewall allows port 8501
+New-NetFirewallRule -DisplayName "Streamlit" -Direction Inbound -LocalPort 8501 -Protocol TCP -Action Allow
 ```
 
 ---
 
 ## 4. Gemini API
 
-### No API Keys Available
+### No API Key
 
-**Symptom**: `No API keys available for processing`
+**Symptom**: `GEMINI_API_KEY not found in environment`
 
-**Solution**: Add keys to `.env`:
-```dotenv
-GEMINI_API_KEY_1=AIzaSy...
-GEMINI_API_KEY_2=AIzaSy...
+```powershell
+# Create .env file
+echo "GEMINI_API_KEY=your_key_here" > .env
+
+# Or set in environment
+$env:GEMINI_API_KEY = "your_key_here"
 ```
 
-Get keys from: https://aistudio.google.com/app/apikey
+Get API key from: https://aistudio.google.com/app/apikey
 
 ### Rate Limited
 
-**Symptom**: `429 Too Many Requests` or key marked as exhausted
+**Symptom**: `429 Too Many Requests` or `Resource exhausted`
 
-- Script automatically rotates to next key
-- If all keys exhausted, wait until daily reset
-- Check status: `python src/preprocessing/gemini_process.py --check-keys`
+**Solutions**:
+- Wait for rate limit reset (usually 1 minute for Gemini 2.5 Pro)
+- Use multiple API keys (add `GEMINI_API_KEY_1`, `GEMINI_API_KEY_2`, etc.)
+- Reduce batch processing speed
 
 ### JSON Parse Errors
 
-**Symptom**: `JSON parse error on attempt X`
+**Symptom**: `Failed to parse JSON response`
 
-- Script retries up to 3 times automatically
+- Script retries automatically up to 3 times
 - Usually succeeds on retry
-- If persistent, audio may be too complex for model
+- If persistent, check if audio is corrupted or too noisy
 
-### Long Audio Processing
+### Context Length Exceeded
 
-**Symptom**: Audio over 20 minutes processes slowly or inconsistently
+**Symptom**: `Request payload size exceeds limit`
 
-- Audio >20 minutes is automatically chunked with 20-second overlap
-- Overlapping sentences are deduplicated after processing
-- Each chunk is processed sequentially with 2-second delay
-- For very long audio (>1 hour), consider splitting manually first
+**Solution**: Audio is automatically chunked at 10-minute intervals with 10-second overlap. If still failing:
+```powershell
+# Check audio duration
+ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "data/raw/audio/VIDEO_ID.wav"
+```
 
-### Translation Issues Flagged
+### Processing Stalled
 
-**Symptom**: `has_translation_issues = TRUE`
+**Symptom**: Script hangs on a specific video
 
 ```powershell
-# Run repair script
-docker compose run --rm ingestion python src/preprocessing/gemini_repair_translation.py --batch
+# Check current state
+sqlite3 data/lab_data.db "SELECT video_id, status FROM videos WHERE status='processing';"
+
+# Reset stalled videos
+sqlite3 data/lab_data.db "UPDATE videos SET status='pending' WHERE status='processing';"
 ```
 
 ---
 
-## 5. DVC & Data Sync
-
-### DVC Push/Pull Fails
-
-**Symptom**: `ERROR: failed to push/pull` or authentication errors
-
-```powershell
-# Re-authenticate Google Drive
-docker compose run --rm ingestion python src/setup_gdrive_auth.py
-
-# Check status
-docker compose run --rm ingestion dvc status
-
-# Verify remote
-docker compose run --rm ingestion dvc remote list
-```
-
-### Credentials Missing
-
-```powershell
-# Check if credentials exist
-Test-Path "$HOME\.cache\pydrive2fs\credentials.json"
-
-# Copy from team member
-mkdir -Force "$HOME\.cache\pydrive2fs"
-Copy-Item "path\to\credentials.json" "$HOME\.cache\pydrive2fs\credentials.json"
-```
-
-### Sync Conflict
-
-```powershell
-# Force pull (overwrite local)
-docker compose run --rm ingestion dvc pull --force
-
-# Force restore database
-docker compose run --rm ingestion python src/db_restore.py --force
-```
-
----
-
-## 6. GPU & Preprocessing
+## 5. Audio Processing
 
 ### GPU Not Detected
 
-**Symptom**: WhisperX or DeepFilterNet runs on CPU (slow)
+**Symptom**: DeepFilterNet runs on CPU (slow)
 
 ```powershell
 # Check NVIDIA driver
 nvidia-smi
 
-# Verify Docker GPU support
-docker run --rm --gpus all nvidia/cuda:11.8-base nvidia-smi
+# Check PyTorch CUDA
+python -c "import torch; print(torch.cuda.is_available())"
+
+# Reinstall PyTorch with CUDA
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
-**Docker Compose GPU config** (add to service):
-```yaml
-deploy:
-  resources:
-    reservations:
-      devices:
-        - driver: nvidia
-          count: 1
-          capabilities: [gpu]
-```
+### Out of Memory (GPU)
 
-### Out of Memory
-
-**Symptom**: Container killed or `OOM` errors
+**Symptom**: `CUDA out of memory` error
 
 ```powershell
-# Reduce batch size
-docker compose run --rm ingestion python src/preprocessing/whisperx_align.py --batch --limit 5
+# Process fewer files at a time
+python src/preprocessing/denoise_audio.py --limit 5
 
-# Check Docker memory
-docker stats
+# Clear GPU memory
+python -c "import torch; torch.cuda.empty_cache()"
 
-# Increase Docker Desktop memory:
-# Settings → Resources → Memory
+# Use CPU fallback (slower but works)
+$env:CUDA_VISIBLE_DEVICES = ""
+python src/preprocessing/denoise_audio.py
 ```
 
-### GPU Memory Requirements
+### DeepFilterNet Installation Failed
 
-| Script | Min VRAM | Recommended |
-|--------|----------|-------------|
-| whisperx_align.py | 4GB | 8GB |
-| denoise_audio.py | 2GB | 4GB |
+**Symptom**: `deepfilternet` module not found
+
+```powershell
+# DeepFilterNet requires Rust compiler
+# Install from: https://rustup.rs/
+
+# Then install DeepFilterNet
+pip install deepfilternet
+
+# If still failing, use pre-built wheel
+pip install deepfilternet --only-binary=:all:
+```
+
+### Audio Quality Issues
+
+**Symptom**: Denoised audio sounds distorted
+
+**Solutions**:
+1. Original audio may be too noisy - check source quality
+2. Reduce denoising strength (modify script if needed)
+3. Skip denoising for already clean audio
+
+### Segment Duration Wrong
+
+**Symptom**: Segments are outside 2-25 second range
+
+```powershell
+# Check segment durations
+sqlite3 data/lab_data.db "SELECT segment_id, (end_ms - start_ms)/1000.0 as duration FROM segments ORDER BY duration DESC LIMIT 10;"
+
+# Re-process affected video
+python src/preprocessing/gemini_process.py --video-id VIDEO_ID
+```
+
+---
+
+## 6. DVC & Data Sync
+
+### DVC Push/Pull Fails
+
+**Symptom**: `ERROR: failed to push/pull`
+
+```powershell
+# Re-authenticate Google Drive
+python src/setup_gdrive_auth.py
+
+# Check DVC status
+dvc status
+
+# Verify remote configuration
+dvc remote list
+```
+
+### Credentials Missing
+
+**Symptom**: `Unable to authenticate` or credentials prompt
+
+```powershell
+# Check if credentials exist
+Test-Path "$HOME\.cache\pydrive2fs\credentials.json"
+
+# Run auth setup
+python src/setup_gdrive_auth.py
+
+# Follow browser prompts to authenticate
+```
+
+### Sync Conflicts
+
+**Symptom**: Local and remote data differ
+
+```powershell
+# Force pull (overwrite local)
+dvc pull --force
+
+# Or force push (overwrite remote - use with caution)
+dvc push --force
+```
+
+### Large File Upload Timeout
+
+**Symptom**: Push hangs on large files
+
+```powershell
+# Push with progress
+dvc push -v
+
+# Push specific files only
+dvc push data/segments.dvc
+```
+
+---
+
+## 7. Tailscale & Network
+
+### Tailscale Not Connected
+
+**Symptom**: Cannot reach remote machine
+
+```powershell
+# Check Tailscale status
+tailscale status
+
+# Re-authenticate
+tailscale login
+
+# Check if Tailscale service is running
+Get-Service Tailscale
+Start-Service Tailscale
+```
+
+### Cannot Access Streamlit via Tailscale
+
+**Symptom**: Connection refused when accessing via Tailscale IP
+
+**Solutions**:
+1. Start Streamlit with network binding:
+   ```powershell
+   streamlit run src/review_app.py --server.address 0.0.0.0
+   ```
+
+2. Check Windows Firewall:
+   ```powershell
+   # Allow Streamlit port
+   New-NetFirewallRule -DisplayName "Streamlit" -Direction Inbound -LocalPort 8501 -Protocol TCP -Action Allow
+   ```
+
+3. Check Tailscale ACLs (in Tailscale admin console)
+
+### Audio Server Not Accessible
+
+**Symptom**: Audio files don't load via Tailscale
+
+```powershell
+# Check audio server is running
+docker compose ps audio_server
+
+# Verify port is accessible
+curl http://localhost:8081/audio/
+
+# Check firewall for port 8081
+New-NetFirewallRule -DisplayName "AudioServer" -Direction Inbound -LocalPort 8081 -Protocol TCP -Action Allow
+```
 
 ---
 
 ## Quick Diagnostic Commands
 
 ```powershell
-# Service status
-docker compose ps
+# Environment check
+python --version
+pip list | Select-String "streamlit|torch|deepfilternet"
 
-# Database connectivity (port 5433)
-docker exec factory_ledger psql -U admin -d data_factory -c "SELECT 1;"
+# Database status
+sqlite3 data/lab_data.db "PRAGMA integrity_check;"
+sqlite3 data/lab_data.db "SELECT status, COUNT(*) FROM videos GROUP BY status;"
+sqlite3 data/lab_data.db "SELECT status, COUNT(*) FROM segments GROUP BY status;"
 
-# Audio server
-curl http://localhost:8081/audio/
+# Audio files
+(Get-ChildItem data/raw/audio/*.wav).Count
+(Get-ChildItem data/segments -Recurse -Filter *.wav).Count
 
-# Label Studio API
-curl http://localhost:8085/api/projects -H "Authorization: Token YOUR_TOKEN"
+# Streamlit check
+netstat -an | findstr "8501"
 
-# Sample states
-docker exec factory_ledger psql -U admin -d data_factory -c "SELECT processing_state, COUNT(*) FROM samples GROUP BY processing_state;"
+# Tailscale status
+tailscale status
+tailscale ip
 
-# Check Label Studio tasks
-docker exec factory_ledger psql -U admin -d data_factory -c "SELECT external_id, label_studio_task_id FROM samples WHERE label_studio_task_id IS NOT NULL;"
+# GPU status
+nvidia-smi
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 
-# Recent errors
-docker exec factory_ledger psql -U admin -d data_factory -c "SELECT * FROM processing_logs WHERE status='error' ORDER BY created_at DESC LIMIT 5;"
+# DVC status
+dvc status
+dvc remote list
 ```
+
+---
+
+## Common Error Messages
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `database is locked` | Multiple processes | Stop Streamlit before batch ops |
+| `no such table: videos` | Schema not initialized | Run `sqlite3 data/lab_data.db < init_scripts/sqlite_schema.sql` |
+| `GEMINI_API_KEY not found` | Missing env var | Add to `.env` file |
+| `429 Too Many Requests` | Rate limited | Wait or add more API keys |
+| `CUDA out of memory` | GPU overloaded | Reduce batch size or use CPU |
+| `ffmpeg not found` | FFmpeg not installed | `winget install ffmpeg` |
+| `Module not found` | Venv not activated | `.\.venv\Scripts\Activate.ps1` |
 
 ---
 
@@ -349,3 +509,4 @@ docker exec factory_ledger psql -U admin -d data_factory -c "SELECT * FROM proce
 - 📖 [Getting Started](01_getting_started.md) - Setup guide
 - 🏗️ [Architecture](02_architecture.md) - Pipeline overview
 - 🛠️ [Command Reference](03_command_reference.md) - All commands
+- ⚠️ [Known Caveats](06_known_caveats.md) - Limitations

@@ -8,170 +8,187 @@ Quick setup guide for the Vietnamese-English Code-Switching Speech Translation p
 
 | Requirement | Version | Purpose |
 |-------------|---------|---------|
-| Docker Desktop | Latest | Container runtime |
+| Python | 3.10+ | Runtime environment |
+| FFmpeg | Latest | Audio processing |
 | Git | 2.x+ | Version control |
-| NVIDIA GPU | 4GB+ VRAM | Preprocessing (optional) |
+| NVIDIA GPU | 4GB+ VRAM | DeepFilterNet denoising (optional) |
 
 ---
 
-## Architecture: Server-Client Model
+## Architecture Overview
 
-This project uses a **centralized server architecture** for team collaboration:
+This project uses a **lightweight local-first architecture** with optional remote access via Tailscale:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     SERVER (Your Main Desktop)                   │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │ PostgreSQL  │  │ Label Studio│  │ Audio Server│              │
-│  │  (5433)     │  │   (8085)    │  │   (8081)    │              │
-│  └─────────────┘  └─────────────┘  └─────────────┘              │
-│                           │                                      │
-│                    DVC ↔ Google Drive                           │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                    LOCAL MACHINE (Your Desktop)                   │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐               │
+│  │   SQLite    │  │  Streamlit  │  │ Audio Files │               │
+│  │ lab_data.db │  │   (8501)    │  │  data/raw/  │               │
+│  └─────────────┘  └─────────────┘  └─────────────┘               │
+│                           │                                       │
+│                    Tailscale (Optional)                           │
+│                    for remote access                              │
+└──────────────────────────────────────────────────────────────────┘
                             │
            ┌────────────────┼────────────────┐
            │                │                │
      ┌─────▼─────┐    ┌─────▼─────┐    ┌─────▼─────┐
-     │ Annotator │    │ Annotator │    │ Annotator │
+     │ Reviewer  │    │ Reviewer  │    │ Reviewer  │
      │ (Browser) │    │ (Browser) │    │ (Browser) │
      └───────────┘    └───────────┘    └───────────┘
-           Team members access via http://<server-ip>:8085
+           Access via Tailscale URL or localhost:8501
 ```
 
 **Benefits**:
-- ✅ Single source of truth (PostgreSQL on server)
-- ✅ Team annotates via browser - no local setup needed
-- ✅ Data auto-syncs to Google Drive via DVC
-- ✅ Server admin manages all processing
+- ✅ No Docker required for basic usage
+- ✅ SQLite database - portable, no server needed
+- ✅ Streamlit review app - intuitive web interface
+- ✅ Tailscale for secure remote access
+- ✅ Hourly backups to Google Drive
 
 ---
 
-## Quick Start - Server Setup (5 Minutes)
+## Quick Start (5 Minutes)
 
-### Option A: Automated Setup (Recommended)
-
-Run the setup script as Administrator:
+### 1. Run Setup Script
 
 ```powershell
-# Right-click PowerShell → "Run as Administrator"
-cd path\to\final_nlp
+# Clone the repository
+git clone <repo_url>
+cd final_nlp
+
+# Run setup (creates venv, installs deps, initializes DB)
 .\setup.ps1
 ```
 
 The script will:
-1. ✅ Check Docker Desktop is running
-2. ✅ Configure Windows Firewall for team access
-3. ✅ Create `.env` with your Gemini API key
-4. ✅ Start all Docker services
-5. ✅ Create Label Studio admin account
-6. ✅ Generate `TEAM_ACCESS.txt` with connection info
+1. ✅ Check Python and FFmpeg are installed
+2. ✅ Create virtual environment
+3. ✅ Install all dependencies
+4. ✅ Initialize SQLite database
+5. ✅ Configure Tailscale (optional, requires admin)
+6. ✅ Setup hourly backups to Google Drive
 
-After setup, share `TEAM_ACCESS.txt` with your team!
+### 2. Activate Environment
 
-### Option B: Manual Setup
-
-#### 1. Clone & Configure
+After setup, always activate the virtual environment first:
 
 ```powershell
-git clone <repo_url>
-cd final_nlp
-
-# Copy environment template
-Copy-Item .env.example .env
+.\.venv\Scripts\Activate.ps1
 ```
 
-#### 2. Start Services
+### 3. Set API Keys
 
-```powershell
-docker compose up -d
+Create a `.env` file with your Gemini API key:
+
+```dotenv
+GEMINI_API_KEY_1=AIzaSy...your-key-here...
+GEMINI_API_KEY_2=AIzaSy...optional-backup...
 ```
 
-Wait 30-60 seconds for initialization, then verify:
-
-```powershell
-docker compose ps
-```
-
-Expected output:
-```
-NAME              STATUS         PORTS
-audio_server      Up (healthy)   0.0.0.0:8081->80/tcp
-factory_ledger    Up (healthy)   0.0.0.0:5433->5432/tcp
-labelstudio       Up             0.0.0.0:8085->8085/tcp
-```
-
-#### 3. Setup Label Studio
-
-1. Open http://localhost:8085
-2. **Sign up** with email/password
-3. Enable legacy API tokens:
-   ```powershell
-   docker exec -it factory_ledger psql -U admin -d label_studio -c "UPDATE core_organization SET legacy_enabled = true WHERE id = 1;"
-   ```
-4. Get your API token:
-   - Click user icon → **Account & Settings** → **Access Token**
-   - Copy the **40-character hex string** (NOT the JWT)
-5. Update `.env`:
-   ```dotenv
-   LABEL_STUDIO_API_KEY=your_40_char_hex_token
-   ```
+Get your API key from: https://aistudio.google.com/app/apikey
 
 ---
 
-## Team Member Setup (For Annotators)
+## Complete Pipeline Walkthrough
 
-Team members don't need to install anything! Just:
-
-1. **Get connection info** from server admin (`TEAM_ACCESS.txt`)
-2. **Open browser** to `http://<server-ip>:8085`
-3. **Log in** with provided credentials or sign up
-4. **Start annotating!**
-
-### Troubleshooting Team Access
-
-| Issue | Solution |
-|-------|----------|
-| Can't connect | Check you're on same network as server |
-| Audio not playing | Allow autoplay in browser, or refresh |
-| Page loads slowly | Server may be processing - wait a moment |
-
----
-
-## Windows Firewall Configuration
-
-For team members to access your server, ensure these firewall rules exist:
+### Step 1: Ingest YouTube Videos
 
 ```powershell
-# Run as Administrator
-New-NetFirewallRule -DisplayName "Label Studio (Team Access)" -Direction Inbound -Protocol TCP -LocalPort 8085 -Action Allow -Profile Private,Domain
-New-NetFirewallRule -DisplayName "Audio Server (Team Access)" -Direction Inbound -Protocol TCP -LocalPort 8081 -Action Allow -Profile Private,Domain
+# Single video
+python src/ingest_youtube.py "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Multiple videos
+python src/ingest_youtube.py "URL1" "URL2" "URL3"
+
+# Re-ingest from existing metadata
+python src/ingest_youtube.py --skip-download
 ```
 
-The `setup.ps1` script does this automatically.
+### Step 2: Denoise Audio (Optional)
+
+```powershell
+# Denoise all pending videos
+python src/preprocessing/denoise_audio.py --all
+
+# Denoise specific video
+python src/preprocessing/denoise_audio.py --video-id VIDEO_ID
+```
+
+### Step 3: Process with Gemini
+
+```powershell
+# Process all pending videos
+python src/preprocessing/gemini_process.py --all
+
+# Process specific video
+python src/preprocessing/gemini_process.py --video-id VIDEO_ID
+```
+
+### Step 4: Review Segments
+
+```powershell
+# Start the Streamlit review app
+streamlit run src/review_app.py
+```
+
+Open http://localhost:8501 in your browser to:
+- View segments with waveform visualization
+- Edit transcript and translation
+- Split long segments (>25s)
+- Approve or reject segments
+- Upload raw audio files for processing
+
+### Step 5: Export Dataset
+
+```powershell
+# Export approved segments
+python src/export_final.py
+
+# Export specific video
+python src/export_final.py --video-id VIDEO_ID
+```
+
+Output: `data/export/audio/` + `data/export/manifest.tsv`
 
 ---
 
-## Credentials Reference
+## Remote Access with Tailscale
 
-### Database (Pre-configured)
+For team members to access your Streamlit app remotely:
 
-| Variable | Default Value |
-|----------|---------------|
-| `POSTGRES_USER` | `admin` |
-| `POSTGRES_PASSWORD` | `secret_password` |
-| `DATABASE_URL` | `postgresql://admin:secret_password@localhost:5433/data_factory` |
+### Server Setup
 
-> **Note**: Use port 5433 for external access (from host), port 5432 for internal Docker access.
+```powershell
+# Run setup with Tailscale configuration (requires admin)
+.\setup.ps1
+```
 
-### Label Studio API Key
+Or manually:
 
-1. Open http://localhost:8085
-2. User icon → **Account & Settings** → **Access Token**
-3. Copy hex string (e.g., `8a467af13f65511a4f8cc9dd93dff4fe847477e0`)
+```powershell
+# Install Tailscale
+winget install Tailscale.Tailscale
 
-> ⚠️ **Do NOT** copy the JWT token (starts with `eyJ...`)
+# Login and connect
+tailscale up
 
-### Gemini API Keys
+# Expose Streamlit via HTTPS
+tailscale serve https / http://127.0.0.1:8501
+```
+
+### Team Member Access
+
+1. Install Tailscale on your device
+2. Join the same Tailscale network
+3. Access via `https://<machine-name>.<tailnet-name>.ts.net`
+
+---
+
+## API Keys Reference
+
+### Gemini API Key
 
 1. Go to https://aistudio.google.com/app/apikey
 2. Click **Create API Key**
@@ -181,70 +198,60 @@ The `setup.ps1` script does this automatically.
    GEMINI_API_KEY_2=AIzaSy...  # Optional backup
    ```
 
-### DVC / Google Drive
+### DVC / Google Drive (Optional)
+
+For data versioning with DVC:
 
 ```powershell
-# Run OAuth flow (opens browser)
-docker compose run --rm ingestion python src/setup_gdrive_auth.py
+# Initialize DVC remote
+dvc remote add -d gdrive gdrive://<folder-id>
 
-# For team members: get credentials.json from project owner
-mkdir -Force "$HOME\.cache\pydrive2fs"
-Copy-Item "path\to\credentials.json" "$HOME\.cache\pydrive2fs\credentials.json"
+# Run OAuth flow
+python src/setup_gdrive_auth.py
 ```
 
 ---
 
 ## Service Ports
 
-| Service | Port | URL | Access |
-|---------|------|-----|--------|
-| PostgreSQL | 5433 | `localhost:5433` | Server only |
-| Label Studio | 8085 | http://localhost:8085 | Server + Team |
-| Audio Server | 8081 | http://localhost:8081 | Server + Team |
-
-> **Note**: PostgreSQL uses port 5433 (not 5432) to avoid conflicts with local installations.
+| Service | Port | URL |
+|---------|------|-----|
+| Streamlit | 8501 | http://localhost:8501 |
+| Audio Server (Docker) | 8081 | http://localhost:8081 |
 
 ---
 
-## Complete `.env` Template
+## Environment File Template
 
 ```dotenv
 # =============================================================================
-# Database Configuration
-# =============================================================================
-DATABASE_URL=postgresql://admin:secret_password@localhost:5433/data_factory
-
-# =============================================================================
-# Label Studio Configuration
-# =============================================================================
-LABEL_STUDIO_URL=http://localhost:8085
-LABEL_STUDIO_API_KEY=your_40_char_hex_token
-
-# Project ID for unified review (transcription + translation)
-LS_PROJECT_UNIFIED_REVIEW=1
-
-# =============================================================================
 # Gemini API Keys (for audio transcription/translation)
 # =============================================================================
-GEMINI_API_KEY_1=
-GEMINI_API_KEY_2=
+GEMINI_API_KEY_1=AIzaSy...
+GEMINI_API_KEY_2=AIzaSy...  # Optional backup
 
 # =============================================================================
-# Audio Server
+# Optional: Override default paths
 # =============================================================================
-AUDIO_SERVER_URL=http://localhost:8081
+# DB_PATH=data/lab_data.db
+# AUDIO_DIR=data/raw/audio
+# DENOISED_DIR=data/denoised
 ```
 
 ---
 
-## Test the Pipeline
+## Verify Installation
 
 ```powershell
-# Ingest a YouTube video
-docker compose run --rm ingestion python src/ingest_youtube.py "https://www.youtube.com/watch?v=VIDEO_ID"
+# Check Python environment
+python --version
+pip list | Select-String "streamlit|pydub|google"
 
 # Check database
-docker exec factory_ledger psql -U admin -d data_factory -c "SELECT external_id, processing_state FROM samples;"
+python -c "from src.db import init_database; print('DB module OK')"
+
+# Start Streamlit
+streamlit run src/review_app.py
 ```
 
 ---
@@ -252,5 +259,6 @@ docker exec factory_ledger psql -U admin -d data_factory -c "SELECT external_id,
 ## Next Steps
 
 - 📖 [Architecture & Workflow](02_architecture.md) - Understand the pipeline
-- 🛠️ [Command Reference](03_command_reference.md) - All available commands
+- 🛠️ [Command Reference](03_command_reference.md) - All available commands  
 - 🔧 [Troubleshooting](04_troubleshooting.md) - Common issues
+- 📚 [API Reference](05_api_reference.md) - Developer documentation

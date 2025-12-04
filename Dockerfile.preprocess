@@ -43,10 +43,10 @@ WORKDIR /app
 
 # Core dependencies first
 RUN pip install --no-cache-dir \
-    # Database
-    psycopg2-binary \
     # API
     google-generativeai \
+    # Streamlit for review app
+    streamlit>=1.28.0 \
     # Audio processing
     librosa \
     soundfile \

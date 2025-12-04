@@ -4,54 +4,101 @@ All notable changes to the Vietnamese-English Code-Switching Speech Translation 
 
 ---
 
-## [Unreleased]
+## [2025-01-15] - SQLite + Streamlit Migration
+
+### 🔄 Major Architecture Change
+
+Migrated from PostgreSQL + Label Studio to a simplified SQLite + Streamlit stack.
 
 ### Added
 
-#### Unified Review System
-- **`prepare_review_audio.py`**: Pre-cut sentence audio for Label Studio review
-  - Creates `data/review/{sample_id}/sentences/{idx:04d}.wav` with 0.2s padding
-  - Groups sentences into review chunks (default 15 per task)
-  - Transitions: TRANSLATED → REVIEW_PREPARED
-  
-- **`apply_review.py`**: Apply corrections from unified review
-  - Re-cuts audio with reviewed timestamps (or original if unchanged)
-  - Creates `data/final/{sample_id}/sentences/` with TSV manifest
-  - Cleans up review audio after successful apply
-  - Transitions: REVIEW_PREPARED → FINAL
+#### New Core Components
+- **`src/db.py`**: SQLite database utilities
+  - Connection management with WAL mode
+  - Context managers with auto-commit/rollback
+  - Full CRUD operations for videos and segments
+  - Segment splitting, review updates, statistics
+  - JSON validation for manual uploads
 
-- **`unified_review.xml`**: Single Label Studio template for all review tasks
-  - Paragraphs tag with `contextScroll="true"` for audio region playback
-  - Sentence-level audio with individual playback controls
-  - Editable transcript, translation, and timing per sentence
-  - Delete sentence option for bad segments
+- **`src/review_app.py`**: Streamlit review interface
+  - Video selection with progress tracking
+  - Segment-by-segment review with audio playback
+  - Edit transcript, translation, and timestamps
+  - Segment splitting for long segments
+  - Approve/reject controls
 
-- **Database Schema (`02_review_system_migration.sql`)**:
-  - `REVIEW_PREPARED` processing state
-  - `review_chunks` table (sample_id, chunk_index, sentence range, ls_task_id)
-  - `sentence_reviews` table (corrections per sentence)
-  - Helper functions: `create_review_chunk()`, `save_sentence_review()`, `check_chunk_completion()`
+- **`src/export_final.py`**: Dataset export
+  - Export reviewed segments with audio slices
+  - Manifest generation with statistics
+  - State transition to `exported`
 
-- **Nginx location blocks** for `/review/` and `/final/` audio serving
+- **`init_scripts/sqlite_schema.sql`**: SQLite schema
+  - `videos` table with processing states
+  - `segments` table with review fields
+  - Views: `v_video_progress`, `v_long_segments`, `v_export_ready`
+  - Triggers for automatic timestamps
+
+- **`setup.ps1`**: Unified setup script
+  - Python virtual environment setup
+  - Dependency installation
+  - SQLite database initialization
+  - Tailscale configuration for team access
+  - Optional scheduled backup task
 
 ### Changed
-- **`label_studio_sync.py`**: Complete rewrite for unified review workflow (v2)
-  - Commands: `push unified_review`, `pull unified_review`, `reopen`, `status`
-  - Creates Paragraphs predictions with sentence boundaries
-  - Extracts sentence-level corrections from annotations
-  
-- **`export_reviewed.py`**: Updated for FINAL state workflow (v2)
-  - Exports from `data/final/` instead of database exports
-  - Generates TSV manifest + metadata.json per sample
-  - Supports `--sample-id` and `--batch` modes
 
-- Simplified processing states: RAW → TRANSLATED → REVIEW_PREPARED → FINAL
+#### Renamed Files
+- `gemini_process_v2.py` → `gemini_process.py`
+- `denoise_audio_v2.py` → `denoise_audio.py`
 
-### Deprecated
-- Legacy 3-stage review workflow (transcript → segment → translation)
-- Old Label Studio templates archived to `label_studio_templates/archive/`
-- Old sync script backed up to `label_studio_sync_v1.py`
-- Old export script backed up to `export_reviewed_v1.py`
+#### Updated Files
+- **`Dockerfile.ingest`**: Removed psycopg2, added streamlit
+- **`Dockerfile.preprocess`**: Removed psycopg2, added streamlit
+- **`dvc.yaml`**: Updated pipeline stages for new scripts
+- **`requirements.txt`**: SQLite-based dependencies
+
+#### Processing States
+Old: `RAW` → `TRANSLATED` → `REVIEW_PREPARED` → `FINAL`
+New: `pending` → `transcribed` → `reviewed` → `exported`
+
+### Removed
+
+#### Deleted Scripts
+- `src/db_backup.py` (PostgreSQL backup)
+- `src/db_restore.py` (PostgreSQL restore)
+- `src/export_reviewed.py` (Label Studio export)
+- `src/label_studio_sync.py` (Label Studio sync)
+- `src/sync_daemon.py` (PostgreSQL sync daemon)
+- `src/preprocessing/prepare_review_audio.py`
+- `src/preprocessing/apply_review.py`
+- `src/preprocessing/gemini_repair_translation.py`
+- `src/utils/data_utils.py` (PostgreSQL utilities)
+- `src/utils/transcript_downloading_utils.py`
+
+#### Deleted Folders
+- `init_scripts/00_create_label_studio_db.sql`
+- `init_scripts/01_schema.sql`
+- `label_studio_templates/` (entire directory)
+- `database_data/` (PostgreSQL data directory)
+
+### Documentation
+
+All documentation rewritten for SQLite + Streamlit workflow:
+- `README.md`: New quick start and feature overview
+- `docs/01_getting_started.md`: Tailscale setup, .env configuration
+- `docs/02_architecture.md`: New pipeline diagram, SQLite schema
+- `docs/03_command_reference.md`: Updated command examples
+- `docs/04_troubleshooting.md`: SQLite and Streamlit issues
+- `docs/05_api_reference.md`: db.py API documentation
+- `docs/06_known_caveats.md`: SQLite limitations
+
+### Why This Change?
+
+1. **Simplified Deployment**: No Docker required for core workflow
+2. **Portable Database**: Single SQLite file, easy backup/sync
+3. **Integrated Review**: Streamlit UI runs alongside processing
+4. **Team Access**: Tailscale for secure remote access
+5. **Reduced Complexity**: Fewer moving parts, easier debugging
 
 ---
 
@@ -141,47 +188,35 @@ All notable changes to the Vietnamese-English Code-Switching Speech Translation 
 
 ## Project Status
 
-### Completed ✅
-- YouTube ingestion pipeline
-- Database schema with versioned revisions
-- **Unified Label Studio review system (NEW)**
-  - 15 sentences per task
-  - Sentence-level audio playback
-  - Transcript + Translation + Timing corrections
-- Gemini unified processing (transcription + translation)
-- DVC data versioning with Google Drive
-- Training data export pipeline
-
-### Optional Preprocessing
-- WhisperX alignment (if needed)
-- DeepFilterNet denoising (if needed)
-
-### Planned 📋
-- Training pipeline implementation
-- Data augmentation at training time
-- Evaluation metrics and monitoring
-- Model fine-tuning
-
----
-
-## Technical Stack
+### Current Architecture ✅
 
 | Component | Technology |
 |-----------|------------|
-| Database | PostgreSQL 15 |
-| Annotation | Label Studio |
-| Transcription | Gemini 2.5 Flash/Pro |
-| Translation | Gemini 2.5 Flash/Pro |
-| Alignment | WhisperX + wav2vec2-vi |
-| Denoising | DeepFilterNet3 |
+| Database | SQLite (WAL mode) |
+| Review UI | Streamlit |
+| Transcription | Gemini 2.5 Pro |
+| Translation | Gemini 2.5 Pro |
+| Denoising | DeepFilterNet |
+| Team Access | Tailscale |
 | Data Versioning | DVC + Google Drive |
-| Containerization | Docker Compose |
+| Audio Specs | 16kHz, Mono, WAV |
 
----
+### Pipeline Stages
 
-## GPU Requirements
+1. **Ingestion**: YouTube → Audio + Transcript → SQLite (`pending`)
+2. **Denoising**: DeepFilterNet noise removal
+3. **Processing**: Gemini transcription + translation (`transcribed`)
+4. **Review**: Streamlit human review (`reviewed`)
+5. **Export**: Final dataset generation (`exported`)
+
+### GPU Requirements
 
 | Script | Min VRAM | Recommended |
 |--------|----------|-------------|
-| whisperx_align.py | 4GB | 8GB |
 | denoise_audio.py | 2GB | 4GB |
+
+### Planned 📋
+- Multi-user review support
+- Automatic quality metrics
+- Training pipeline integration
+- Model fine-tuning workflow

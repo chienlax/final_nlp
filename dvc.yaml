@@ -1,35 +1,31 @@
 # DVC Pipeline Configuration
 # Vietnamese-English Code-Switching Speech Translation Pipeline
 #
-# Data tracked separately via `dvc add`:
-#   - data/raw.dvc: Raw audio and text files
-#   - data/db_sync.dvc: PostgreSQL database exports for sync
+# Data tracked via `dvc add`:
+#   - data/raw.dvc: Raw audio files from YouTube
 #
 # Stages for processing pipelines (run with `dvc repro`):
-#   - export_reviewed: Export human-reviewed samples to structured output
+#   - export_final: Export approved segments to HuggingFace dataset format
+#
+# Updated: December 2025 (SQLite + Streamlit workflow)
 
 stages:
-  # Export reviewed samples to data/reviewed/ directory
-  export_reviewed:
-    cmd: python src/export_reviewed.py
+  # Export approved segments to data/export/ directory
+  export_final:
+    cmd: python src/export_final.py
     deps:
-      - src/export_reviewed.py
-      - src/utils/data_utils.py
+      - src/export_final.py
+      - src/db.py
+      - data/lab_data.db
     outs:
-      - data/reviewed:
+      - data/export:
           cache: true
           persist: true
-    # Run after each review session or on schedule
-    # Manual trigger: dvc repro export_reviewed
+    # Run after review session to generate training data
+    # Manual trigger: dvc repro export_final
 
 # Plots configuration for tracking metrics (optional)
 # plots:
-#   - data/reviewed/manifest.json:
-#       x: task_types
-#       y: total_samples
-
-# Parameters (can be overridden via params.yaml)
-# params:
-#   - params.yaml:
-#       - export.task_type
-#       - export.limit
+#   - data/export/manifest.tsv:
+#       x: duration_ms
+#       y: count

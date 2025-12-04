@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """
-DeepFilterNet Noise Removal Script.
+DeepFilterNet Noise Removal Script (SQLite Version).
 
-Removes background noise from audio segments using DeepFilterNet.
+Removes background noise from audio files using DeepFilterNet.
 Does NOT enhance or upscale audio - only removes noise.
 
-Pipeline Stage: TRANSLATION_REVIEW (verified) → DENOISED
+Pipeline Stage: ingested → denoised
 
 Usage:
-    python denoise_audio.py --sample-id <uuid>
-    python denoise_audio.py --batch --limit 10
+    python denoise_audio.py --video-id <id>
+    python denoise_audio.py --all
+
+Changes:
+    - Simplified for SQLite-based pipeline
+    - Denoises full audio files (not segments)
+    - Updates processing_state in videos table
 
 Requirements:
     - deepfilternet package (pip install deepfilternet)
@@ -17,57 +22,60 @@ Requirements:
 """
 
 import argparse
-import shutil
+import logging
 import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import psycopg2
-from psycopg2.extras import Json, RealDictCursor
-
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.data_utils import get_pg_connection, log_processing
+from db import get_connection
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-# Audio settings (must match pipeline standard)
-SAMPLE_RATE = 16000
+SAMPLE_RATE = 16000  # 16kHz as per project standard
 AUDIO_FORMAT = "wav"
-
-# DeepFilterNet settings
-# Using DeepFilterNet3 (DF3) model - best quality/speed balance
 DEEPFILTER_MODEL = "DeepFilterNet3"
+
+DEFAULT_DB_PATH = Path(__file__).parent.parent.parent / "data" / "lab_data.db"
+DENOISED_DIR = Path(__file__).parent.parent.parent / "data" / "denoised"
 
 
 # =============================================================================
 # DENOISING FUNCTIONS
 # =============================================================================
 
-def load_deepfilter_model() -> Any:
+def load_deepfilter_model() -> tuple:
     """
     Load DeepFilterNet model.
 
     Returns:
-        DeepFilterNet model and df_state.
+        Tuple of (model, df_state).
 
     Raises:
         ImportError: If deepfilternet is not installed.
     """
     try:
-        from df.enhance import enhance, init_df, load_audio, save_audio
+        from df.enhance import init_df
     except ImportError as e:
         raise ImportError(
             "deepfilternet is required. Install with: pip install deepfilternet"
         ) from e
 
-    print(f"[INFO] Loading DeepFilterNet model: {DEEPFILTER_MODEL}")
+    logger.info(f"Loading DeepFilterNet model: {DEEPFILTER_MODEL}")
     model, df_state, _ = init_df()
+    logger.info("Model loaded successfully!")
 
     return model, df_state
 
@@ -127,474 +135,301 @@ def denoise_audio_file(
     }
 
 
-def denoise_segments(
-    segments: List[Dict[str, Any]],
-    data_root: Path,
-    output_root: Path,
-    model: Any,
-    df_state: Any
-) -> List[Dict[str, Any]]:
-    """
-    Denoise all segments for a sample.
-
-    Args:
-        segments: List of segment dicts with audio_file_path.
-        data_root: Root directory for input data.
-        output_root: Root directory for denoised output.
-        model: DeepFilterNet model.
-        df_state: DeepFilterNet state.
-
-    Returns:
-        List of results for each segment.
-    """
-    results = []
-
-    for segment in segments:
-        segment_id = str(segment["segment_id"])
-        input_path = data_root / segment["audio_file_path"]
-
-        # Build output path (maintain same structure)
-        relative_path = Path(segment["audio_file_path"])
-        output_path = output_root / relative_path
-
-        try:
-            result = denoise_audio_file(input_path, output_path, model, df_state)
-            result["segment_id"] = segment_id
-            result["segment_index"] = segment.get("segment_index")
-            result["success"] = True
-            results.append(result)
-
-            print(f"  Segment {segment.get('segment_index', '?')}: "
-                  f"{result['duration_seconds']}s -> {result['processing_time_seconds']}s "
-                  f"({result['realtime_factor']}x realtime)")
-
-        except Exception as e:
-            results.append({
-                "segment_id": segment_id,
-                "segment_index": segment.get("segment_index"),
-                "success": False,
-                "error": str(e)
-            })
-            print(f"  Segment {segment.get('segment_index', '?')}: FAILED - {e}")
-
-    return results
-
-
 # =============================================================================
 # DATABASE FUNCTIONS
 # =============================================================================
 
-def get_samples_for_denoising(limit: int = 10) -> List[Dict[str, Any]]:
+def get_videos_for_denoising(db_path: Path) -> List[Dict[str, Any]]:
     """
-    Get samples ready for denoising (translations reviewed).
-
-    We denoise after translation review but before final state.
-    State should be after TRANSLATION_REVIEW is complete.
+    Get videos ready for denoising (state = 'ingested').
 
     Args:
-        limit: Maximum number of samples to return.
+        db_path: Path to SQLite database.
 
     Returns:
-        List of sample dictionaries with segment info.
+        List of video dictionaries.
     """
-    conn = get_pg_connection()
-
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Get samples where translation has been reviewed
-            # In this schema, we'll check for samples in TRANSLATION_REVIEW state
-            # that have verified translations
-            cur.execute(
-                """
-                SELECT 
-                    s.sample_id,
-                    s.external_id,
-                    s.audio_file_path,
-                    s.duration_seconds,
-                    (
-                        SELECT json_agg(
-                            json_build_object(
-                                'segment_id', seg.segment_id,
-                                'segment_index', seg.segment_index,
-                                'audio_file_path', seg.audio_file_path,
-                                'duration_ms', seg.duration_ms
-                            ) ORDER BY seg.segment_index
-                        )
-                        FROM segments seg
-                        WHERE seg.sample_id = s.sample_id
-                          AND seg.is_verified = TRUE
-                    ) AS segments
-                FROM samples s
-                WHERE s.processing_state = 'TRANSLATION_REVIEW'
-                  AND s.is_deleted = FALSE
-                  AND EXISTS (
-                      SELECT 1 FROM segment_translations st
-                      JOIN segments seg ON st.segment_id = seg.segment_id
-                      WHERE seg.sample_id = s.sample_id
-                        AND st.is_verified = TRUE
-                  )
-                ORDER BY s.priority DESC, s.created_at ASC
-                LIMIT %s
-                """,
-                (limit,)
-            )
-            return [dict(row) for row in cur.fetchall()]
-    finally:
-        conn.close()
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT video_id, url, title, audio_path, duration_seconds
+        FROM videos
+        WHERE processing_state = 'ingested'
+        ORDER BY created_at ASC
+    """)
+    
+    columns = [desc[0] for desc in cursor.description]
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(zip(columns, row)) for row in rows]
 
 
-def update_segment_paths(
-    segment_results: List[Dict[str, Any]],
-    executor: str = "denoise_audio"
-) -> None:
+def get_video_by_id(db_path: Path, video_id: str) -> Optional[Dict[str, Any]]:
     """
-    Update segment audio paths after denoising.
-
-    Note: In practice, you might want to keep both original and denoised paths.
-    For now, we'll add a 'denoised_audio_path' or update the main path.
+    Get a specific video by ID.
 
     Args:
-        segment_results: List of denoising results.
-        executor: Name of executor for logging.
+        db_path: Path to SQLite database.
+        video_id: Video ID to fetch.
+
+    Returns:
+        Video dictionary or None.
     """
-    conn = get_pg_connection()
-
-    try:
-        with conn.cursor() as cur:
-            for result in segment_results:
-                if not result.get("success"):
-                    continue
-
-                segment_id = result["segment_id"]
-                denoised_path = result["output_path"]
-
-                # Update segment with denoised path
-                # Option 1: Replace audio_file_path
-                # Option 2: Add to metadata (we'll use metadata approach)
-                cur.execute(
-                    """
-                    UPDATE segments
-                    SET audio_file_path = %s,
-                        updated_at = NOW()
-                    WHERE segment_id = %s
-                    """,
-                    (denoised_path, segment_id)
-                )
-
-            conn.commit()
-    except psycopg2.Error as e:
-        conn.rollback()
-        raise Exception(f"Failed to update segment paths: {e}")
-    finally:
-        conn.close()
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT video_id, url, title, audio_path, duration_seconds, processing_state
+        FROM videos
+        WHERE video_id = ?
+    """, (video_id,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return None
+    
+    columns = ["video_id", "url", "title", "audio_path", "duration_seconds", "processing_state"]
+    return dict(zip(columns, row))
 
 
-def transition_to_denoised(
-    sample_id: str,
-    denoising_metadata: Dict[str, Any],
-    executor: str = "denoise_audio"
+def update_video_denoised(
+    db_path: Path,
+    video_id: str,
+    denoised_path: str
 ) -> None:
     """
-    Transition sample to DENOISED state.
+    Update video with denoised audio path and transition state.
 
     Args:
-        sample_id: UUID of the sample.
-        denoising_metadata: Denoising processing metadata.
-        executor: Name of executor for logging.
+        db_path: Path to SQLite database.
+        video_id: Video ID to update.
+        denoised_path: Path to denoised audio file.
     """
-    conn = get_pg_connection()
-
-    try:
-        with conn.cursor() as cur:
-            # Update processing metadata
-            cur.execute(
-                """
-                UPDATE samples 
-                SET processing_metadata = processing_metadata || %s
-                WHERE sample_id = %s
-                """,
-                (Json({"deepfilternet": denoising_metadata}), sample_id)
-            )
-
-            # Transition state
-            cur.execute(
-                "SELECT transition_sample_state(%s, 'DENOISED'::processing_state, %s)",
-                (sample_id, executor)
-            )
-
-            conn.commit()
-
-    except psycopg2.Error as e:
-        conn.rollback()
-        raise Exception(f"Failed to transition state: {e}")
-    finally:
-        conn.close()
+    conn = get_connection(db_path)
+    cursor = conn.cursor()
+    
+    # Update audio_path to denoised version and change state
+    cursor.execute("""
+        UPDATE videos
+        SET audio_path = ?,
+            processing_state = 'denoised',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE video_id = ?
+    """, (denoised_path, video_id))
+    
+    conn.commit()
+    conn.close()
 
 
-def process_sample(
-    sample: Dict[str, Any],
+# =============================================================================
+# PROCESSING FUNCTIONS
+# =============================================================================
+
+def process_video(
+    video: Dict[str, Any],
     model: Any,
     df_state: Any,
-    data_root: Path,
-    output_root: Path
+    db_path: Path,
+    output_dir: Path
 ) -> bool:
     """
-    Process a single sample for denoising.
+    Process a single video for denoising.
 
     Args:
-        sample: Sample dictionary from database.
+        video: Video dictionary from database.
         model: DeepFilterNet model.
         df_state: DeepFilterNet state.
-        data_root: Root directory for input data.
-        output_root: Root directory for denoised output.
+        db_path: Path to SQLite database.
+        output_dir: Directory for denoised output.
 
     Returns:
         True if successful, False otherwise.
     """
-    sample_id = str(sample["sample_id"])
-    external_id = sample["external_id"]
-    segments = sample.get("segments") or []
-
-    print(f"\n{'='*60}")
-    print(f"Processing: {external_id}")
-    print(f"Sample ID: {sample_id}")
-    print(f"Segments: {len(segments)}")
-    print(f"{'='*60}")
-
-    if not segments:
-        print(f"[SKIP] No verified segments found")
-        return False
-
-    start_time = time.time()
-
+    video_id = video["video_id"]
+    audio_path = Path(video["audio_path"])
+    
+    logger.info(f"Processing: {video_id}")
+    logger.info(f"  Title: {video.get('title', 'Unknown')[:50]}")
+    logger.info(f"  Input: {audio_path}")
+    
+    # Build output path
+    output_path = output_dir / f"{video_id}_denoised.wav"
+    
     try:
-        # Denoise all segments
-        print(f"[INFO] Denoising {len(segments)} segments...")
-        results = denoise_segments(
-            segments=segments,
-            data_root=data_root,
-            output_root=output_root,
-            model=model,
-            df_state=df_state
-        )
-
-        # Check results
-        successful = [r for r in results if r.get("success")]
-        failed = [r for r in results if not r.get("success")]
-
-        if not successful:
-            raise ValueError(f"All {len(results)} segments failed to denoise")
-
-        if failed:
-            print(f"[WARNING] {len(failed)} segments failed")
-
+        result = denoise_audio_file(audio_path, output_path, model, df_state)
+        
+        logger.info(f"  Duration: {result['duration_seconds']}s")
+        logger.info(f"  Processing: {result['processing_time_seconds']}s ({result['realtime_factor']}x realtime)")
+        logger.info(f"  Output: {output_path}")
+        
         # Update database
-        print(f"[INFO] Updating segment paths in database...")
-        update_segment_paths(successful)
-
-        # Calculate aggregate stats
-        total_audio_duration = sum(r.get("duration_seconds", 0) for r in successful)
-        total_processing_time = sum(r.get("processing_time_seconds", 0) for r in successful)
-        avg_realtime = total_audio_duration / total_processing_time if total_processing_time > 0 else 0
-
-        denoising_metadata = {
-            "model": DEEPFILTER_MODEL,
-            "segments_processed": len(successful),
-            "segments_failed": len(failed),
-            "total_audio_duration_seconds": round(total_audio_duration, 2),
-            "total_processing_time_seconds": round(total_processing_time, 2),
-            "average_realtime_factor": round(avg_realtime, 2)
-        }
-
-        # Transition state
-        print(f"[INFO] Transitioning to DENOISED state...")
-        transition_to_denoised(sample_id, denoising_metadata)
-
-        execution_time_ms = int((time.time() - start_time) * 1000)
-
-        # Log success
-        log_processing(
-            operation="deepfilternet_denoising",
-            success=True,
-            sample_id=sample_id,
-            previous_state="TRANSLATION_REVIEW",
-            new_state="DENOISED",
-            executor="denoise_audio",
-            execution_time_ms=execution_time_ms,
-            input_params={
-                "segment_count": len(segments),
-                "model": DEEPFILTER_MODEL
-            },
-            output_summary=denoising_metadata
-        )
-
-        print(f"[SUCCESS] Denoised {external_id}")
-        print(f"  Segments: {len(successful)}/{len(segments)}")
-        print(f"  Audio: {total_audio_duration:.1f}s")
-        print(f"  Processing: {total_processing_time:.1f}s ({avg_realtime:.1f}x realtime)")
-
+        update_video_denoised(db_path, video_id, str(output_path))
+        
+        logger.info(f"  ✓ Denoising complete!")
         return True
-
+        
     except Exception as e:
-        execution_time_ms = int((time.time() - start_time) * 1000)
-
-        # Log failure
-        log_processing(
-            operation="deepfilternet_denoising",
-            success=False,
-            sample_id=sample_id,
-            previous_state="TRANSLATION_REVIEW",
-            executor="denoise_audio",
-            execution_time_ms=execution_time_ms,
-            error_message=str(e)
-        )
-
-        print(f"[ERROR] Failed to denoise {external_id}: {e}")
+        logger.error(f"  ✗ Failed: {e}")
         return False
 
 
+def run_batch_denoising(
+    db_path: Path,
+    output_dir: Path,
+    limit: Optional[int] = None
+) -> Dict[str, int]:
+    """
+    Run denoising on all pending videos.
+
+    Args:
+        db_path: Path to SQLite database.
+        output_dir: Directory for denoised output.
+        limit: Maximum number of videos to process.
+
+    Returns:
+        Dictionary with processing statistics.
+    """
+    stats = {"processed": 0, "failed": 0, "skipped": 0}
+    
+    # Get videos to process
+    videos = get_videos_for_denoising(db_path)
+    
+    if limit:
+        videos = videos[:limit]
+    
+    if not videos:
+        logger.info("No videos pending denoising.")
+        return stats
+    
+    logger.info(f"Found {len(videos)} videos to denoise")
+    
+    # Load model once
+    try:
+        model, df_state = load_deepfilter_model()
+    except ImportError as e:
+        logger.error(f"Cannot load DeepFilterNet: {e}")
+        logger.error("Install with: pip install deepfilternet")
+        return stats
+    
+    # Ensure output directory exists
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Process each video
+    for i, video in enumerate(videos, 1):
+        logger.info(f"\n[{i}/{len(videos)}] {'=' * 40}")
+        
+        success = process_video(video, model, df_state, db_path, output_dir)
+        
+        if success:
+            stats["processed"] += 1
+        else:
+            stats["failed"] += 1
+    
+    return stats
+
+
 # =============================================================================
-# MAIN
+# CLI INTERFACE
 # =============================================================================
 
-def main() -> None:
-    """Main entry point for denoising."""
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Remove background noise from audio using DeepFilterNet",
+        description="Denoise audio files using DeepFilterNet",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Denoise a specific sample
-    python denoise_audio.py --sample-id 123e4567-e89b-12d3-a456-426614174000
-
-    # Process batch of samples
-    python denoise_audio.py --batch --limit 10
-
-    # Specify directories
-    python denoise_audio.py --batch --data-root /app/data --output-root /app/data/denoised
+    # Denoise all pending videos
+    python denoise_audio.py --all
+    
+    # Denoise a specific video
+    python denoise_audio.py --video-id VIDEO_ID
+    
+    # Process with limit
+    python denoise_audio.py --all --limit 5
         """
     )
+    
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        '--video-id',
+        type=str,
+        help='Denoise a specific video by ID'
+    )
+    group.add_argument(
+        '--all',
+        action='store_true',
+        help='Denoise all pending videos'
+    )
+    
     parser.add_argument(
-        "--sample-id",
-        help="UUID of specific sample to denoise"
+        '--db',
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help=f'Path to SQLite database (default: {DEFAULT_DB_PATH})'
     )
     parser.add_argument(
-        "--batch",
-        action="store_true",
-        help="Process batch of samples with verified translations"
+        '--output',
+        type=Path,
+        default=DENOISED_DIR,
+        help=f'Output directory for denoised audio (default: {DENOISED_DIR})'
     )
     parser.add_argument(
-        "--limit",
+        '--limit',
         type=int,
-        default=10,
-        help="Maximum number of samples to process in batch mode (default: 10)"
-    )
-    parser.add_argument(
-        "--data-root",
-        type=Path,
-        default=Path("/app/data"),
-        help="Root directory for input data files (default: /app/data)"
-    )
-    parser.add_argument(
-        "--output-root",
-        type=Path,
         default=None,
-        help="Root directory for denoised output (default: same as data-root)"
+        help='Maximum number of videos to process (with --all)'
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be processed without making changes"
-    )
+    
+    return parser.parse_args()
 
-    args = parser.parse_args()
 
-    if not args.sample_id and not args.batch:
-        parser.print_help()
-        print("\nError: Specify --sample-id or --batch")
-        sys.exit(1)
-
-    # Resolve paths
-    data_root = args.data_root
-    if not data_root.exists():
-        data_root = Path(__file__).parent.parent.parent / "data"
-
-    output_root = args.output_root or data_root
-    if not output_root.exists():
-        output_root.mkdir(parents=True, exist_ok=True)
-
-    print(f"Data root: {data_root.absolute()}")
-    print(f"Output root: {output_root.absolute()}")
-
-    if args.dry_run:
-        print("\n[DRY RUN MODE - No changes will be made]\n")
-        samples = get_samples_for_denoising(limit=args.limit)
-        print(f"Found {len(samples)} samples ready for denoising:")
-        for s in samples:
-            segment_count = len(s.get("segments") or [])
-            print(f"  - {s['external_id']}: {s['duration_seconds']:.1f}s, {segment_count} segments")
-        return
-
-    # Load model
-    print("\n[INFO] Loading DeepFilterNet model...")
-    model, df_state = load_deepfilter_model()
-
-    # Process samples
-    if args.sample_id:
-        # Single sample mode
-        conn = get_pg_connection()
+def main() -> None:
+    """Main entry point."""
+    args = parse_args()
+    
+    logger.info("=" * 60)
+    logger.info("DeepFilterNet Audio Denoising")
+    logger.info("=" * 60)
+    
+    if args.video_id:
+        # Process single video
+        video = get_video_by_id(args.db, args.video_id)
+        
+        if not video:
+            logger.error(f"Video not found: {args.video_id}")
+            sys.exit(1)
+        
+        if video["processing_state"] != "ingested":
+            logger.warning(f"Video state is '{video['processing_state']}', not 'ingested'")
+            logger.warning("Proceeding anyway...")
+        
         try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    SELECT 
-                        s.sample_id,
-                        s.external_id,
-                        s.audio_file_path,
-                        s.duration_seconds,
-                        (
-                            SELECT json_agg(
-                                json_build_object(
-                                    'segment_id', seg.segment_id,
-                                    'segment_index', seg.segment_index,
-                                    'audio_file_path', seg.audio_file_path,
-                                    'duration_ms', seg.duration_ms
-                                ) ORDER BY seg.segment_index
-                            )
-                            FROM segments seg
-                            WHERE seg.sample_id = s.sample_id
-                        ) AS segments
-                    FROM samples s
-                    WHERE s.sample_id = %s
-                    """,
-                    (args.sample_id,)
-                )
-                sample = cur.fetchone()
-                if sample:
-                    process_sample(dict(sample), model, df_state, data_root, output_root)
-                else:
-                    print(f"Sample not found: {args.sample_id}")
-        finally:
-            conn.close()
+            model, df_state = load_deepfilter_model()
+        except ImportError as e:
+            logger.error(f"Cannot load DeepFilterNet: {e}")
+            sys.exit(1)
+        
+        args.output.mkdir(parents=True, exist_ok=True)
+        success = process_video(video, model, df_state, args.db, args.output)
+        sys.exit(0 if success else 1)
+    
     else:
-        # Batch mode
-        samples = get_samples_for_denoising(limit=args.limit)
-        print(f"\n[INFO] Found {len(samples)} samples to process")
-
-        success_count = 0
-        fail_count = 0
-
-        for sample in samples:
-            if process_sample(sample, model, df_state, data_root, output_root):
-                success_count += 1
-            else:
-                fail_count += 1
-
-        print(f"\n{'='*60}")
-        print(f"Batch processing complete")
-        print(f"  Success: {success_count}")
-        print(f"  Failed: {fail_count}")
-        print(f"{'='*60}")
+        # Batch processing
+        stats = run_batch_denoising(args.db, args.output, args.limit)
+        
+        logger.info("\n" + "=" * 60)
+        logger.info("Denoising Complete!")
+        logger.info(f"  Processed: {stats['processed']}")
+        logger.info(f"  Failed: {stats['failed']}")
+        logger.info("=" * 60)
+        
+        logger.info("\nNext step: Run Gemini processing")
+        logger.info("  python src/preprocessing/gemini_process_v2.py --all")
 
 
 if __name__ == "__main__":

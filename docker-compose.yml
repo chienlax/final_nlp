@@ -1,128 +1,100 @@
+# =============================================================================
+# Simplified NLP Pipeline (SQLite + Streamlit)
+# =============================================================================
+# 
+# This docker-compose.yml is simplified to remove PostgreSQL and Label Studio.
+# - SQLite database is used directly (no container needed)
+# - Streamlit review app runs locally or via Tailscale
+#
+# Changes:
+#   - Removed: postgres, labelstudio, sync_service containers
+#   - Kept: audio_server (for serving audio files)
+#   - Simplified: ingestion service (no database dependency)
+# =============================================================================
+
 services:
-  # --- 1.2.2 The Ledger (Metadata Store) ---
-  postgres:
-    image: postgres:15
-    container_name: factory_ledger
-    restart: always
-    environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: secret_password
-      POSTGRES_DB: data_factory
-    ports:
-      - "5433:5432"
-    volumes:
-      - ./database_data:/var/lib/postgresql/data
-      # Mount the init script to auto-create tables
-      - ./init_scripts:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d data_factory"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  # --- Label Studio for annotation ---
-  labelstudio:
-    image: heartexlabs/label-studio:latest
-    container_name: labelstudio
-    restart: always
-    ports:
-      - "8085:8085"
-    volumes:
-      # Mount templates for labeling interfaces
-      - ./label_studio_templates:/label-studio/templates:ro
-      # Mount audio data for local file serving
-      - ./data/raw/audio:/label-studio/files/audio:ro
-    environment:
-      - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
-      - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/files
-      # Set Label Studio to listen on port 8085 inside container
-      - LABEL_STUDIO_PORT=8085
-      # Allow internal Docker hostnames
-      - LABEL_STUDIO_HOST=labelstudio
-      - DJANGO_ALLOWED_HOSTS=*
-      # PostgreSQL backend for Label Studio
-      - DJANGO_DB=default
-      - POSTGRE_NAME=label_studio
-      - POSTGRE_USER=admin
-      - POSTGRE_PASSWORD=secret_password
-      - POSTGRE_HOST=postgres
-      - POSTGRE_PORT=5432
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  # --- nginx audio server for serving audio files to Label Studio ---
+  # --- Audio Server (nginx) ---
+  # Serves audio files for the Streamlit review app
   audio_server:
     image: nginx:alpine
     container_name: audio_server
-    restart: always
+    restart: unless-stopped
     ports:
       - "8081:80"
     volumes:
       - ./data/raw/audio:/usr/share/nginx/html/audio:ro
+      - ./data/denoised:/usr/share/nginx/html/denoised:ro
       - ./data/segments:/usr/share/nginx/html/segments:ro
-      - ./data/review:/usr/share/nginx/html/review:ro
+      - ./data/export:/usr/share/nginx/html/export:ro
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "nginx -t && kill -0 $$(cat /var/run/nginx.pid)"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
       retries: 3
       start_period: 5s
 
-  # --- DVC sync service for automatic data synchronization ---
-  sync_service:
-    build:
-      context: .
-      dockerfile: Dockerfile.ingest
-    container_name: sync_service
-    restart: always
-    depends_on:
-      postgres:
-        condition: service_healthy
-      audio_server:
-        condition: service_healthy
-    volumes:
-      - .:/app
-      - ./data:/app/data
-      - ./.secrets:/app/.secrets:ro
-      - ~/.cache/pydrive2fs:/root/.cache/pydrive2fs
-    environment:
-      - DATABASE_URL=postgresql://admin:secret_password@postgres:5432/data_factory
-      - SYNC_INTERVAL_MINUTES=5
-      - AUDIO_SERVER_URL=http://audio_server:80
-      - AUDIO_PUBLIC_URL=${AUDIO_PUBLIC_URL:-http://100.66.225.46:8081}
-      - LABEL_STUDIO_URL=http://labelstudio:8085
-      - LABEL_STUDIO_API_KEY=${LABEL_STUDIO_API_KEY:-}
-      - LS_PROJECT_UNIFIED_REVIEW=${LS_PROJECT_UNIFIED_REVIEW:-1}
-      - GOOGLE_APPLICATION_CREDENTIALS=/app/.secrets/client_secret_952625721816-dc9kkk15i2leugvjl8f885rqkut975bo.apps.googleusercontent.com.json
-    command: python src/sync_daemon.py
-
-  # --- 1.3 Ingestion Service ---
+  # --- Ingestion Service ---
+  # For YouTube downloading (runs on-demand, not always-on)
   ingestion:
     build:
       context: .
       dockerfile: Dockerfile.ingest
     container_name: factory_ingestion
-    depends_on:
-      postgres:
-        condition: service_healthy # Wait for DB to be ready before starting
     volumes:
-      # Bind Mount 1: The Code (so you can edit python files locally and run them inside)
       - .:/app
-      # Bind Mount 2: The Data (so downloaded files appear on your host disk)
       - ./data:/app/data
-      # Bind Mount 3: Secrets (for DVC/Google Drive OAuth)
       - ./.secrets:/app/.secrets:ro
-      # Bind Mount 4: Google Auth (for DVC)
       - ~/.cache/pydrive2fs:/root/.cache/pydrive2fs
     environment:
-      # Connection string for the Python script
-      - DATABASE_URL=postgresql://admin:secret_password@postgres:5432/data_factory
-      - AUDIO_SERVER_URL=http://audio_server:80
-      - LABEL_STUDIO_URL=http://labelstudio:8085
-      - LABEL_STUDIO_API_KEY=${LABEL_STUDIO_API_KEY:-}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/.secrets/client_secret_952625721816-dc9kkk15i2leugvjl8f885rqkut975bo.apps.googleusercontent.com.json
-      # Gemini API keys for transcription/translation
       - GEMINI_API_KEY_1=${GEMINI_API_KEY_1:-}
       - GEMINI_API_KEY_2=${GEMINI_API_KEY_2:-}
+    # Run in interactive mode by default
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+  # --- Streamlit Review App ---
+  # Optional: Run Streamlit in Docker
+  # Alternatively, run locally with: streamlit run src/review_app.py
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.ingest
+    container_name: streamlit_review
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+      - ./data:/app/data
+    environment:
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+    command: streamlit run src/review_app.py --server.port 8501 --server.address 0.0.0.0
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8501/_stcore/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# =============================================================================
+# Usage Instructions:
+# =============================================================================
+#
+# Start audio server only:
+#   docker-compose up -d audio_server
+#
+# Start Streamlit review app:
+#   docker-compose up -d streamlit
+#
+# Or run Streamlit locally (recommended for development):
+#   streamlit run src/review_app.py
+#
+# Run ingestion interactively:
+#   docker-compose run --rm ingestion bash
+#   python src/ingest_youtube.py https://youtube.com/...
+#
+# =============================================================================

@@ -1,397 +1,315 @@
 # Architecture & Workflow
 
-Technical overview of the Vietnamese-English Code-Switching Speech Translation pipeline.
+Technical documentation for the Vietnamese-English Code-Switching Speech Translation pipeline.
 
 ---
 
-## Table of Contents
+## Pipeline Overview
 
-1. [Pipeline Overview](#1-pipeline-overview)
-2. [Processing States](#2-processing-states)
-3. [Data Specifications](#3-data-specifications)
-4. [Database Schema](#4-database-schema)
-5. [Directory Structure](#5-directory-structure)
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           PIPELINE FLOW                                   │
+│                                                                           │
+│   YouTube   ──►   Denoise   ──►   Gemini    ──►  Streamlit  ──►  Export  │
+│   Ingest        (DeepFilterNet)   Process       Review         Dataset   │
+│                                                                           │
+│   ingested ────► denoised ──────► processed ───► reviewed ────► exported │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Processing States
+
+| State | Description | Next Action |
+|-------|-------------|-------------|
+| `ingested` | Audio downloaded from YouTube | Run denoising |
+| `denoised` | Background noise removed | Run Gemini processing |
+| `processed` | Transcription + translation complete | Review in Streamlit |
+| `reviewed` | Human review complete | Export dataset |
+| `exported` | Dataset generated | Training ready |
 
 ---
 
-## 1. Pipeline Overview
-
-### High-Level Flow
+## System Architecture
 
 ```
-┌─────────────┐    ┌──────────────┐    ┌──────────────────┐    ┌─────────────┐
-│   YouTube   │───►│   Gemini     │───►│  Sample Review   │───►│  Training   │
-│  Ingestion  │    │  Processing  │    │  (Label Studio)  │    │   Export    │
-└─────────────┘    └──────────────┘    └──────────────────┘    └─────────────┘
-     RAW            TRANSLATED          REVIEW_PREPARED         FINAL
-                                           ↓
-                                    Full sample per task
-                                    Paragraphs tag with
-                                    timestamp-synced audio
-```
-
-### Key Design Decisions
-
-| Decision | Rationale |
-|----------|----------|
-| YouTube-only source | Focus on videos with existing transcripts |
-| Transcript required | Only process videos with manual/auto subtitles |
-| Unified Gemini processing | Single-pass transcription + translation |
-| Sample-level review | Full sample per task with Paragraphs tag for timestamp-synced audio playback |
-| Native Label Studio audio | Uses Paragraphs + Audio tags (no JavaScript needed) |
-| Sentence-level output | Individual sentence WAVs for training flexibility |
-
-### Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           Docker Environment                             │
-│                                                                          │
-│  ┌──────────────┐    ┌──────────────────┐    ┌──────────────────────┐  │
-│  │  PostgreSQL  │◄───│  Python Scripts  │───►│    Label Studio      │  │
-│  │ (data_factory│    │ (ingestion,      │    │  (localhost:8085)    │  │
-│  │  + label_    │    │  preprocessing)  │    │                      │  │
-│  │  studio DBs) │    │                  │    └──────────┬───────────┘  │
-│  └──────────────┘    └────────┬─────────┘               │              │
-│                               │                         │              │
-│                               ▼                         ▼              │
-│                      ┌──────────────────┐      ┌──────────────┐        │
-│                      │   Audio Server   │◄─────│   Browser    │        │
-│                      │ (localhost:8081) │      │   (User)     │        │
-│                      └──────────────────┘      └──────────────┘        │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        Local Machine                             │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                    Python Environment                      │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐   │   │
+│  │  │ ingest_     │  │ denoise_    │  │ gemini_         │   │   │
+│  │  │ youtube.py  │  │ audio.py    │  │ process.py      │   │   │
+│  │  └──────┬──────┘  └──────┬──────┘  └────────┬────────┘   │   │
+│  │         │                │                   │            │   │
+│  │         └────────────────┼───────────────────┘            │   │
+│  │                          │                                 │   │
+│  │                    ┌─────▼─────┐                          │   │
+│  │                    │  db.py    │◄──── SQLite Utilities    │   │
+│  │                    └─────┬─────┘                          │   │
+│  │                          │                                 │   │
+│  │                    ┌─────▼─────┐                          │   │
+│  │                    │ lab_data  │◄──── SQLite Database     │   │
+│  │                    │   .db     │      (WAL mode)          │   │
+│  │                    └───────────┘                          │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                    Streamlit App                          │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐   │   │
+│  │  │ Waveform    │  │ Segment     │  │ Upload          │   │   │
+│  │  │ Player      │  │ Editor      │  │ Interface       │   │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────────┘   │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│                     Tailscale (Optional)                        │
+│                              │                                   │
+└──────────────────────────────┼───────────────────────────────────┘
+                               │
+                     Remote Reviewers (Browser)
 ```
 
 ---
 
-## 2. Processing States
+## Database Schema
 
-### State Enum
+The project uses SQLite with WAL mode for concurrent access.
+
+### Videos Table
+
+Stores metadata for each ingested YouTube video.
 
 ```sql
-CREATE TYPE processing_state AS ENUM (
-    'RAW',                  -- Just ingested from YouTube
-    'TRANSLATED',           -- Gemini transcription + translation complete
-    'REVIEW_PREPARED',      -- Sentence audio cut, review chunks created
-    'FINAL',                -- Review applied, ready for training
-    'REJECTED'              -- Failed QC
+CREATE TABLE videos (
+    video_id        TEXT PRIMARY KEY,
+    url             TEXT NOT NULL,
+    title           TEXT,
+    channel_name    TEXT,
+    duration_seconds INTEGER,
+    audio_path      TEXT NOT NULL,
+    processing_state TEXT DEFAULT 'ingested',
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-### State Transition Diagram
+### Segments Table
 
-```
-RAW
- │
- │  (gemini_process.py)
- ▼
-TRANSLATED
- │
- │  (prepare_review_audio.py)
- ▼
-REVIEW_PREPARED ──► Label Studio (Unified Review)
- │                    - 15 sentences per task
- │                    - Sentence-level audio playback
- │                    - Transcript + Translation + Timing corrections
- │
- │  (apply_review.py)
- ▼
-FINAL ──► Training Export
- │
- └──► REJECTED (at any stage)
+Stores individual segments with transcription and translation.
+
+```sql
+CREATE TABLE segments (
+    segment_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id            TEXT NOT NULL,
+    start_ms            INTEGER NOT NULL,
+    end_ms              INTEGER NOT NULL,
+    transcript          TEXT,
+    translation         TEXT,
+    transcript_reviewed TEXT,
+    translation_reviewed TEXT,
+    is_rejected         INTEGER DEFAULT 0,
+    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (video_id) REFERENCES videos(video_id)
+);
 ```
 
-### Stage Details
+### Indexes
 
-| Stage | Script | Human Review? | Description |
-|-------|--------|---------------|-------------|
-| RAW | `ingest_youtube.py` | No | Downloaded from YouTube with transcript |
-| TRANSLATED | `gemini_process.py` | No | Gemini transcription + translation |
-| REVIEW_PREPARED | `prepare_review_audio.py` | No | Sentence audio cut for review |
-| (In Label Studio) | `label_studio_sync.py push` | **Yes** | Sample-level review with Paragraphs tag audio sync |
-| (Review complete) | `label_studio_sync.py pull` | No | Corrections saved to database |
-| FINAL | `apply_review.py` | No | Final audio cut with corrections |
-
-### Label Studio Review Features (v4)
-
-- **Full sample audio**: Single audio player loads the entire sample
-- **Timestamp-synced playback**: Click any sentence in Paragraphs to seek and play
-- **Native audio tags**: Uses Label Studio's `<Audio>` + `<Paragraphs>` (no JavaScript)
-- **5-column editing table**: Index | Time | Original Transcript | Revised | Original Translation | Revised
-- **Sample-level decisions**: Audio quality, transcript quality, translation quality, confidence, approval
+```sql
+CREATE INDEX idx_segments_video_id ON segments(video_id);
+CREATE INDEX idx_videos_state ON videos(processing_state);
+```
 
 ---
 
-## 3. Data Specifications
+## Audio Processing Specifications
 
-### Audio Format
+### Input Requirements
 
-| Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| Container | `.wav` | Lossless, universal support |
-| Sample Rate | `16000 Hz` | Speech recognition standard |
-| Channels | `1` (Mono) | Single speaker focus |
-| Bit Depth | 16-bit PCM | Standard quality |
+| Parameter | Value |
+|-----------|-------|
+| Sample Rate | 16 kHz |
+| Channels | Mono |
+| Format | WAV (PCM 16-bit) |
+| Duration | 2-60 minutes per video |
 
-### Duration Limits
+### Chunking Strategy
 
-| Type | Min | Max | Rationale |
-|------|-----|-----|-----------|
-| Full Video | 2 min | 60 min | Processing efficiency |
-| Segment | 10 sec | 30 sec | Training optimization |
+Gemini processing uses intelligent chunking:
 
-### Transcript Format
+| Parameter | Value |
+|-----------|-------|
+| Chunk Size | 10 minutes |
+| Overlap | 10 seconds |
+| Tail Threshold | ≤11 minutes (don't split if tail is ≤11 min) |
 
-```json
-{
-  "video_id": "OXPQQIREOzk",
-  "language": "en",
-  "subtitle_type": "Manual",
-  "segments": [
-    {"text": "Xin chào everyone", "start": 0.47, "end": 1.42}
-  ],
-  "full_text": "Xin chào everyone..."
-}
+### Output Segments
+
+| Parameter | Value |
+|-----------|-------|
+| Min Duration | 2 seconds |
+| Max Duration | 25 seconds |
+| Format | WAV (16kHz mono) |
+
+---
+
+## Gemini Processing
+
+### Prompt Structure
+
+Each audio chunk is processed with a structured prompt:
+
 ```
+System: You are a transcription and translation assistant for 
+Vietnamese-English code-switching speech.
 
-### Code-Switching Detection
+Task: Transcribe and translate the audio into segments.
 
-**Intersection Rule**: Content must contain:
-- ≥1 Vietnamese particle (`và`, `là`, `của`, etc.)
-- **AND** ≥1 English stop word (`the`, `and`, `is`, etc.)
-
-### Gemini Output Format
-
-The `gemini_process.py` script produces structured JSON:
-
-```json
+Output Format (JSON):
 {
-  "sentences": [
+  "segments": [
     {
-      "text": "Xin chào các bạn, hello everyone.",
-      "start": 5.2,
-      "end": 8.7,
-      "duration": 3.5,
-      "translation": "Xin chào các bạn, xin chào mọi người."
+      "text": "Original transcription",
+      "start": 0.0,
+      "end": 5.5,
+      "translation": "English translation"
     }
   ]
 }
+
+Rules:
+- Keep segments 2-25 seconds
+- Preserve code-switching as-is
+- Translate to natural English
+```
+
+### Deduplication
+
+When merging overlapping chunks, segments are deduplicated using:
+1. Time-based matching (within 500ms)
+2. Text similarity (>80% match)
+3. Preference for later chunk's version
+
+---
+
+## Streamlit Review App
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| Waveform Player | Interactive audio visualization |
+| Segment Grid | Editable transcript and translation |
+| Duration Badges | Warnings for segments >25s |
+| Split Button | Split long segments at cursor |
+| Reject Toggle | Mark segments as rejected |
+| JSON Upload | Upload Gemini output for new videos |
+| Audio Upload | Upload raw audio files |
+
+### State Management
+
+Review state is stored in SQLite:
+- `transcript_reviewed`: Edited transcript (or NULL if unchanged)
+- `translation_reviewed`: Edited translation (or NULL if unchanged)
+- `is_rejected`: 1 if segment should be excluded
+
+---
+
+## Export Format
+
+### Output Structure
+
+```
+data/export/
+├── audio/
+│   ├── VIDEO_ID_000001.wav
+│   ├── VIDEO_ID_000002.wav
+│   └── ...
+└── manifest.tsv
+```
+
+### Manifest Format
+
+TSV file compatible with HuggingFace datasets:
+
+```tsv
+audio_path	transcript	translation	duration_ms
+audio/VIDEO_ID_000001.wav	Original text	English text	4500
+audio/VIDEO_ID_000002.wav	Xin chào	Hello	2300
 ```
 
 ---
 
-## 4. Database Schema
-
-### Entity Relationship
+## Data Flow
 
 ```
-┌─────────────┐
-│   sources   │  (YouTube channels)
-└──────┬──────┘
-       │ 1:N
-       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                          samples                             │
-│  (Full videos with processing_state tracking)               │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ 1:N
-       ┌───────────────────┼───────────────────┐
-       ▼                   ▼                   ▼
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│ review_      │    │ transcript_  │    │ translation_ │
-│ chunks       │    │ revisions    │    │ revisions    │
-│ (15 sent/    │    │              │    │              │
-│  chunk)      │    └──────────────┘    └──────────────┘
-└──────┬───────┘
-       │ 1:N
-       ▼
-┌──────────────────┐
-│ sentence_        │
-│ reviews          │
-│ (corrections)    │
-└──────────────────┘
-```
+1. INGEST
+   YouTube URL → yt-dlp → data/raw/audio/VIDEO_ID.wav
+                       → SQLite: videos table (state=ingested)
 
-### Key Tables
+2. DENOISE
+   data/raw/audio/*.wav → DeepFilterNet → data/denoised/*_denoised.wav
+                                        → SQLite: update audio_path, state=denoised
 
-#### samples
+3. PROCESS
+   Denoised audio → Gemini 2.5 Pro → JSON segments
+                                   → SQLite: segments table, state=processed
 
-```sql
-CREATE TABLE samples (
-    sample_id UUID PRIMARY KEY,
-    external_id VARCHAR(255) UNIQUE,      -- YouTube video ID
-    audio_file_path TEXT NOT NULL,
-    subtitle_type subtitle_type,           -- 'manual' | 'auto_generated'
-    processing_state processing_state DEFAULT 'RAW',
-    duration_seconds NUMERIC(10, 2),
-    cs_ratio NUMERIC(5, 4),               -- Code-switching ratio
-    needs_translation_review BOOLEAN,      -- Flag for Gemini issues
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
+4. REVIEW
+   Streamlit app ← SQLite: segments
+   User edits   → SQLite: transcript_reviewed, translation_reviewed
+   User rejects → SQLite: is_rejected=1
 
-#### review_chunks (NEW)
-
-```sql
-CREATE TABLE review_chunks (
-    chunk_id UUID PRIMARY KEY,
-    sample_id UUID REFERENCES samples(sample_id),
-    chunk_index INTEGER NOT NULL,         -- 0-based chunk number
-    start_sentence_idx INTEGER NOT NULL,  -- First sentence index (inclusive)
-    end_sentence_idx INTEGER NOT NULL,    -- Last sentence index (exclusive)
-    ls_task_id INTEGER,                   -- Label Studio task ID
-    is_completed BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    completed_at TIMESTAMPTZ,
-    UNIQUE (sample_id, chunk_index)
-);
-```
-
-#### sentence_reviews (NEW)
-
-```sql
-CREATE TABLE sentence_reviews (
-    review_id UUID PRIMARY KEY,
-    chunk_id UUID REFERENCES review_chunks(chunk_id),
-    sentence_idx INTEGER NOT NULL,         -- Index within sample
-    original_text TEXT NOT NULL,
-    reviewed_text TEXT,                    -- Corrected transcript
-    original_translation TEXT NOT NULL,
-    reviewed_translation TEXT,             -- Corrected translation
-    original_start_ms INTEGER NOT NULL,
-    original_end_ms INTEGER NOT NULL,
-    reviewed_start_ms INTEGER,             -- Adjusted timing
-    reviewed_end_ms INTEGER,               -- Adjusted timing
-    is_deleted BOOLEAN DEFAULT FALSE,      -- Sentence marked for removal
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE (chunk_id, sentence_idx)
-);
-```
-
-#### transcript_revisions
-
-```sql
-CREATE TABLE transcript_revisions (
-    revision_id UUID PRIMARY KEY,
-    sample_id UUID REFERENCES samples(sample_id),
-    version INTEGER NOT NULL,
-    transcript_text TEXT NOT NULL,
-    revision_type VARCHAR(50),            -- 'youtube_raw', 'gemini', 'human_corrected'
-    sentence_timestamps JSONB,            -- [{text, start, end, duration}, ...]
-    has_translation_issues BOOLEAN,       -- Flag for repair script
-    translation_issue_indices INTEGER[],  -- Which sentences had issues
-    UNIQUE (sample_id, version)
-);
-```
-
-#### translation_revisions
-
-```sql
-CREATE TABLE translation_revisions (
-    revision_id UUID PRIMARY KEY,
-    sample_id UUID REFERENCES samples(sample_id),
-    version INTEGER NOT NULL,
-    translation_text TEXT NOT NULL,
-    sentence_translations JSONB,          -- [{text, translation, start, end}, ...]
-    UNIQUE (sample_id, version)
-);
-```
-
-### Useful Views
-
-```sql
--- Pipeline statistics by state
-SELECT * FROM v_pipeline_stats;
-
--- Sample overview with transcript info
-SELECT * FROM v_sample_overview;
-
--- Segments ready for export
-SELECT * FROM v_export_ready_segments;
+5. EXPORT
+   SQLite: approved segments → pydub: cut audio
+                            → data/export/audio/*.wav
+                            → data/export/manifest.tsv
+                            → SQLite: state=exported
 ```
 
 ---
 
-## 5. Directory Structure
+## File Organization
 
 ```
 final_nlp/
 ├── data/
-│   ├── raw/                    # DVC-tracked: Ingested audio
-│   │   ├── audio/              # {video_id}.wav (16kHz mono)
-│   │   ├── text/               # {video_id}_transcript.json
-│   │   └── metadata.jsonl
-│   ├── review/                 # Sentence audio for Label Studio
-│   │   └── {sample_id}/
-│   │       └── sentences/
-│   │           ├── 0000.wav    # Individual sentence audio (with padding)
-│   │           ├── 0001.wav
-│   │           └── ...
-│   ├── final/                  # Final output after review
-│   │   └── {sample_id}/
-│   │       └── sentences/
-│   │           ├── 0000.wav    # Sentence audio (reviewed timing)
-│   │           ├── manifest.tsv
-│   │           └── ...
-│   ├── dataset/                # DVC-tracked: Training export
-│   │   └── {sample_id}/
-│   │       ├── sentences/
-│   │       ├── manifest.tsv
-│   │       └── metadata.json
-│   └── db_sync/                # Database backups (DVC-tracked)
+│   ├── lab_data.db          # SQLite database
+│   ├── raw/
+│   │   ├── audio/           # Original YouTube audio
+│   │   └── metadata.jsonl   # Download metadata
+│   ├── denoised/            # DeepFilterNet output
+│   ├── segments/            # Intermediate segments
+│   └── export/              # Final dataset
+│       ├── audio/           # Training audio files
+│       └── manifest.tsv     # Dataset manifest
 ├── src/
-│   ├── ingest_youtube.py
-│   ├── label_studio_sync.py          # Unified review push/pull
-│   ├── export_reviewed.py            # Export FINAL to dataset
+│   ├── db.py                # SQLite utilities
+│   ├── ingest_youtube.py    # YouTube download
+│   ├── review_app.py        # Streamlit app
+│   ├── export_final.py      # Dataset export
 │   ├── preprocessing/
-│   │   ├── gemini_process.py         # Transcription + translation
-│   │   ├── gemini_repair_translation.py
-│   │   ├── prepare_review_audio.py   # NEW: Cut sentence audio, create chunks
-│   │   ├── apply_review.py           # NEW: Apply corrections, create final
-│   │   ├── whisperx_align.py         # (Optional)
-│   │   ├── segment_audio.py          # (Legacy)
-│   │   └── denoise_audio.py          # (Optional)
+│   │   ├── denoise_audio.py     # DeepFilterNet
+│   │   └── gemini_process.py    # Transcription
 │   └── utils/
-│       ├── data_utils.py
+│       ├── video_downloading_utils.py
 │       └── text_utils.py
 ├── init_scripts/
-│   ├── 01_schema.sql
-│   └── 02_review_system_migration.sql  # NEW: Review tables
-├── label_studio_templates/
-│   └── unified_review.xml            # v4: Paragraphs + Audio tags
-├── docker-compose.yml
-└── requirements.txt
-```
-
-### Data Flow
-
-```
-data/raw/audio/{video_id}.wav
-         │
-         │ prepare_review_audio.py
-         ▼
-data/review/{sample_id}/sentences/{idx}.wav   (0.2s padding each side)
-         │
-         │ Label Studio (unified_review.xml)
-         │ label_studio_sync.py push/pull
-         │
-         │ apply_review.py
-         ▼
-data/final/{sample_id}/sentences/{idx}.wav    (reviewed timing, no padding)
-         │                manifest.tsv
-         │
-         │ export_reviewed.py
-         ▼
-data/dataset/{sample_id}/sentences/{idx}.wav  (DVC-tracked)
-                        manifest.tsv
-                        metadata.json
+│   └── sqlite_schema.sql    # Database schema
+└── docs/
+    ├── 01_getting_started.md
+    ├── 02_architecture.md   # This file
+    ├── 03_command_reference.md
+    ├── 04_troubleshooting.md
+    ├── 05_api_reference.md
+    └── 06_known_caveats.md
 ```
 
 ---
 
-## Related Documentation
+## Next Steps
 
-- 📖 [Getting Started](01_getting_started.md) - Setup guide
-- 🛠️ [Command Reference](03_command_reference.md) - All commands
+- 🛠️ [Command Reference](03_command_reference.md) - All available commands
 - 🔧 [Troubleshooting](04_troubleshooting.md) - Common issues
-- 📚 [API Reference](05_api_reference.md) - Developer docs
+- 📚 [API Reference](05_api_reference.md) - Developer documentation

@@ -1,562 +1,471 @@
 # Command Reference
 
-Complete command reference for the Vietnamese-English Code-Switching Speech Translation pipeline.
-
-> **Note**: All commands use Docker. Ensure services are running with `docker compose up -d`.
+Complete reference for all commands in the Vietnamese-English CS Speech Translation pipeline.
 
 ---
 
-## Table of Contents
-
-1. [Quick Reference](#1-quick-reference)
-2. [Docker Management](#2-docker-management)
-3. [YouTube Ingestion](#3-youtube-ingestion)
-4. [Gemini Processing](#4-gemini-processing)
-5. [Label Studio Sync](#5-label-studio-sync)
-6. [Preprocessing](#6-preprocessing)
-7. [Database Operations](#7-database-operations)
-8. [DVC Data Versioning](#8-dvc-data-versioning)
-9. [Common Workflows](#9-common-workflows)
-
----
-
-## 1. Quick Reference
-
-### Most Used Commands
+## Quick Reference
 
 ```powershell
-# Start services
-docker compose up -d
+# Setup
+.\setup.ps1                                    # Full setup
+.\.venv\Scripts\Activate.ps1                   # Activate environment
 
-# Ingest YouTube video
-docker compose run --rm ingestion python src/ingest_youtube.py "https://www.youtube.com/watch?v=VIDEO_ID"
-
-# Gemini transcription + translation
-docker compose run --rm ingestion python src/preprocessing/gemini_process.py --batch --limit 5
-
-# Prepare for sample review (cut sentence audio)
-docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch
-
-# Push to Label Studio (sample-level review)
-$env:DATABASE_URL = "postgresql://admin:secret_password@localhost:5433/data_factory"
-$env:LABEL_STUDIO_API_KEY = "YOUR_40_CHAR_TOKEN"
-python src/label_studio_sync.py push --limit 10
-
-# Pull completed reviews
-python src/label_studio_sync.py pull
-
-# Apply corrections and create final output
-docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch
-
-# Export to training dataset
-docker compose run --rm ingestion python src/export_reviewed.py --batch
-
-# Check pipeline status
-docker exec factory_ledger psql -U admin -d data_factory -c "SELECT processing_state, COUNT(*) FROM samples GROUP BY processing_state;"
-
-# Backup & sync
-docker compose run --rm ingestion python src/db_backup.py
-docker compose run --rm ingestion dvc push
+# Pipeline
+python src/ingest_youtube.py <URL>             # Ingest video
+python src/preprocessing/denoise_audio.py --all # Denoise
+python src/preprocessing/gemini_process.py --all # Process
+streamlit run src/review_app.py                # Review
+python src/export_final.py                     # Export
 ```
 
 ---
 
-## 2. Docker Management
+## Setup Commands
 
-### Start/Stop Services
+### setup.ps1
+
+Comprehensive setup script for the project.
 
 ```powershell
+# Full setup (venv + deps + DB + Tailscale + backups)
+.\setup.ps1
+
+# Skip Tailscale configuration
+.\setup.ps1 -SkipTailscale
+
+# Skip backup scheduling
+.\setup.ps1 -SkipBackup
+
+# Development mode (includes extra tools)
+.\setup.ps1 -DevMode
+
+# Custom backup path
+.\setup.ps1 -DriveBackupPath "D:\Backups\NLP"
+```
+
+### Virtual Environment
+
+```powershell
+# Activate (required before running any Python script)
+.\.venv\Scripts\Activate.ps1
+
+# Deactivate
+deactivate
+```
+
+---
+
+## Ingestion Commands
+
+### ingest_youtube.py
+
+Download YouTube videos and add to database.
+
+```powershell
+# Single video
+python src/ingest_youtube.py "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Multiple videos
+python src/ingest_youtube.py "URL1" "URL2" "URL3"
+
+# From channel
+python src/ingest_youtube.py "https://www.youtube.com/@ChannelName"
+
+# Re-ingest from existing metadata (skip download)
+python src/ingest_youtube.py --skip-download
+
+# Dry run (see what would happen)
+python src/ingest_youtube.py --skip-download --dry-run
+
+# Custom database path
+python src/ingest_youtube.py --db data/custom.db "URL"
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--skip-download` | Use existing metadata.jsonl |
+| `--db PATH` | Custom SQLite database path |
+| `--dry-run` | Simulate without writing to DB |
+
+---
+
+## Preprocessing Commands
+
+### denoise_audio.py
+
+Remove background noise using DeepFilterNet.
+
+```powershell
+# Denoise all pending videos (state=ingested)
+python src/preprocessing/denoise_audio.py --all
+
+# Denoise specific video
+python src/preprocessing/denoise_audio.py --video-id VIDEO_ID
+
+# Limit number of videos
+python src/preprocessing/denoise_audio.py --all --limit 5
+
+# Custom output directory
+python src/preprocessing/denoise_audio.py --all --output data/clean
+
+# Custom database
+python src/preprocessing/denoise_audio.py --all --db data/custom.db
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--all` | Process all pending videos |
+| `--video-id ID` | Process specific video |
+| `--limit N` | Maximum videos to process |
+| `--output DIR` | Output directory for denoised audio |
+| `--db PATH` | Custom SQLite database path |
+
+### gemini_process.py
+
+Transcribe and translate audio using Gemini 2.5 Pro.
+
+```powershell
+# Process all pending videos (state=denoised)
+python src/preprocessing/gemini_process.py --all
+
+# Process specific video
+python src/preprocessing/gemini_process.py --video-id VIDEO_ID
+
+# Limit number of videos
+python src/preprocessing/gemini_process.py --all --limit 3
+
+# Custom database
+python src/preprocessing/gemini_process.py --all --db data/custom.db
+
+# Verbose output
+python src/preprocessing/gemini_process.py --all --verbose
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--all` | Process all pending videos |
+| `--video-id ID` | Process specific video |
+| `--limit N` | Maximum videos to process |
+| `--db PATH` | Custom SQLite database path |
+| `--verbose` | Enable debug logging |
+
+**Environment Variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `GEMINI_API_KEY_1` | Primary Gemini API key |
+| `GEMINI_API_KEY_2` | Backup Gemini API key |
+
+---
+
+## Review Commands
+
+### review_app.py (Streamlit)
+
+Launch the Streamlit review interface.
+
+```powershell
+# Start review app (default port 8501)
+streamlit run src/review_app.py
+
+# Custom port
+streamlit run src/review_app.py --server.port 8080
+
+# Allow external access
+streamlit run src/review_app.py --server.address 0.0.0.0
+
+# Disable browser auto-open
+streamlit run src/review_app.py --server.headless true
+```
+
+**Access:** http://localhost:8501
+
+**Features:**
+
+| Feature | Description |
+|---------|-------------|
+| Video selector | Choose video to review |
+| Waveform player | Click to play, visualize audio |
+| Segment grid | Edit transcript/translation |
+| Duration badges | Warnings for >25s segments |
+| Split button | Split long segments |
+| Reject toggle | Exclude segments |
+| Upload tab | Add new videos via file upload |
+
+---
+
+## Export Commands
+
+### export_final.py
+
+Export approved segments to HuggingFace dataset format.
+
+```powershell
+# Export all approved segments
+python src/export_final.py
+
+# Export specific video
+python src/export_final.py --video-id VIDEO_ID
+
+# Custom output directory
+python src/export_final.py --output data/dataset
+
+# Overwrite existing files
+python src/export_final.py --overwrite
+
+# Custom database
+python src/export_final.py --db data/custom.db
+
+# Verbose output
+python src/export_final.py -v
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--video-id ID` | Export specific video only |
+| `--output DIR` | Output directory |
+| `--overwrite` | Overwrite existing files |
+| `--db PATH` | Custom SQLite database path |
+| `-v, --verbose` | Enable debug logging |
+
+**Output:**
+
+```
+data/export/
+├── audio/
+│   ├── VIDEO_ID_000001.wav
+│   └── ...
+└── manifest.tsv
+```
+
+---
+
+## Database Commands
+
+### SQLite CLI
+
+```powershell
+# Open database
+sqlite3 data/lab_data.db
+
+# Common queries
+sqlite3 data/lab_data.db "SELECT video_id, processing_state FROM videos;"
+sqlite3 data/lab_data.db "SELECT COUNT(*) FROM segments WHERE is_rejected = 0;"
+sqlite3 data/lab_data.db "SELECT video_id, COUNT(*) FROM segments GROUP BY video_id;"
+
+# Export to CSV
+sqlite3 -header -csv data/lab_data.db "SELECT * FROM segments;" > segments.csv
+```
+
+### Python Database Operations
+
+```python
+from src.db import get_connection, init_database
+from pathlib import Path
+
+# Initialize database
+init_database(Path("data/lab_data.db"))
+
+# Query videos
+conn = get_connection(Path("data/lab_data.db"))
+cursor = conn.cursor()
+cursor.execute("SELECT * FROM videos WHERE processing_state = 'processed'")
+videos = cursor.fetchall()
+conn.close()
+```
+
+---
+
+## Docker Commands (Optional)
+
+### Start Services
+
+```powershell
+# Start audio server only
+docker-compose up -d audio_server
+
+# Start Streamlit in Docker
+docker-compose up -d streamlit
+
 # Start all services
-docker compose up -d
+docker-compose up -d
+```
 
-# Start specific services
-docker compose up -d postgres audio_server labelstudio
+### Run Commands in Docker
 
-# Stop services (preserves data)
-docker compose down
+```powershell
+# Interactive shell
+docker-compose run --rm ingestion bash
 
-# Stop and DELETE all data
-docker compose down -v
-
-# Rebuild after code changes
-docker compose up -d --build
+# Run specific script
+docker-compose run --rm ingestion python src/ingest_youtube.py "URL"
 ```
 
 ### View Logs
 
 ```powershell
-docker compose logs -f labelstudio
-docker compose logs -f postgres
-docker compose logs -f audio_server
-```
+# All services
+docker-compose logs -f
 
-### Service Reference
-
-| Service | Container | Port | Purpose |
-|---------|-----------|------|---------|
-| postgres | `factory_ledger` | 5433 | Database |
-| labelstudio | `labelstudio` | 8085 | Annotation UI |
-| audio_server | `audio_server` | 8081 | Serve audio files |
-| ingestion | `factory_ingestion` | - | Run scripts |
-
-> **Note**: PostgreSQL uses port 5433 (not 5432) to avoid conflicts with local installations.
-
----
-
-## 3. YouTube Ingestion
-
-### Script: `src/ingest_youtube.py`
-
-Downloads YouTube videos with transcripts.
-
-```powershell
-# Single video
-docker compose run --rm ingestion python src/ingest_youtube.py "https://www.youtube.com/watch?v=VIDEO_ID"
-
-# Multiple videos
-docker compose run --rm ingestion python src/ingest_youtube.py "URL1" "URL2"
-
-# Entire channel
-docker compose run --rm ingestion python src/ingest_youtube.py "https://www.youtube.com/@ChannelName"
-
-# Use existing metadata (skip download)
-docker compose run --rm ingestion python src/ingest_youtube.py --skip-download
-
-# Dry run
-docker compose run --rm ingestion python src/ingest_youtube.py --skip-download --dry-run
-```
-
-| Argument | Description |
-|----------|-------------|
-| `urls` | YouTube URLs (positional) |
-| `--skip-download` | Use existing `metadata.jsonl` |
-| `--dry-run` | Preview without database writes |
-| `--no-require-transcript` | Allow videos without subtitles |
-
----
-
-## 4. Gemini Processing
-
-### Unified Processing: `src/preprocessing/gemini_process.py`
-
-Single-pass transcription + translation using Gemini's multimodal capabilities.
-
-```powershell
-# Batch processing (RAW state samples)
-docker compose run --rm ingestion python src/preprocessing/gemini_process.py --batch --limit 5
-
-# Specific sample
-docker compose run --rm ingestion python src/preprocessing/gemini_process.py --sample-id <UUID>
-
-# Re-process existing samples
-docker compose run --rm ingestion python src/preprocessing/gemini_process.py --batch --replace-existing
-
-# Use Pro model (better quality, slower)
-docker compose run --rm ingestion python src/preprocessing/gemini_process.py --batch --model gemini-2.5-pro
-
-# Check API key status
-docker compose run --rm ingestion python src/preprocessing/gemini_process.py --check-keys
-
-# Dry run
-docker compose run --rm ingestion python src/preprocessing/gemini_process.py --batch --dry-run
-```
-
-| Argument | Description |
-|----------|-------------|
-| `--batch` | Process multiple samples |
-| `--sample-id <UUID>` | Process specific sample |
-| `--limit N` | Max samples to process |
-| `--model` | `gemini-2.5-flash` (default) or `gemini-2.5-pro` |
-| `--replace-existing` | Re-process samples with data |
-| `--check-keys` | Show API key status |
-| `--dry-run` | Preview without changes |
-
-**Output**: Creates both `transcript_revision` and `translation_revision` with sentence-level timestamps.
-
-### Translation Repair: `src/preprocessing/gemini_repair_translation.py`
-
-Repairs sentences flagged with translation issues.
-
-```powershell
-# Repair batch
-docker compose run --rm ingestion python src/preprocessing/gemini_repair_translation.py --batch --limit 10
-
-# Specific sample
-docker compose run --rm ingestion python src/preprocessing/gemini_repair_translation.py --sample-id <UUID>
-
-# Dry run
-docker compose run --rm ingestion python src/preprocessing/gemini_repair_translation.py --dry-run
+# Specific service
+docker-compose logs -f streamlit
 ```
 
 ---
 
-## 5. Label Studio Sync (Sample-Level Review)
+## DVC Commands (Optional)
 
-### Script: `src/label_studio_sync.py`
-
-Sync between database and Label Studio for sample-level review workflow.
-
-### Push Samples for Review
+### Data Versioning
 
 ```powershell
-# Set environment variables
-$env:DATABASE_URL = "postgresql://admin:secret_password@localhost:5433/data_factory"
-$env:LABEL_STUDIO_URL = "http://localhost:8085"
-$env:LABEL_STUDIO_API_KEY = "YOUR_40_CHAR_TOKEN"
-
-# Push all REVIEW_PREPARED samples
-python src/label_studio_sync.py push --limit 10
-
-# Dry run
-python src/label_studio_sync.py push --limit 10 --dry-run
-```
-
-### Pull Completed Annotations
-
-```powershell
-# Pull all completed reviews
-python src/label_studio_sync.py pull
-
-# Dry run
-python src/label_studio_sync.py pull --dry-run
-```
-
-### Reopen Tasks for Re-review
-
-```powershell
-# Reopen a sample
-python src/label_studio_sync.py reopen --sample-id <UUID>
-```
-
-### Check Status
-
-```powershell
-python src/label_studio_sync.py status
-```
-
-| Argument | Description |
-|----------|-------------|
-| `push` | Push REVIEW_PREPARED samples to Label Studio |
-| `pull` | Pull completed annotations |
-| `reopen` | Reopen tasks for re-review |
-| `status` | Check connection and pending tasks |
-| `--sample-id <UUID>` | Process specific sample |
-| `--limit N` | Max items to process |
-| `--dry-run` | Preview without changes |
-
-### Label Studio Template (v4 - Paragraphs)
-
-The template uses Label Studio's native `<Paragraphs>` tag with audio synchronization:
-
-- **Full sample audio** via `<Audio>` tag (plays entire sample)
-- **Timestamp-synced sentences** via `<Paragraphs>` tag (click to seek & play)
-- **Editing table** via `<HyperText>` (5-column layout)
-- **No JavaScript required** - all audio handled natively
-
-Task data format:
-```json
-{
-  "audio_url": "http://localhost:8081/audio/{external_id}.wav",
-  "paragraphs": [
-    {"start": 0.0, "end": 5.2, "text": "...", "idx": "000"},
-    ...
-  ],
-  "sentences_html": "<table>...</table>"
-}
-```
-
----
-
-## 6. Preprocessing
-
-### Prepare Review Audio (NEW)
-
-Cut sentence-level audio files and create review chunks for Label Studio.
-
-```powershell
-# Batch processing (TRANSLATED → REVIEW_PREPARED)
-docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch --limit 10
-
-# Specific sample
-docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --sample-id <UUID>
-
-# Custom chunk size
-docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch --chunk-size 20
-
-# Dry run
-docker compose run --rm ingestion python src/preprocessing/prepare_review_audio.py --batch --dry-run
-```
-
-| Argument | Description |
-|----------|-------------|
-| `--sample-id <UUID>` | Process specific sample |
-| `--batch` | Process all TRANSLATED samples |
-| `--limit N` | Max samples to process |
-| `--chunk-size N` | Sentences per chunk (default: 15) |
-| `--dry-run` | Preview without changes |
-
-**Output**: Creates `data/review/{sample_id}/sentences/{idx:04d}.wav` with 0.2s padding.
-
-### Apply Review Corrections (NEW)
-
-Apply corrections from unified review and create final output.
-
-```powershell
-# Batch processing (REVIEW_PREPARED → FINAL)
-docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch --limit 10
-
-# Specific sample (requires all chunks completed)
-docker compose run --rm ingestion python src/preprocessing/apply_review.py --sample-id <UUID>
-
-# Dry run
-docker compose run --rm ingestion python src/preprocessing/apply_review.py --batch --dry-run
-```
-
-| Argument | Description |
-|----------|-------------|
-| `--sample-id <UUID>` | Process specific sample |
-| `--batch` | Process all samples with completed reviews |
-| `--limit N` | Max samples to process |
-| `--dry-run` | Preview without changes |
-
-**Output**: Creates `data/final/{sample_id}/sentences/{idx:04d}.wav` + `manifest.tsv`.
-
-### WhisperX Alignment
-
-Force-align transcript with audio (word-level timestamps).
-
-```powershell
-# Batch processing
-docker compose run --rm ingestion python src/preprocessing/whisperx_align.py --batch --limit 10
-
-# Specific sample
-docker compose run --rm ingestion python src/preprocessing/whisperx_align.py --sample-id <UUID>
-```
-
-**Requirements**: GPU with 4-8GB VRAM
-
-### Audio Segmentation
-
-Split audio into 10-30 second chunks.
-
-```powershell
-# Batch processing
-docker compose run --rm ingestion python src/preprocessing/segment_audio.py --batch --limit 10
-
-# Custom duration
-docker compose run --rm ingestion python src/preprocessing/segment_audio.py --batch --min-duration 10 --max-duration 30
-```
-
-### Audio Denoising
-
-Remove background noise using DeepFilterNet.
-
-```powershell
-# Batch processing
-docker compose run --rm ingestion python src/preprocessing/denoise_audio.py --batch --limit 10
-```
-
-**Requirements**: GPU with 2-4GB VRAM
-
-| Common Arguments | Description |
-|------------------|-------------|
-| `--sample-id <UUID>` | Process specific sample |
-| `--batch` | Process multiple samples |
-| `--limit N` | Max samples |
-| `--dry-run` | Preview without changes |
-
----
-
-## 7. Database Operations
-
-### Backup
-
-```powershell
-# Incremental backup
-docker compose run --rm ingestion python src/db_backup.py
-
-# Full backup
-docker compose run --rm ingestion python src/db_backup.py --full
-
-# Dry run
-docker compose run --rm ingestion python src/db_backup.py --dry-run
-```
-
-### Restore
-
-```powershell
-# Import with conflict resolution
-docker compose run --rm ingestion python src/db_restore.py
-
-# Force overwrite
-docker compose run --rm ingestion python src/db_restore.py --force
-
-# Dry run
-docker compose run --rm ingestion python src/db_restore.py --dry-run
-```
-
-### Direct Queries
-
-```powershell
-# Interactive SQL shell
-docker exec -it factory_ledger psql -U admin -d data_factory
-
-# Pipeline status
-docker exec factory_ledger psql -U admin -d data_factory -c "SELECT processing_state, COUNT(*) FROM samples GROUP BY processing_state;"
-
-# List samples
-docker exec factory_ledger psql -U admin -d data_factory -c "SELECT external_id, processing_state FROM samples ORDER BY created_at DESC;"
-
-# Recent logs
-docker exec factory_ledger psql -U admin -d data_factory -c "SELECT * FROM processing_logs ORDER BY created_at DESC LIMIT 10;"
-```
-
----
-
-## 8. DVC Data Versioning
-
-### Basic Commands
-
-```powershell
-# Add data to tracking
-docker compose run --rm ingestion dvc add data/raw
-docker compose run --rm ingestion dvc add data/db_sync
-
-# Push to remote (Google Drive)
-docker compose run --rm ingestion dvc push
+# Track data directory
+dvc add data/raw
+
+# Push to remote
+dvc push
 
 # Pull from remote
-docker compose run --rm ingestion dvc pull
-
-# Force pull (overwrite)
-docker compose run --rm ingestion dvc pull --force
+dvc pull
 
 # Check status
-docker compose run --rm ingestion dvc status
+dvc status
 ```
 
-### Setup Google Drive Auth
+### Run Pipeline
 
 ```powershell
-# Run OAuth flow
-docker compose run --rm ingestion python src/setup_gdrive_auth.py
-
-# Check status
-docker compose run --rm ingestion python src/setup_gdrive_auth.py --check
+# Run export stage
+dvc repro export_final
 ```
 
 ---
 
-## 9. Common Workflows
+## Backup Commands
 
-### Initial Setup
+### Manual Backup
 
 ```powershell
-docker compose up -d
-# Wait 30-60 seconds
-# Open http://localhost:8085, create account
-# Get API token from Label Studio UI
-# Create unified review project with label_studio_templates/unified_review.xml
+# Run backup script
+powershell -File backup_db.ps1
+
+# Or directly copy
+Copy-Item data/lab_data.db "G:\My Drive\NLP_Backups\lab_data_$(Get-Date -Format 'yyyy-MM-dd').db"
 ```
 
-### Complete Pipeline (Recommended)
+### Scheduled Task
 
 ```powershell
-# Set environment variables (Windows PowerShell)
-$env:DATABASE_URL = "postgresql://admin:secret_password@localhost:5433/data_factory"
-$env:LABEL_STUDIO_URL = "http://localhost:8085"
-$env:LABEL_STUDIO_API_KEY = "YOUR_40_CHAR_TOKEN"
+# Check task status
+Get-ScheduledTask -TaskName "NLP_DB_Hourly_Backup"
 
-# 1. Ingest from YouTube
-python src/ingest_youtube.py "URL"
+# Run task manually
+Start-ScheduledTask -TaskName "NLP_DB_Hourly_Backup"
 
-# 2. Process with Gemini (transcription + translation)
-python src/preprocessing/gemini_process.py --batch
+# Disable task
+Disable-ScheduledTask -TaskName "NLP_DB_Hourly_Backup"
 
-# 3. Repair any translation issues
-python src/preprocessing/gemini_repair_translation.py --batch
-
-# 4. Prepare for sample review (cut sentence audio)
-python src/preprocessing/prepare_review_audio.py --batch
-
-# 5. Push to Label Studio (sample-level review with Paragraphs audio sync)
-python src/label_studio_sync.py push --limit 10
-
-# 6. (Human reviews in Label Studio - click sentences to play audio)
-#    - Review transcript and translation
-#    - Adjust timestamps if needed
-#    - Mark sample quality and approval
-
-# 7. Pull completed reviews
-python src/label_studio_sync.py pull
-
-# 8. Apply corrections, create final audio
-python src/preprocessing/apply_review.py --batch
-
-# 9. Export to training dataset
-python src/export_reviewed.py --batch
-```
-
-### Daily Review Workflow
-
-```powershell
-# Set environment variables
-$env:DATABASE_URL = "postgresql://admin:secret_password@localhost:5433/data_factory"
-$env:LABEL_STUDIO_URL = "http://localhost:8085"
-$env:LABEL_STUDIO_API_KEY = "YOUR_40_CHAR_TOKEN"
-
-# Pull completed reviews
-python src/label_studio_sync.py pull
-
-# Apply corrections
-python src/preprocessing/apply_review.py --batch
-
-# Export to dataset
-python src/export_reviewed.py --batch
-
-# Backup
-python src/db_backup.py
-dvc push
-```
-
-### Re-review a Sample
-
-```powershell
-# Reopen sample for re-review
-python src/label_studio_sync.py reopen --sample-id <UUID>
-```
-
-### Data Sync
-
-```powershell
-# Backup → Push
-docker compose run --rm ingestion python src/db_backup.py
-docker compose run --rm ingestion dvc add data/raw data/db_sync data/dataset
-docker compose run --rm ingestion dvc push
-
-# Pull → Restore
-docker compose run --rm ingestion dvc pull
-docker compose run --rm ingestion python src/db_restore.py
-```
-
-### Complete Reset
-
-```powershell
-# ⚠️ DELETES ALL DATA
-docker compose down -v
-Remove-Item -Recurse -Force data/raw/audio/*
-Remove-Item -Recurse -Force data/raw/text/*
-Remove-Item -Recurse -Force data/review/*
-Remove-Item -Recurse -Force data/final/*
-Remove-Item -Recurse -Force data/db_sync/*
-docker compose up -d
+# Remove task
+Unregister-ScheduledTask -TaskName "NLP_DB_Hourly_Backup"
 ```
 
 ---
 
-## Related Documentation
+## Tailscale Commands
 
-- 📖 [Getting Started](01_getting_started.md) - Setup guide
-- 🏗️ [Architecture](02_architecture.md) - Pipeline overview
+### Setup
+
+```powershell
+# Login
+tailscale up
+
+# Check status
+tailscale status
+
+# Get IP
+tailscale ip
+```
+
+### Serve Configuration
+
+```powershell
+# Expose Streamlit
+tailscale serve https / http://127.0.0.1:8501
+
+# Check serve status
+tailscale serve status
+
+# Reset serve
+tailscale serve reset
+```
+
+---
+
+## Common Workflows
+
+### Process New Video (End-to-End)
+
+```powershell
+# 1. Ingest
+python src/ingest_youtube.py "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# 2. Denoise
+python src/preprocessing/denoise_audio.py --video-id VIDEO_ID
+
+# 3. Process
+python src/preprocessing/gemini_process.py --video-id VIDEO_ID
+
+# 4. Review (in browser)
+streamlit run src/review_app.py
+
+# 5. Export
+python src/export_final.py --video-id VIDEO_ID
+```
+
+### Batch Processing
+
+```powershell
+# Ingest multiple videos
+python src/ingest_youtube.py "URL1" "URL2" "URL3"
+
+# Process all pending
+python src/preprocessing/denoise_audio.py --all
+python src/preprocessing/gemini_process.py --all
+
+# Export all approved
+python src/export_final.py
+```
+
+### Check Pipeline Status
+
+```powershell
+# Count by state
+sqlite3 data/lab_data.db "
+SELECT processing_state, COUNT(*) 
+FROM videos 
+GROUP BY processing_state;
+"
+
+# Count approved segments
+sqlite3 data/lab_data.db "
+SELECT COUNT(*) as approved 
+FROM segments 
+WHERE is_rejected = 0;
+"
+```
+
+---
+
+## Next Steps
+
 - 🔧 [Troubleshooting](04_troubleshooting.md) - Common issues
-- 📚 [API Reference](05_api_reference.md) - Developer docs
+- 📚 [API Reference](05_api_reference.md) - Developer documentation
+- ⚠️ [Known Caveats](06_known_caveats.md) - Limitations

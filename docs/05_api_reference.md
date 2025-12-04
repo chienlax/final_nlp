@@ -6,14 +6,244 @@ Developer documentation for scripts and utility modules.
 
 ## Table of Contents
 
-1. [Ingestion Scripts](#1-ingestion-scripts)
-2. [Preprocessing Scripts](#2-preprocessing-scripts)
-3. [Label Studio Sync](#3-label-studio-sync)
-4. [Utility Modules](#4-utility-modules)
+1. [Core Modules](#1-core-modules)
+2. [Ingestion](#2-ingestion)
+3. [Preprocessing](#3-preprocessing)
+4. [Review & Export](#4-review--export)
+5. [Utilities](#5-utilities)
 
 ---
 
-## 1. Ingestion Scripts
+## 1. Core Modules
+
+### db.py
+
+**Location:** `src/db.py`
+
+**Purpose:** SQLite database utilities with connection management, CRUD operations, and query helpers.
+
+#### Connection Management
+
+```python
+from db import get_connection, get_db
+
+# Context manager (auto-commit/rollback)
+with get_db() as db:
+    db.execute("INSERT INTO videos ...")
+
+# Direct connection (manual management)
+conn = get_connection()
+cursor = conn.cursor()
+# ... operations ...
+conn.close()
+
+# Read-only mode
+with get_db(read_only=True) as db:
+    cursor = db.execute("SELECT * FROM videos")
+```
+
+#### Configuration
+
+```python
+# Constants
+DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "lab_data.db"
+SCHEMA_PATH = PROJECT_ROOT / "init_scripts" / "sqlite_schema.sql"
+MAX_SEGMENT_DURATION_MS = 25000  # 25 seconds warning threshold
+
+# Connection settings (applied automatically)
+# - WAL mode for better concurrency
+# - busy_timeout=5000 for lock handling
+# - foreign_keys=ON for referential integrity
+# - Row factory returns dicts
+```
+
+#### Database Initialization
+
+```python
+def init_database(db_path: Optional[Path] = None) -> None:
+    """
+    Initialize database with schema from sqlite_schema.sql.
+    Creates tables, indexes, triggers, and views.
+    """
+```
+
+#### Video Operations
+
+```python
+def insert_video(
+    video_id: str,
+    title: str,
+    duration_seconds: float,
+    audio_path: str,
+    url: Optional[str] = None,
+    channel_name: Optional[str] = None,
+    source_type: str = "youtube",  # or "upload"
+    upload_metadata: Optional[Dict[str, Any]] = None,
+    db_path: Optional[Path] = None
+) -> str:
+    """Insert a new video record. Returns video_id."""
+
+def get_video(
+    video_id: str,
+    db_path: Optional[Path] = None
+) -> Optional[Dict[str, Any]]:
+    """Get video by ID. Returns None if not found."""
+
+def get_videos_by_state(
+    state: str,  # 'pending', 'transcribed', 'reviewed', 'exported'
+    limit: Optional[int] = None,
+    db_path: Optional[Path] = None
+) -> List[Dict[str, Any]]:
+    """Get videos in specific processing state."""
+
+def update_video_state(
+    video_id: str,
+    new_state: str,
+    db_path: Optional[Path] = None
+) -> None:
+    """Update video processing state."""
+
+def update_video_denoised_path(
+    video_id: str,
+    denoised_path: str,
+    db_path: Optional[Path] = None
+) -> None:
+    """Set denoised audio path for video."""
+```
+
+#### Segment Operations
+
+```python
+def insert_segments(
+    video_id: str,
+    segments: List[Dict[str, Any]],  # [{text, start, end, translation}, ...]
+    db_path: Optional[Path] = None
+) -> int:
+    """
+    Insert segments for video (clears existing first).
+    Converts seconds to milliseconds automatically.
+    Returns count of inserted segments.
+    """
+
+def get_segments(
+    video_id: str,
+    include_rejected: bool = False,
+    db_path: Optional[Path] = None
+) -> List[Dict[str, Any]]:
+    """Get all segments for video, ordered by index."""
+
+def get_segment(
+    segment_id: int,
+    db_path: Optional[Path] = None
+) -> Optional[Dict[str, Any]]:
+    """Get single segment by ID."""
+
+def update_segment_review(
+    segment_id: int,
+    reviewed_transcript: Optional[str] = None,
+    reviewed_translation: Optional[str] = None,
+    reviewed_start_ms: Optional[int] = None,
+    reviewed_end_ms: Optional[int] = None,
+    is_rejected: bool = False,
+    reviewer_notes: Optional[str] = None,
+    db_path: Optional[Path] = None
+) -> None:
+    """Update segment with review data."""
+
+def reject_segment(
+    segment_id: int,
+    notes: Optional[str] = None,
+    db_path: Optional[Path] = None
+) -> None:
+    """Mark segment as rejected."""
+
+def split_segment(
+    segment_id: int,
+    split_time_ms: int,
+    transcript_first: str,
+    transcript_second: str,
+    translation_first: str,
+    translation_second: str,
+    db_path: Optional[Path] = None
+) -> tuple:
+    """
+    Split segment at specified time.
+    Returns (first_id, second_id).
+    Automatically reindexes subsequent segments.
+    """
+```
+
+#### Statistics & Queries
+
+```python
+def get_video_progress(
+    video_id: str,
+    db_path: Optional[Path] = None
+) -> Dict[str, Any]:
+    """Get review progress stats for video (uses v_video_progress view)."""
+
+def get_long_segments(
+    video_id: Optional[str] = None,
+    db_path: Optional[Path] = None
+) -> List[Dict[str, Any]]:
+    """Get segments exceeding 25 seconds (uses v_long_segments view)."""
+
+def get_export_ready_segments(
+    video_id: Optional[str] = None,
+    db_path: Optional[Path] = None
+) -> List[Dict[str, Any]]:
+    """Get reviewed, non-rejected segments (uses v_export_ready view)."""
+
+def get_database_stats(db_path: Optional[Path] = None) -> Dict[str, Any]:
+    """
+    Get overall database statistics.
+    
+    Returns:
+        {
+            'videos_by_state': {'pending': N, 'transcribed': N, ...},
+            'total_videos': N,
+            'total_segments': N,
+            'reviewed_segments': N,
+            'rejected_segments': N,
+            'total_hours': N.NN,
+            'long_segments': N
+        }
+    """
+```
+
+#### JSON Validation (for uploads)
+
+```python
+def validate_transcript_json(
+    data: Union[Dict, List]
+) -> tuple:
+    """
+    Validate transcript JSON format.
+    
+    Expected format:
+    [
+        {"text": "...", "start": 0.0, "end": 4.2, "translation": "..."},
+        ...
+    ]
+    
+    Or wrapped:
+    {"sentences": [...]}
+    
+    Returns: (is_valid: bool, errors: List[str])
+    """
+
+def parse_transcript_json(
+    data: Union[Dict, List]
+) -> List[Dict[str, Any]]:
+    """
+    Parse and normalize validated transcript JSON.
+    Returns list of dicts with: text, start, end, translation.
+    """
+```
+
+---
+
+## 2. Ingestion
 
 ### ingest_youtube.py
 
@@ -30,14 +260,14 @@ Developer documentation for scripts and utility modules.
     ↓
 [STEP 3/4] Calculate linguistic metrics (CS ratio)
     ↓
-[STEP 4/4] Ingest to database (RAW state)
+[STEP 4/4] Insert to database (pending state)
 ```
 
 #### Key Behavior
 
-- **Rejects videos without transcripts**
-- **Detects subtitle type**: Manual vs auto-generated
-- **Initial state**: `RAW`
+- Rejects videos without transcripts
+- Detects subtitle type: Manual vs auto-generated
+- Creates video record in `pending` state
 
 #### Output Files
 
@@ -49,32 +279,49 @@ Developer documentation for scripts and utility modules.
 
 ---
 
-## 2. Preprocessing Scripts
+## 3. Preprocessing
+
+### denoise_audio.py
+
+**Location:** `src/preprocessing/denoise_audio.py`
+
+**Purpose:** Remove background noise from audio using DeepFilterNet.
+
+#### Key Behavior
+
+- Uses DeepFilterNet for high-quality noise reduction
+- GPU-accelerated when available
+- Processes all pending videos in batch
+- Stores denoised audio alongside originals
+
+#### Output
+
+```
+data/raw/audio/{video_id}.wav          # Original
+data/raw/audio/{video_id}_denoised.wav # Denoised
+```
+
+---
 
 ### gemini_process.py
 
 **Location:** `src/preprocessing/gemini_process.py`
 
-**Purpose:** Unified transcription + translation using Gemini's multimodal capabilities.
+**Purpose:** Unified transcription + translation using Gemini 2.5 Pro multimodal.
 
 #### Features
 
-- **Hybrid single-pass**: Full audio context + structured JSON output
-- **Few-shot prompting**: Vietnamese-English code-switching examples
-- **Adaptive chunking**: Auto-splits audio >20 minutes with overlap
-- **Deduplication**: Removes duplicate sentences from chunk overlaps
-- **Issue flagging**: Marks problematic translations for repair
-- **Thinking mode**: Uses Gemini 2.5 Pro with extended reasoning for accurate timestamps
+- **Single-pass processing**: Audio → Transcript + Translation
+- **Adaptive chunking**: Splits audio >10 minutes with 10s overlap
+- **Deduplication**: Removes duplicates from chunk overlaps
+- **Structured output**: Returns JSON with timestamps
 
 #### Constants
 
 ```python
-MAX_AUDIO_DURATION_SECONDS = 20 * 60  # Chunking threshold (20 minutes)
-CHUNK_OVERLAP_SECONDS = 20            # Overlap between chunks
+MAX_AUDIO_DURATION_SECONDS = 10 * 60  # 10 min chunking threshold
+CHUNK_OVERLAP_SECONDS = 10            # Overlap between chunks
 TEXT_SIMILARITY_THRESHOLD = 0.8       # Deduplication threshold
-OVERLAP_TIME_TOLERANCE_SECONDS = 2.0  # Timestamp tolerance
-THINKING_BUDGET = 15668               # Tokens for reasoning
-# temperature = 1.0                   # For creative boundary decisions
 ```
 
 #### Output Schema
@@ -86,7 +333,6 @@ THINKING_BUDGET = 15668               # Tokens for reasoning
       "text": "Original transcription (code-switched)",
       "start": 5.2,
       "end": 8.7,
-      "duration": 3.5,
       "translation": "Pure Vietnamese translation"
     }
   ]
@@ -95,248 +341,88 @@ THINKING_BUDGET = 15668               # Tokens for reasoning
 
 #### State Transition
 
-`RAW` → `TRANSLATED` (with `needs_translation_review` flag if issues)
+`pending` → `transcribed` (after successful processing)
 
 ---
 
-### gemini_repair_translation.py
+## 4. Review & Export
 
-**Location:** `src/preprocessing/gemini_repair_translation.py`
+### review_app.py
 
-**Purpose:** Re-translate sentences flagged with translation issues.
+**Location:** `src/review_app.py`
 
-#### Key Functions
+**Purpose:** Streamlit web application for human review of segments.
 
-```python
-def get_samples_with_translation_issues() -> List[Dict]:
-    """Query samples where has_translation_issues = TRUE."""
+#### Features
 
-def repair_sentence_translations(
-    sentences: List[Dict],
-    issue_indices: List[int],
-    api_key: str
-) -> List[Dict]:
-    """Re-translate specific sentences by index."""
-```
+- Video selection with progress tracking
+- Segment-by-segment review interface
+- Audio playback for each segment
+- Edit transcript and translation
+- Adjust timestamps
+- Split long segments
+- Approve/reject controls
 
----
+#### Running
 
-### denoise_audio.py
-
-**Location:** `src/preprocessing/denoise_audio.py`
-
-**Purpose:** Remove background noise using DeepFilterNet.
-
-#### Key Behavior
-
-- **Replaces** original audio with denoised version
-- Does NOT enhance/upscale audio
-- Only removes noise
-
-#### State Transition
-
-`TRANSLATION_REVIEW` → `DENOISED`
-
----
-
-## 3. Label Studio Sync
-
-### label_studio_sync.py
-
-**Location:** `src/label_studio_sync.py`
-
-**Purpose:** Sync samples between database and Label Studio for human review.
-
-#### Template: unified_review.xml (v4)
-
-Uses Label Studio's native `<Paragraphs>` tag with audio synchronization:
-
-```xml
-<!-- Main audio player -->
-<Audio name="audio" value="$audio_url" sync="paragraphs" hotkey="space"/>
-
-<!-- Timestamp-synced sentences -->
-<Paragraphs name="paragraphs" 
-            value="$paragraphs" 
-            layout="dialogue" 
-            textKey="text" 
-            nameKey="idx"
-            audioUrl="$audio_url"
-            sync="audio"
-            showplayer="false"
-            contextscroll="true"/>
-```
-
-#### Task Data Format
-
-```json
-{
-  "sample_id": "uuid",
-  "external_id": "youtube_id",
-  "video_title": "...",
-  "channel_name": "...",
-  "sentence_count": "45",
-  "duration_display": "3:25",
-  "audio_url": "http://localhost:8081/audio/{external_id}.wav",
-  "paragraphs": [
-    {"start": 0.0, "end": 5.2, "text": "...", "idx": "000"},
-    {"start": 5.2, "end": 10.1, "text": "...", "idx": "001"}
-  ],
-  "sentences_html": "<table>...</table>"
-}
-```
-
-#### Key Functions
-
-```python
-def build_paragraphs_data(sentences: List[Dict]) -> List[Dict]:
-    """
-    Build paragraphs data for Label Studio's Paragraphs tag.
-    
-    Returns list of dicts with:
-    - idx: Sentence index (e.g., "000")
-    - start: Start time in seconds
-    - end: End time in seconds
-    - text: Original transcript text
-    """
-
-def push_sample_reviews(
-    limit: int = 10,
-    project_id: str = None,
-    dry_run: bool = False
-) -> Dict[str, int]:
-    """
-    Push REVIEW_PREPARED samples to Label Studio.
-    
-    Returns: {'pushed': N, 'skipped': N, 'errors': N}
-    """
-
-def pull_sample_reviews(
-    project_id: str = None,
-    dry_run: bool = False
-) -> Dict[str, int]:
-    """
-    Pull completed annotations from Label Studio.
-    
-    Returns: {'pulled': N, 'skipped': N, 'errors': N}
-    """
+```powershell
+streamlit run src/review_app.py --server.address 0.0.0.0
 ```
 
 #### State Transitions
 
-- **Push**: Requires `processing_state = 'REVIEW_PREPARED'`
-- **Pull**: Updates sentence corrections in `sentence_reviews` table
-- **After all reviews complete**: Sample can transition to `FINAL`
+- Reviewing: `transcribed` → `reviewed`
+- Approving segment: `is_reviewed = 1`
+- Rejecting segment: `is_rejected = 1`
 
 ---
 
-## 4. Utility Modules
+### export_final.py
 
-### data_utils.py
+**Location:** `src/export_final.py`
 
-**Location:** `src/utils/data_utils.py`
+**Purpose:** Export reviewed segments as final dataset.
 
-**Purpose:** Database connectivity and operations.
+#### Output Structure
 
-#### Connection
-
-```python
-def get_pg_connection() -> psycopg2.extensions.connection:
-    """
-    Establish PostgreSQL connection.
-    Uses DATABASE_URL environment variable.
-    """
+```
+data/export/
+├── manifest.json          # Dataset metadata
+├── audio/
+│   └── {video_id}/
+│       ├── segment_000.wav
+│       ├── segment_001.wav
+│       └── ...
+└── transcripts/
+    └── {video_id}.json    # Segment text + translations
 ```
 
-#### Sample Operations
+#### Manifest Format
 
-```python
-def insert_sample(
-    source_id: str,
-    external_id: str,
-    audio_file_path: str,
-    subtitle_type: str,
-    duration_seconds: float,
-    cs_ratio: float,
-    source_metadata: Dict
-) -> str:
-    """Insert new sample, returns sample_id."""
-
-def sample_exists(
-    audio_file_path: str = None,
-    external_id: str = None
-) -> bool:
-    """Check if sample already exists."""
-
-def update_sample_state(
-    sample_id: str,
-    new_state: str
-) -> bool:
-    """Update processing state."""
-
-def get_samples_by_state(
-    state: str,
-    limit: int = None
-) -> List[Dict]:
-    """Get samples in specific state."""
+```json
+{
+  "exported_at": "2025-01-15T10:30:00",
+  "total_videos": 25,
+  "total_segments": 1250,
+  "total_duration_seconds": 4500.5,
+  "videos": [
+    {
+      "video_id": "abc123",
+      "title": "...",
+      "segment_count": 45,
+      "duration_seconds": 180.5
+    }
+  ]
+}
 ```
 
-#### Revision Operations
+#### State Transition
 
-```python
-def add_transcript_revision(
-    sample_id: str,
-    transcript_text: str,
-    revision_type: str,
-    sentence_timestamps: List[Dict] = None,
-    word_timestamps: List[Dict] = None,
-    has_translation_issues: bool = False,
-    translation_issue_indices: List[int] = None
-) -> str:
-    """Add new transcript revision, returns revision_id."""
-
-def add_translation_revision(
-    sample_id: str,
-    translation_text: str,
-    revision_type: str,
-    sentence_translations: List[Dict] = None
-) -> str:
-    """Add new translation revision, returns revision_id."""
-```
-
-#### Segment Operations
-
-```python
-def insert_segment(
-    sample_id: str,
-    segment_index: int,
-    audio_path: str,
-    transcript_text: str,
-    start_time: float,
-    end_time: float,
-    word_timestamps: List[Dict],
-    alignment_score: float
-) -> str:
-    """Insert segment record."""
-
-def get_segments_for_sample(sample_id: str) -> List[Dict]:
-    """Get all segments for a sample."""
-```
-
-#### Logging
-
-```python
-def log_processing(
-    sample_id: str,
-    step_name: str,
-    status: str,
-    metadata: Dict = None,
-    error_message: str = None
-) -> None:
-    """Log processing step to audit trail."""
-```
+`reviewed` → `exported`
 
 ---
+
+## 5. Utilities
 
 ### text_utils.py
 
@@ -348,7 +434,10 @@ def log_processing(
 
 ```python
 def load_teencode_dict(file_path: Path = None) -> Dict[str, str]:
-    """Load Vietnamese teencode dictionary."""
+    """
+    Load Vietnamese teencode dictionary from file.
+    Default: data/teencode.txt
+    """
 
 def normalize_text(
     text: str,
@@ -356,20 +445,23 @@ def normalize_text(
 ) -> str:
     """
     Normalize Vietnamese text:
-    - Expand teencode
+    - Expand teencode abbreviations
     - Fix diacritics
     - Clean whitespace
     """
 
 def contains_code_switching(text: str) -> bool:
     """
-    Check for code-switching using Intersection Rule:
-    - ≥1 Vietnamese particle (và, là, của, etc.)
-    - AND ≥1 English stop word (the, and, is, etc.)
+    Detect code-switching using Intersection Rule:
+    - Has ≥1 Vietnamese particle (và, là, của, etc.)
+    - AND has ≥1 English stop word (the, and, is, etc.)
     """
 
 def calculate_cs_ratio(text: str) -> float:
-    """Calculate code-switching ratio (0.0 to 1.0)."""
+    """
+    Calculate code-switching ratio (0.0 to 1.0).
+    Higher = more code-switching detected.
+    """
 ```
 
 ---
@@ -383,48 +475,111 @@ def calculate_cs_ratio(text: str) -> float:
 #### Constants
 
 ```python
-SAMPLE_RATE = 16000      # 16kHz
-CHANNELS = 1             # Mono
-MIN_DURATION = 120       # 2 minutes
-MAX_DURATION = 3600      # 60 minutes
+SAMPLE_RATE = 16000      # 16kHz (required for processing)
+CHANNELS = 1             # Mono audio
+MIN_DURATION = 120       # 2 minutes minimum
+MAX_DURATION = 3600      # 60 minutes maximum
 ```
 
 #### Functions
 
 ```python
 def download_channels(url_list: List[str]) -> None:
-    """Download audio from YouTube channels/videos."""
+    """
+    Download audio from YouTube URLs.
+    Handles channels, playlists, and individual videos.
+    Outputs: 16kHz mono WAV files.
+    """
 
 def save_jsonl(append: bool = True) -> None:
-    """Save metadata to JSONL file."""
+    """Save video metadata to data/raw/metadata.jsonl."""
 ```
 
 ---
 
-### transcript_downloading_utils.py
+### setup_gdrive_auth.py
 
-**Location:** `src/utils/transcript_downloading_utils.py`
+**Location:** `src/setup_gdrive_auth.py`
 
-**Purpose:** Download YouTube transcripts with timestamps.
+**Purpose:** Configure Google Drive authentication for DVC remote.
 
-#### Functions
+#### Usage
 
-```python
-def get_transcript_info(video_id: str) -> Dict[str, Any]:
-    """
-    Fetch transcript with subtitle type detection.
-    
-    Returns:
-        {
-            'segments': [{text, start, end}, ...],
-            'subtitle_type': 'Manual' | 'Auto-generated' | 'Not Available',
-            'language': 'en' | 'vi'
-        }
-    """
-
-def download_transcripts_from_metadata() -> List[Dict]:
-    """Download transcripts for all videos in metadata.jsonl."""
+```powershell
+python src/setup_gdrive_auth.py
 ```
+
+Opens browser for OAuth authentication. Stores credentials in:
+- `~/.cache/pydrive2fs/credentials.json`
+
+---
+
+## Database Schema Reference
+
+### Tables
+
+```sql
+-- Videos table
+videos (
+    video_id TEXT PRIMARY KEY,
+    url TEXT,
+    title TEXT NOT NULL,
+    channel_name TEXT,
+    duration_seconds REAL,
+    audio_path TEXT,
+    denoised_audio_path TEXT,
+    source_type TEXT DEFAULT 'youtube',  -- 'youtube' | 'upload'
+    upload_metadata TEXT,  -- JSON for uploads
+    processing_state TEXT DEFAULT 'pending',
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+)
+
+-- Segments table
+segments (
+    segment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id TEXT REFERENCES videos(video_id),
+    segment_index INTEGER,
+    start_ms INTEGER,
+    end_ms INTEGER,
+    transcript TEXT,
+    translation TEXT,
+    reviewed_transcript TEXT,
+    reviewed_translation TEXT,
+    reviewed_start_ms INTEGER,
+    reviewed_end_ms INTEGER,
+    is_reviewed INTEGER DEFAULT 0,
+    is_rejected INTEGER DEFAULT 0,
+    reviewer_notes TEXT,
+    reviewed_at TIMESTAMP,
+    created_at TIMESTAMP
+)
+```
+
+### Views
+
+```sql
+-- Video review progress
+v_video_progress: video_id, title, total_segments, reviewed_count, 
+                  rejected_count, progress_pct
+
+-- Segments over 25 seconds
+v_long_segments: segment_id, video_id, segment_index, duration_seconds,
+                 transcript, translation
+
+-- Export-ready segments (reviewed, not rejected)
+v_export_ready: segment_id, video_id, video_title, segment_index,
+                start_ms, end_ms, final_transcript, final_translation
+```
+
+### Processing States
+
+| State | Description |
+|-------|-------------|
+| `pending` | Ingested, waiting for processing |
+| `transcribed` | Gemini processing complete |
+| `reviewed` | Human review complete |
+| `exported` | Final export complete |
 
 ---
 
