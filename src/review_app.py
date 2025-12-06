@@ -49,6 +49,9 @@ from db import (
     DEFAULT_DB_PATH,
 )
 
+from utils.video_downloading_utils import download_youtube_content
+from ingest_youtube import ingest_to_database
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -186,7 +189,7 @@ def render_sidebar() -> str:
         # Navigation
         page = st.radio(
             "Navigation",
-            ["📊 Dashboard", "📝 Review Videos", "⬆️ Upload Data"],
+            ["📊 Dashboard", "📥 YouTube Ingest", "📝 Review Videos", "⬆️ Upload Data"],
             label_visibility="collapsed"
         )
         
@@ -226,6 +229,98 @@ def render_sidebar() -> str:
         
         return str(page)
 
+
+# =============================================================================
+# YOUTUBE DOWNLOAD PAGE
+# =============================================================================
+def render_ingestion_page() -> None:
+    """Render YouTube Ingestion GUI."""
+    st.title("📥 YouTube Ingestion")
+    
+    st.markdown("""
+    Download videos, playlists, or channels directly from YouTube.
+    Files will be saved to `data/raw/audio` and added to the database.
+    """)
+    
+    with st.form("ingest_form"):
+        # URL Input
+        urls_input = st.text_area(
+            "YouTube URLs (one per line)",
+            placeholder="https://www.youtube.com/watch?v=...\nhttps://www.youtube.com/playlist?list=...",
+            height=100
+        )
+        
+        st.subheader("Download Options")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            force_m4a = st.checkbox(
+                "Format: m4a (Original Audio)", 
+                value=True,
+                help="Download highest quality audio in m4a container. Avoids conversion loss."
+            )
+        
+        with col2:
+            get_transcript = st.checkbox(
+                "Fetch Manual Vietnamese Transcript", 
+                value=True,
+                help="Only downloads if a manual (human-created) Vietnamese transcript exists. Ignores auto-generated subs."
+            )
+            
+        submitted = st.form_submit_button("🚀 Start Download & Ingest")
+        
+    if submitted and urls_input:
+        urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
+        
+        if not urls:
+            st.warning("Please enter at least one URL.")
+            return
+
+        status_container = st.empty()
+        status_container.info(f"⏳ Processing {len(urls)} URLs... check terminal for detailed progress.")
+        
+        try:
+            # 1. Download Content
+            with st.spinner("Downloading from YouTube..."):
+                video_ids = download_youtube_content(
+                    urls=urls,
+                    download_transcript=get_transcript,
+                    force_m4a=force_m4a
+                )
+            
+            if not video_ids:
+                status_container.warning("No videos were downloaded. Check the URLs or terminal logs.")
+                return
+
+            # 2. Ingest to Database
+            # We need to reload the metadata file to get the new entries
+            import json
+            from utils.video_downloading_utils import METADATA_FILE
+            
+            new_entries = []
+            if METADATA_FILE.exists():
+                with open(METADATA_FILE, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip():
+                            entry = json.loads(line)
+                            if entry['id'] in video_ids:
+                                new_entries.append(entry)
+            
+            if new_entries:
+                stats = ingest_to_database(new_entries, DEFAULT_DB_PATH)
+                
+                status_container.success(f"""
+                ✅ **Ingestion Complete!**
+                - Downloaded: {len(video_ids)} videos
+                - Database Inserted: {stats['inserted']}
+                - Skipped/Exists: {stats['skipped']}
+                """)
+                st.balloons()
+            else:
+                status_container.error("Download finished but metadata lookup failed.")
+                
+        except Exception as e:
+            status_container.error(f"Error during ingestion: {str(e)}")
 
 # =============================================================================
 # DASHBOARD PAGE
@@ -867,6 +962,8 @@ def main() -> None:
     # Render selected page
     if page == "📊 Dashboard":
         render_dashboard()
+    elif page == "📥 YouTube Ingest":  # Add this check
+        render_ingestion_page()
     elif page == "📝 Review Videos":
         render_review_page()
     elif page == "⬆️ Upload Data":

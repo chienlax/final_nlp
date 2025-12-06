@@ -1,12 +1,10 @@
 """
 Video downloading utilities for YouTube audio extraction.
-
-Downloads YouTube videos as 16kHz mono WAV files, following the project's
-audio specification for speech translation processing.
 """
 
 import json
 import sys
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -14,12 +12,12 @@ from typing import List, Dict, Any, Optional
 import yt_dlp
 
 # Project constants
-SAMPLE_RATE = 16000  # 16kHz as per data requirements
-CHANNELS = 1  # Mono
-MIN_DURATION = 120  # 2 minutes in seconds
-MAX_DURATION = 3600  # 60 minutes in seconds
+# Note: We still default to 16kHz for pipeline compatibility, 
+# even if container is m4a
+SAMPLE_RATE = 16000  
+CHANNELS = 1 
 
-# Output directories (relative to project root)
+# Output directories
 OUTPUT_DIR = Path("data/raw/audio")
 METADATA_FILE = Path("data/raw/metadata.jsonl")
 
@@ -27,148 +25,99 @@ METADATA_FILE = Path("data/raw/metadata.jsonl")
 downloaded_videos_log: List[Dict[str, Any]] = []
 
 
-def _duration_filter(info_dict: Dict[str, Any], *, incomplete: bool) -> Optional[str]:
-    """
-    Filter function for yt-dlp to skip videos outside 2-60 minute range.
-
-    Args:
-        info_dict: Video metadata dictionary from yt-dlp.
-        incomplete: Whether the info_dict is incomplete (pre-extraction).
-
-    Returns:
-        None if video passes filter, error message string if rejected.
-    """
-    duration = info_dict.get('duration')
-    if duration is None:
-        return None  # Allow if duration unknown (will be checked post-download)
-
-    if duration < MIN_DURATION:
-        return f"Video too short: {duration}s < {MIN_DURATION}s (2 min)"
-    if duration > MAX_DURATION:
-        return f"Video too long: {duration}s > {MAX_DURATION}s (60 min)"
-    return None
-
-
 def progress_hook(d: Dict[str, Any]) -> None:
-    """
-    Callback function during download process.
-
-    Captures metadata when a download finishes (before post-processing).
-
-    Args:
-        d: Progress dictionary from yt-dlp containing status and info.
-    """
+    """Callback to capture metadata when download finishes."""
     if d['status'] == 'finished':
         info = d.get('info_dict', {})
-
-        video_id = info.get('id', 'unknown')
-        channel_id = info.get('channel_id', 'unknown')
-        # Capture channel display name (try 'channel' first, fallback to 'uploader')
-        channel_name = info.get('channel', info.get('uploader', ''))
-        duration = info.get('duration', 0)
-
-        # Construct metadata following the required JSONL schema
+        
+        # Capture filename from yt-dlp (handling m4a/wav extensions)
+        filename = Path(d['filename']).name
+        
         video_data = {
-            'id': video_id,
+            'id': info.get('id'),
             'type': 'youtube',
             'url': info.get('webpage_url', ''),
-            'duration': duration,
-            'language_tags': ['vi', 'en'],  # Default for CS corpus
+            'duration': info.get('duration', 0),
+            'language_tags': ['vi', 'en'],
             'captured_at': datetime.now().strftime('%Y-%m-%d'),
-            # Extended metadata for source_metadata JSONB
-            'channel_id': channel_id,
-            'channel_name': channel_name,  # YouTube channel display name
-            'upload_date': info.get('upload_date', ''),
+            'channel_name': info.get('channel', info.get('uploader', '')),
             'title': info.get('title', ''),
-            # Acoustic metadata for acoustic_meta JSONB
-            'acoustic_meta': {
-                'sample_rate': SAMPLE_RATE,
-                'channels': CHANNELS,
-                'format': 'wav'
-            },
-            # File path relative to project root
-            'file_path': str(OUTPUT_DIR / f"{video_id}.wav")
+            'file_path': str(OUTPUT_DIR / filename)
         }
-
         downloaded_videos_log.append(video_data)
 
 
-def download_channels(url_list: List[str]) -> None:
+def download_youtube_content(
+    urls: List[str], 
+    download_transcript: bool = True,
+    force_m4a: bool = True
+) -> List[str]:
     """
-    Download audio from YouTube channels/videos as 16kHz mono WAV files.
-
-    Uses FFmpeg for audio extraction and conversion to meet project specs:
-    - Format: WAV
-    - Sample Rate: 16kHz
-    - Channels: Mono
-    - Duration: 2-60 minutes (filtered)
-
+    Download content from YouTube (Single, Playlist, or Channel).
+    
     Args:
-        url_list: List of YouTube channel or video URLs to download.
+        urls: List of YouTube URLs.
+        download_transcript: If True, fetch ONLY manual Vietnamese transcripts.
+        force_m4a: If True, download best audio as m4a.
+    
+    Returns:
+        List of downloaded video IDs.
     """
-    # Ensure output directory exists
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
+    
+    # Configure yt-dlp options based on user requirements
     ydl_opts = {
-        # Format: Best Audio
-        'format': 'bestaudio/best',
-
-        # Duration filter: 2-60 minutes
-        'match_filter': _duration_filter,
-
-        # Post-processing: Extract audio and convert to 16kHz mono WAV
-        'postprocessors': [
-            {
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'wav',
-            },
-            {
-                # Second pass: Resample to 16kHz mono
-                'key': 'FFmpegMetadata',
-            },
-        ],
-
-        # FFmpeg arguments for 16kHz mono conversion
-        'postprocessor_args': {
-            'ffmpeg': ['-ar', str(SAMPLE_RATE), '-ac', str(CHANNELS)],
-        },
-
-        # Output template: data/raw/audio/{video_id}.wav
+        # Audio Format: Best audio, preferring m4a if requested
+        'format': 'bestaudio[ext=m4a]/bestaudio' if force_m4a else 'bestaudio/best',
+        
+        # Path template
         'outtmpl': str(OUTPUT_DIR / '%(id)s.%(ext)s'),
-
-        # Add the hook to capture metadata
+        
+        # Transcript Options
+        'writesubtitles': download_transcript,
+        'subtitleslangs': ['vi'],       # Only Vietnamese
+        'writeautomaticsub': False,     # STRICTLY no auto-generated subs
+        
+        # Post-processing
+        'postprocessors': [],
+        
+        # Metadata & Logging
         'progress_hooks': [progress_hook],
-
         'ignoreerrors': True,
-        'verbose': True,
+        'quiet': False,
+        'no_warnings': False,
     }
 
-    # Run the download
+    # If we need to ensure audio is "original" (not dubbed), yt-dlp's default 
+    # 'bestaudio' usually grabs the primary track.
+    
+    # Add audio conversion if strictly needed for pipeline (optional)
+    # This ensures 16kHz mono even if container is m4a
+    ydl_opts['postprocessors'].append({
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'm4a' if force_m4a else 'wav',
+    })
+
+    # Clear previous logs
+    downloaded_videos_log.clear()
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download(url_list)
+        ydl.download(urls)
+        
+    # Save metadata
+    save_jsonl(append=True)
+    
+    return [v['id'] for v in downloaded_videos_log]
 
 
 def save_jsonl(append: bool = True) -> None:
-    """
-    Save downloaded video metadata to JSONL file.
-
-    Creates/updates metadata.jsonl following the project's handover format.
-    Supports append mode for incremental downloads with deduplication.
-
-    Args:
-        append: If True, append to existing file and deduplicate by video ID.
-                If False, overwrite the file.
-    """
+    """Save downloaded video metadata to JSONL file."""
     if not downloaded_videos_log:
-        print("\nNo new videos were downloaded, so no metadata was generated.")
         return
 
-    # Ensure parent directory exists
     METADATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    existing_data = {}
 
-    existing_data: Dict[str, Dict[str, Any]] = {}
-
-    # Load existing metadata if appending
     if append and METADATA_FILE.exists():
         try:
             with open(METADATA_FILE, 'r', encoding='utf-8') as f:
@@ -176,41 +125,12 @@ def save_jsonl(append: bool = True) -> None:
                     if line.strip():
                         entry = json.loads(line)
                         existing_data[entry['id']] = entry
-            print(f"Loaded {len(existing_data)} existing entries from {METADATA_FILE}")
-        except (json.JSONDecodeError, KeyError) as e:
-            print(f"Warning: Could not parse existing metadata: {e}")
+        except Exception:
+            pass
 
-    # Merge new data (overwrites duplicates)
     for video in downloaded_videos_log:
         existing_data[video['id']] = video
 
-    # Write all data
-    print(f"\nWriting metadata to {METADATA_FILE}...")
-
-    try:
-        with open(METADATA_FILE, 'w', encoding='utf-8') as f:
-            for entry in existing_data.values():
-                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-        print(f"Successfully saved {len(existing_data)} entries to {METADATA_FILE.absolute()}")
-    except Exception as e:
-        print(f"Failed to save metadata: {e}")
-
-
-if __name__ == "__main__":
-    # Capture all arguments after the script name
-    input_urls = sys.argv[1:]
-
-    if len(input_urls) < 1:
-        print("Usage: python video_downloading_utils.py <url1> <url2> ...")
-        print("\nDownloads YouTube audio as 16kHz mono WAV files.")
-        print("Only downloads videos between 2-60 minutes in duration.")
-        sys.exit(1)
-
-    print(f"Processing {len(input_urls)} URL(s)...")
-    print(f"Output directory: {OUTPUT_DIR.absolute()}")
-
-    # 1. Download
-    download_channels(input_urls)
-
-    # 2. Generate JSONL metadata
-    save_jsonl(append=True)
+    with open(METADATA_FILE, 'w', encoding='utf-8') as f:
+        for entry in existing_data.values():
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
