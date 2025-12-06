@@ -10,10 +10,15 @@ Technical documentation for the Vietnamese-English Code-Switching Speech Transla
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                           PIPELINE FLOW                                   │
 │                                                                           │
-│   YouTube   ──►   Denoise   ──►   Gemini    ──►  Streamlit  ──►  Export  │
-│   Ingest        (DeepFilterNet)   Process       Review         Dataset   │
+│   YouTube   ──►   Gemini    ──►  Streamlit  ──►  Export  │
+│   Ingest         Process       Review         Dataset   │
 │                                                                           │
-│   ingested ────► denoised ──────► processed ───► reviewed ────► exported │
+│   pending ────► transcribed ───► reviewed ────► exported │
+│       │                                                                   │
+│       └───► Denoise (Optional)                                         │
+│           (DeepFilterNet)                                                │
+│           modifies audio_path,                                           │
+│           keeps state='pending'                                          │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -21,11 +26,13 @@ Technical documentation for the Vietnamese-English Code-Switching Speech Transla
 
 | State | Description | Next Action |
 |-------|-------------|-------------|
-| `ingested` | Audio downloaded from YouTube | Run denoising |
-| `denoised` | Background noise removed | Run Gemini processing |
-| `processed` | Transcription + translation complete | Review in Streamlit |
+| `pending` | Audio downloaded, ready for processing | Run Gemini OR denoise first |
+| `transcribed` | Transcription + translation complete | Review in Streamlit |
 | `reviewed` | Human review complete | Export dataset |
 | `exported` | Dataset generated | Training ready |
+| `rejected` | Video marked as unusable | Archive |
+
+**Note on Denoising:** The `denoise_audio.py` script modifies `audio_path` to point to the denoised version but keeps the state as `pending`. This ensures `gemini_process.py` can find and process the denoised audio.
 
 ---
 
@@ -77,17 +84,21 @@ The project uses SQLite with WAL mode for concurrent access.
 
 ### Videos Table
 
-Stores metadata for each ingested YouTube video.
+Stores metadata for each ingested YouTube video or uploaded audio.
 
 ```sql
 CREATE TABLE videos (
     video_id        TEXT PRIMARY KEY,
-    url             TEXT NOT NULL,
+    url             TEXT,
     title           TEXT,
     channel_name    TEXT,
+    reviewer        TEXT,                    -- NEW: Assigned reviewer
     duration_seconds INTEGER,
     audio_path      TEXT NOT NULL,
-    processing_state TEXT DEFAULT 'ingested',
+    denoised_audio_path TEXT,               -- NEW: Path to denoised version
+    processing_state TEXT DEFAULT 'pending',
+    source_type     TEXT DEFAULT 'youtube',  -- NEW: 'youtube' or 'upload'
+    upload_metadata TEXT,                    -- NEW: JSON metadata for uploads
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -101,15 +112,41 @@ Stores individual segments with transcription and translation.
 CREATE TABLE segments (
     segment_id          INTEGER PRIMARY KEY AUTOINCREMENT,
     video_id            TEXT NOT NULL,
+    chunk_id            TEXT,                    -- NEW: Reference to chunk
+    segment_index       INTEGER,
     start_ms            INTEGER NOT NULL,
     end_ms              INTEGER NOT NULL,
     transcript          TEXT,
     translation         TEXT,
-    transcript_reviewed TEXT,
-    translation_reviewed TEXT,
+    reviewed_transcript TEXT,                    -- Edited transcript
+    reviewed_translation TEXT,                   -- Edited translation
+    reviewed_start_ms   INTEGER,                 -- NEW: Adjusted timing
+    reviewed_end_ms     INTEGER,                 -- NEW: Adjusted timing
+    is_reviewed         INTEGER DEFAULT 0,       -- NEW: Review status
     is_rejected         INTEGER DEFAULT 0,
+    reviewer_notes      TEXT,                    -- NEW: Review comments
+    reviewed_at         DATETIME,                -- NEW: Review timestamp
     created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (video_id) REFERENCES videos(video_id),
+    FOREIGN KEY (chunk_id) REFERENCES chunks(chunk_id)
+);
+```
+
+### Chunks Table (NEW)
+
+For long videos (>10 minutes), audio is split into chunks for independent processing.
+
+```sql
+CREATE TABLE chunks (
+    chunk_id        TEXT PRIMARY KEY,
+    video_id        TEXT NOT NULL,
+    chunk_index     INTEGER NOT NULL,
+    start_ms        INTEGER NOT NULL,
+    end_ms          INTEGER NOT NULL,
+    audio_path      TEXT NOT NULL,
+    processing_state TEXT DEFAULT 'pending',
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (video_id) REFERENCES videos(video_id)
 );
 ```
@@ -199,20 +236,28 @@ When merging overlapping chunks, segments are deduplicated using:
 
 | Feature | Description |
 |---------|-------------|
-| Waveform Player | Interactive audio visualization |
-| Segment Grid | Editable transcript and translation |
+| Dashboard | Statistics and state overview |
+| Channel Filtering | Filter videos by channel name |
+| Chunk Selection | Review specific chunks of long videos |
+| Audio Player | Play segments with auto-pause at boundaries |
+| Segment Editor | Editable transcript and translation |
 | Duration Badges | Warnings for segments >25s |
+| Reviewer Assignment | Assign reviewers per video (dropdown) |
+| Transcript Upload/Remove | Manage transcript files per video |
+| Keyboard Shortcuts | Alt+A (approve), Alt+S (save), Alt+R (reject) |
 | Split Button | Split long segments at cursor |
 | Reject Toggle | Mark segments as rejected |
-| JSON Upload | Upload Gemini output for new videos |
-| Audio Upload | Upload raw audio files |
+| Playlist Metadata | Fetch video info from YouTube playlists |
 
 ### State Management
 
 Review state is stored in SQLite:
-- `transcript_reviewed`: Edited transcript (or NULL if unchanged)
-- `translation_reviewed`: Edited translation (or NULL if unchanged)
+- `reviewed_transcript`: Edited transcript (or NULL if unchanged)
+- `reviewed_translation`: Edited translation (or NULL if unchanged)
+- `reviewed_start_ms`/`reviewed_end_ms`: Adjusted timing (NEW)
+- `is_reviewed`: 1 if segment approved (NEW)
 - `is_rejected`: 1 if segment should be excluded
+- `reviewer_notes`: Comments from reviewer (NEW)
 
 ---
 
@@ -245,23 +290,32 @@ audio/VIDEO_ID_000002.wav	Xin chào	Hello	2300
 
 ```
 1. INGEST
-   YouTube URL → yt-dlp → data/raw/audio/VIDEO_ID.wav
-                       → SQLite: videos table (state=ingested)
+   YouTube URL → yt-dlp → data/raw/audio/{channel_id}/{video_id}.wav
+                       → SQLite: videos table (state=pending)
+                       → Queue chunking jobs to data/raw/chunk_jobs.jsonl
 
-2. DENOISE
+2. CHUNK (Optional, for videos >10 min)
+   data/raw/audio/*.wav → chunk_audio.py → data/raw/chunks/{video_id}/chunk_*.wav
+                                         → SQLite: chunks table
+
+3. DENOISE (Optional)
    data/raw/audio/*.wav → DeepFilterNet → data/denoised/*_denoised.wav
-                                        → SQLite: update audio_path, state=denoised
+                                        → SQLite: update denoised_audio_path
+                                        → Keep state='pending'
 
-3. PROCESS
-   Denoised audio → Gemini 2.5 Pro → JSON segments
-                                   → SQLite: segments table, state=processed
+4. PROCESS
+   Audio (original or denoised) → Gemini 2.5 Pro → JSON segments
+                                                  → SQLite: segments table, state=transcribed
+   Can process full video OR individual chunks with --chunk-id flag
 
-4. REVIEW
+5. REVIEW
    Streamlit app ← SQLite: segments
-   User edits   → SQLite: transcript_reviewed, translation_reviewed
-   User rejects → SQLite: is_rejected=1
+   User edits   → SQLite: reviewed_transcript, reviewed_translation
+   User assigns → SQLite: reviewer column
+   User uploads → Transcript files managed per video
+   User rejects → SQLite: is_rejected=1, state=reviewed
 
-5. EXPORT
+6. EXPORT
    SQLite: approved segments → pydub: cut audio
                             → data/export/audio/*.wav
                             → data/export/manifest.tsv
@@ -277,10 +331,14 @@ final_nlp/
 ├── data/
 │   ├── lab_data.db          # SQLite database
 │   ├── raw/
-│   │   ├── audio/           # Original YouTube audio
+│   │   ├── audio/           # Original YouTube audio (organized by channel)
+│   │   ├── chunks/          # NEW: Chunked audio for long videos
+│   │   ├── chunk_jobs.jsonl # NEW: Chunking queue
 │   │   └── metadata.jsonl   # Download metadata
 │   ├── denoised/            # DeepFilterNet output
 │   ├── segments/            # Intermediate segments
+│   ├── review/              # NEW: Uploaded transcripts
+│   │   └── transcripts/
 │   └── export/              # Final dataset
 │       ├── audio/           # Training audio files
 │       └── manifest.tsv     # Dataset manifest
@@ -289,7 +347,9 @@ final_nlp/
 │   ├── ingest_youtube.py    # YouTube download
 │   ├── review_app.py        # Streamlit app
 │   ├── export_final.py      # Dataset export
+│   ├── setup_gdrive_auth.py # Google Drive OAuth
 │   ├── preprocessing/
+│   │   ├── chunk_audio.py       # NEW: Audio chunking
 │   │   ├── denoise_audio.py     # DeepFilterNet
 │   │   └── gemini_process.py    # Transcription
 │   └── utils/
@@ -303,7 +363,8 @@ final_nlp/
     ├── 03_command_reference.md
     ├── 04_troubleshooting.md
     ├── 05_api_reference.md
-    └── 06_known_caveats.md
+    ├── 06_known_caveats.md
+    └── 07_todo-list.md
 ```
 
 ---

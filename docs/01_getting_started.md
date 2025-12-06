@@ -17,7 +17,7 @@ Quick setup guide for the Vietnamese-English Code-Switching Speech Translation p
 
 ## Architecture Overview
 
-This project uses a **lightweight local-first architecture** with optional remote access via Tailscale:
+This project uses a **lightweight local-first architecture**:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -26,26 +26,17 @@ This project uses a **lightweight local-first architecture** with optional remot
 │  │   SQLite    │  │  Streamlit  │  │ Audio Files │               │
 │  │ lab_data.db │  │   (8501)    │  │  data/raw/  │               │
 │  └─────────────┘  └─────────────┘  └─────────────┘               │
-│                           │                                       │
-│                    Tailscale (Optional)                           │
-│                    for remote access                              │
 └──────────────────────────────────────────────────────────────────┘
                             │
-           ┌────────────────┼────────────────┐
-           │                │                │
-     ┌─────▼─────┐    ┌─────▼─────┐    ┌─────▼─────┐
-     │ Reviewer  │    │ Reviewer  │    │ Reviewer  │
-     │ (Browser) │    │ (Browser) │    │ (Browser) │
-     └───────────┘    └───────────┘    └───────────┘
-           Access via Tailscale URL or localhost:8501
+                    Open localhost:8501
+                    in your web browser
 ```
 
 **Benefits**:
-- ✅ No Docker required for basic usage
+- ✅ No Docker required
 - ✅ SQLite database - portable, no server needed
 - ✅ Streamlit review app - intuitive web interface
-- ✅ Tailscale for secure remote access
-- ✅ Hourly backups to Google Drive
+- ✅ Works entirely offline after initial setup
 
 ---
 
@@ -66,9 +57,7 @@ The script will:
 1. ✅ Check Python and FFmpeg are installed
 2. ✅ Create virtual environment
 3. ✅ Install all dependencies
-4. ✅ Initialize SQLite database
-5. ✅ Configure Tailscale (optional, requires admin)
-6. ✅ Setup hourly backups to Google Drive
+4. ✅ Initialize SQLite database with schema upgrades
 
 ### 2. Activate Environment
 
@@ -134,11 +123,13 @@ streamlit run src/review_app.py
 ```
 
 Open http://localhost:8501 in your browser to:
-- View segments with waveform visualization
+- Filter by channel and chunk
+- Play audio with auto-pause at segment boundaries
 - Edit transcript and translation
 - Split long segments (>25s)
+- Assign reviewers and manage workflow
+- Upload/remove transcripts
 - Approve or reject segments
-- Upload raw audio files for processing
 
 ### Step 5: Export Dataset
 
@@ -154,18 +145,11 @@ Output: `data/export/audio/` + `data/export/manifest.tsv`
 
 ---
 
-## Remote Access with Tailscale
+## Advanced: Remote Access with Tailscale (Optional)
 
-For team members to access your Streamlit app remotely:
+For team members to access your Streamlit app remotely over secure VPN:
 
 ### Server Setup
-
-```powershell
-# Run setup with Tailscale configuration (requires admin)
-.\setup.ps1
-```
-
-Or manually:
 
 ```powershell
 # Install Tailscale
@@ -181,8 +165,10 @@ tailscale serve https / http://127.0.0.1:8501
 ### Team Member Access
 
 1. Install Tailscale on your device
-2. Join the same Tailscale network
+2. Join the same Tailscale network  
 3. Access via `https://<machine-name>.<tailnet-name>.ts.net`
+
+**Note:** This is completely optional. For local team access, use standard network sharing or VPN solutions.
 
 ---
 
@@ -200,15 +186,20 @@ tailscale serve https / http://127.0.0.1:8501
 
 ### DVC / Google Drive (Optional)
 
-For data versioning with DVC:
+For data versioning and backups with DVC:
 
 ```powershell
 # Initialize DVC remote
 dvc remote add -d gdrive gdrive://<folder-id>
 
-# Run OAuth flow
+# Run OAuth flow for authentication
 python src/setup_gdrive_auth.py
+
+# Manual backups can be done via:
+# dvc push
 ```
+
+**Note:** Automated hourly backups are not configured by default. Set up your own backup schedule if needed.
 
 ---
 

@@ -35,6 +35,8 @@ from db import get_connection, init_database, insert_video
 from utils.video_downloading_utils import (
     download_channels,
     save_jsonl,
+    queue_chunk_jobs,
+    ensure_js_runtime,
     METADATA_FILE,
     OUTPUT_DIR,
 )
@@ -160,7 +162,8 @@ def run_pipeline(
     db_path: Path,
     skip_download: bool = False,
     dry_run: bool = False,
-    download_transcript: bool = False
+    download_transcript: bool = False,
+    max_retries: int = 2
 ) -> None:
     """
     Run the full YouTube ingestion pipeline.
@@ -180,12 +183,16 @@ def run_pipeline(
 
     # Step 1: Download audio
     if not skip_download:
-        logger.info("\n[STEP 1/2] Downloading audio files...")
+        logger.info("\n[STEP 1/3] Downloading audio files...")
         logger.info(f"Output directory: {OUTPUT_DIR.absolute()}")
-        download_channels(urls, download_transcript=download_transcript)
+        try:
+            ensure_js_runtime()
+        except RuntimeError as err:
+            logger.warning("%s -- proceeding with extractor args fallback", err)
+        download_channels(urls, download_transcript=download_transcript, max_retries=max_retries)
         save_jsonl(append=True)
     else:
-        logger.info("\n[STEP 1/2] Skipping download (using existing metadata)")
+        logger.info("\n[STEP 1/3] Skipping download (using existing metadata)")
 
     # Load metadata
     metadata_entries: List[Dict[str, Any]] = []
@@ -205,8 +212,12 @@ def run_pipeline(
 
     logger.info(f"\nLoaded {len(metadata_entries)} entries from metadata")
 
-    # Step 2: Insert into database
-    logger.info("\n[STEP 2/2] Ingesting to database...")
+    # Step 2: Queue chunking
+    logger.info("\n[STEP 2/3] Queuing chunking jobs...")
+    queue_chunk_jobs(metadata_entries)
+
+    # Step 3: Insert into database
+    logger.info("\n[STEP 3/3] Ingesting to database...")
     stats = ingest_to_database(
         metadata_entries,
         db_path=db_path,
@@ -273,6 +284,12 @@ Examples:
         action='store_true',
         help='Download manual Vietnamese subtitles if available'
     )
+    parser.add_argument(
+        '--retries',
+        type=int,
+        default=2,
+        help='Number of retry attempts for yt-dlp downloads (default: 2)'
+    )
 
     args = parser.parse_args()
 
@@ -286,7 +303,8 @@ Examples:
         db_path=args.db,
         skip_download=args.skip_download,
         dry_run=args.dry_run,
-        download_transcript=args.download_transcript
+        download_transcript=args.download_transcript,
+        max_retries=args.retries
     )
 
 

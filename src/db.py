@@ -128,6 +128,40 @@ def init_database(db_path: Optional[Path] = None) -> None:
         logger.info(f"Database initialized: {db_path or DEFAULT_DB_PATH}")
 
 
+def ensure_schema_upgrades(db_path: Optional[Path] = None) -> None:
+    """Apply additive schema updates for reviewer/chunks without data loss."""
+    with get_db(db_path) as db:
+        # Add reviewer column if missing
+        cols = {row[1] for row in db.execute("PRAGMA table_info(videos)").fetchall()}
+        if "reviewer" not in cols:
+            db.execute("ALTER TABLE videos ADD COLUMN reviewer TEXT")
+
+        # Add chunk_id to segments if missing
+        seg_cols = {row[1] for row in db.execute("PRAGMA table_info(segments)").fetchall()}
+        if "chunk_id" not in seg_cols:
+            db.execute("ALTER TABLE segments ADD COLUMN chunk_id INTEGER")
+
+        # Create chunks table if absent
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chunks (
+                chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id TEXT NOT NULL REFERENCES videos(video_id) ON DELETE CASCADE,
+                chunk_index INTEGER NOT NULL,
+                start_ms INTEGER NOT NULL,
+                end_ms INTEGER NOT NULL,
+                audio_path TEXT NOT NULL,
+                processing_state TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (processing_state IN ('pending', 'transcribed', 'reviewed', 'exported', 'rejected')),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(video_id, chunk_index)
+            );
+            """
+        )
+        db.execute("CREATE INDEX IF NOT EXISTS idx_chunks_video ON chunks(video_id);")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_segments_chunk ON segments(chunk_id);")
+
+
 # =============================================================================
 # VIDEO OPERATIONS
 # =============================================================================
@@ -139,6 +173,7 @@ def insert_video(
     audio_path: str,
     url: Optional[str] = None,
     channel_name: Optional[str] = None,
+    reviewer: Optional[str] = None,
     source_type: str = "youtube",
     upload_metadata: Optional[Dict[str, Any]] = None,
     db_path: Optional[Path] = None
@@ -164,15 +199,16 @@ def insert_video(
         db.execute(
             """
             INSERT INTO videos (
-                video_id, url, title, channel_name, duration_seconds,
+                video_id, url, title, channel_name, reviewer, duration_seconds,
                 audio_path, source_type, upload_metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 video_id,
                 url,
                 title,
                 channel_name,
+                reviewer,
                 duration_seconds,
                 audio_path,
                 source_type,
@@ -252,6 +288,103 @@ def update_video_state(
         logger.info(f"Updated video {video_id} state to: {new_state}")
 
 
+# =============================================================================
+# CHUNK OPERATIONS
+# =============================================================================
+
+def insert_chunk(
+    video_id: str,
+    chunk_index: int,
+    start_ms: int,
+    end_ms: int,
+    audio_path: str,
+    processing_state: str = "pending",
+    db_path: Optional[Path] = None,
+) -> int:
+    """Insert a chunk record and return its id."""
+    with get_db(db_path) as db:
+        cursor = db.execute(
+            """
+            INSERT INTO chunks (
+                video_id, chunk_index, start_ms, end_ms, audio_path, processing_state
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (video_id, chunk_index, start_ms, end_ms, audio_path, processing_state)
+        )
+        return cursor.lastrowid
+
+
+def get_chunks_by_video(
+    video_id: str,
+    db_path: Optional[Path] = None
+) -> List[Dict[str, Any]]:
+    with get_db(db_path, read_only=True) as db:
+        cursor = db.execute(
+            """
+            SELECT chunk_id, video_id, chunk_index, start_ms, end_ms, audio_path, processing_state
+            FROM chunks
+            WHERE video_id = ?
+            ORDER BY chunk_index ASC
+            """,
+            (video_id,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def update_chunk_state(
+    chunk_id: int,
+    new_state: str,
+    db_path: Optional[Path] = None
+) -> None:
+    with get_db(db_path) as db:
+        db.execute(
+            "UPDATE chunks SET processing_state = ? WHERE chunk_id = ?",
+            (new_state, chunk_id)
+        )
+
+
+def aggregate_chunk_state(
+    video_id: str,
+    db_path: Optional[Path] = None
+) -> Optional[str]:
+    """Return a consensus state if all chunks match; otherwise None."""
+    chunks = get_chunks_by_video(video_id, db_path=db_path)
+    if not chunks:
+        return None
+    states = {c.get("processing_state") for c in chunks}
+    return states.pop() if len(states) == 1 else None
+
+
+def get_chunk(
+    chunk_id: int,
+    db_path: Optional[Path] = None
+) -> Optional[Dict[str, Any]]:
+    with get_db(db_path, read_only=True) as db:
+        cursor = db.execute(
+            """
+            SELECT chunk_id, video_id, chunk_index, start_ms, end_ms, audio_path, processing_state
+            FROM chunks WHERE chunk_id = ?
+            """,
+            (chunk_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def update_video_reviewer(
+    video_id: str,
+    reviewer: Optional[str],
+    db_path: Optional[Path] = None
+) -> None:
+    """Assign or clear reviewer for a video."""
+    with get_db(db_path) as db:
+        db.execute(
+            "UPDATE videos SET reviewer = ? WHERE video_id = ?",
+            (reviewer, video_id)
+        )
+        logger.info("Updated reviewer for %s -> %s", video_id, reviewer)
+
+
 def update_video_denoised_path(
     video_id: str,
     denoised_path: str,
@@ -280,6 +413,7 @@ def update_video_denoised_path(
 def insert_segments(
     video_id: str,
     segments: List[Dict[str, Any]],
+    chunk_id: Optional[int] = None,
     db_path: Optional[Path] = None
 ) -> int:
     """
@@ -298,7 +432,13 @@ def insert_segments(
     """
     with get_db(db_path) as db:
         # Clear existing segments for this video
-        db.execute("DELETE FROM segments WHERE video_id = ?", (video_id,))
+        if chunk_id is None:
+            db.execute("DELETE FROM segments WHERE video_id = ?", (video_id,))
+        else:
+            db.execute(
+                "DELETE FROM segments WHERE video_id = ? AND chunk_id = ?",
+                (video_id, chunk_id)
+            )
 
         # Insert new segments
         inserted = 0
@@ -319,12 +459,13 @@ def insert_segments(
             db.execute(
                 """
                 INSERT INTO segments (
-                    video_id, segment_index, start_ms, end_ms,
+                    video_id, chunk_id, segment_index, start_ms, end_ms,
                     transcript, translation
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     video_id,
+                    chunk_id,
                     idx,
                     start_ms,
                     end_ms,
@@ -341,6 +482,7 @@ def insert_segments(
 
 def get_segments(
     video_id: str,
+    chunk_id: Optional[int] = None,
     include_rejected: bool = False,
     db_path: Optional[Path] = None
 ) -> List[Dict[str, Any]]:
@@ -376,11 +518,15 @@ def get_segments(
             FROM segments 
             WHERE video_id = ?
         """
+        params: List[Any] = [video_id]
+        if chunk_id is not None:
+            query += " AND (chunk_id = ? OR chunk_id IS NULL)"
+            params.append(chunk_id)
         if not include_rejected:
             query += " AND is_rejected = 0"
         query += " ORDER BY segment_index ASC"
 
-        cursor = db.execute(query, (video_id,))
+        cursor = db.execute(query, tuple(params))
         return [dict(row) for row in cursor.fetchall()]
 
 

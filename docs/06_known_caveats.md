@@ -56,9 +56,36 @@ streamlit run src/review_app.py
 **Issue**: Database must be backed up manually or via scheduled task.
 
 **Mitigation**: 
-- `setup.ps1` creates a daily backup task (if user accepts)
-- DVC tracks `data/db_sync.dvc` for version control
 - Manual backup: `Copy-Item data/lab_data.db data/backups/`
+- DVC tracks `data/db_sync.dvc` for version control
+- Google Drive sync script available: `src/setup_gdrive_auth.py`
+
+**Note**: Automated hourly backups are not configured by default. Set up your own backup schedule if needed.
+
+---
+
+### State Transition After Denoising (IMPORTANT)
+
+**Issue**: `denoise_audio.py` updates `denoised_audio_path` but the behavior regarding `processing_state` may vary.
+
+**Current Behavior**: Denoising keeps state as `pending` so `gemini_process.py` can find videos.
+
+**Impact**: If state is set to `denoised`, Gemini processing won't find the video (it looks for `pending` state).
+
+**Workaround** (if issue occurs):
+```powershell
+# Reset state to pending after denoising
+python -c "from src.db import get_db; db = get_db(); db.execute('UPDATE videos SET processing_state=\"pending\" WHERE processing_state=\"denoised\"'); db.commit()"
+```
+
+**Proper Workflow**:
+1. Ingest (state=`pending`)
+2. (Optional) Denoise (keeps state=`pending`, updates `denoised_audio_path`)
+3. Process with Gemini (looks for state=`pending`, uses denoised path if available)
+4. Review (state=`transcribed` → `reviewed`)
+5. Export (state=`exported`)
+
+**Status**: Documented in [Complete Workflow Guide](08_complete_workflow.md).
 
 ---
 
@@ -288,13 +315,35 @@ icacls "data/lab_data.db" /inheritance:r /grant:r "$($env:USERNAME):(F)"
 
 ## Future Improvements
 
-### Planned Enhancements
+### Planned Features
+
+**Currently Under Development:**
+
+1. **Audio Refinement Tab**: Wire up DeepFilterNet UI in Streamlit (placeholder exists)
+2. **Reviewer Assignment by Channel**: Currently per-video, expand to channel-level defaults
+3. **Automated Download/Chunking Pipeline**: Background job queue for video processing
+4. **Improved State Handling**: Unified state machine for all processing steps
+
+**Docker Deployment (Planned):**
+
+- Docker Compose configuration exists but not actively maintained
+- Planned for team deployments requiring isolated environments
+- Current focus is on local SQLite + Streamlit workflow
+- Files: `Dockerfile.ingest`, `Dockerfile.preprocess`, `docker-compose.yml`
+
+**Automation Features (Planned):**
+
+- Scheduled hourly backups to Google Drive (script exists, not scheduled by default)
+- Automated chunking queue processing
+- Batch processing orchestration
+- Progress notifications
+
+### Longer-Term Enhancements
 
 1. **Multi-user support**: User authentication and per-user review tracking
 2. **Batch review UI**: Review multiple segments simultaneously
 3. **Automatic quality metrics**: Calculate and display quality scores
 4. **Incremental export**: Export only newly reviewed segments
-5. **Backup automation**: Built-in backup scheduling
 
 ### Under Consideration
 
@@ -302,6 +351,7 @@ icacls "data/lab_data.db" /inheritance:r /grant:r "$($env:USERNAME):(F)"
 2. **Real-time collaboration**: Multiple reviewers on same video
 3. **Mobile-friendly review**: Responsive Streamlit layout
 4. **Audio waveform visualization**: Visual editing interface
+5. **Prompt engineering**: Improve Gemini timestamp accuracy
 
 ---
 

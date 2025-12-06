@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS videos (
     url TEXT,                                       -- Source URL (NULL for manual uploads)
     title TEXT NOT NULL,
     channel_name TEXT,                              -- YouTube channel or uploader name
+    reviewer TEXT,                                  -- Assigned reviewer (per video)
     duration_seconds REAL NOT NULL,                 -- Total audio duration
     audio_path TEXT NOT NULL,                       -- Relative path to audio file
     denoised_audio_path TEXT,                       -- Path to denoised audio (if processed)
@@ -51,6 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_videos_created ON videos(created_at);
 CREATE TABLE IF NOT EXISTS segments (
     segment_id INTEGER PRIMARY KEY AUTOINCREMENT,
     video_id TEXT NOT NULL REFERENCES videos(video_id) ON DELETE CASCADE,
+    chunk_id INTEGER REFERENCES chunks(chunk_id) ON DELETE CASCADE,
     segment_index INTEGER NOT NULL,                 -- Order within video (0-indexed)
     
     -- Timestamps in milliseconds for precision
@@ -84,8 +86,30 @@ CREATE TABLE IF NOT EXISTS segments (
 
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_segments_video ON segments(video_id);
+CREATE INDEX IF NOT EXISTS idx_segments_chunk ON segments(chunk_id);
 CREATE INDEX IF NOT EXISTS idx_segments_reviewed ON segments(is_reviewed);
 CREATE INDEX IF NOT EXISTS idx_segments_rejected ON segments(is_rejected);
+
+
+-- =============================================================================
+-- CHUNKS TABLE
+-- =============================================================================
+-- Optional table to track chunked audio files derived from long sources.
+
+CREATE TABLE IF NOT EXISTS chunks (
+    chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id TEXT NOT NULL REFERENCES videos(video_id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    start_ms INTEGER NOT NULL,
+    end_ms INTEGER NOT NULL,
+    audio_path TEXT NOT NULL,
+    processing_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (processing_state IN ('pending', 'transcribed', 'reviewed', 'exported', 'rejected')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(video_id, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_video ON chunks(video_id);
 
 
 -- =============================================================================

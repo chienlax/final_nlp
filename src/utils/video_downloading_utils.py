@@ -1,17 +1,17 @@
-"""
-Video downloading utilities for YouTube audio extraction.
-
-Downloads YouTube videos as 16kHz mono WAV files, following the project's
-audio specification for speech translation processing.
-"""
+"""YouTube download helpers with retry, JS runtime checks, and channel foldering."""
 
 import json
+import logging
+import shutil
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 import yt_dlp
+
+logger = logging.getLogger(__name__)
 
 # Project constants
 SAMPLE_RATE = 16000  # 16kHz as per data requirements
@@ -22,9 +22,28 @@ MAX_DURATION = 7200  # 120 minutes in seconds
 # Output directories (relative to project root)
 OUTPUT_DIR = Path("data/raw/audio")
 METADATA_FILE = Path("data/raw/metadata.jsonl")
+CHUNK_QUEUE_FILE = Path("data/raw/chunk_jobs.jsonl")
 
 # Global list to store video data for JSONL output
 downloaded_videos_log: List[Dict[str, Any]] = []
+
+
+def ensure_js_runtime() -> None:
+    """Verify a JS runtime exists to avoid yt-dlp EJS warnings."""
+    runtimes = ["node", "deno", "bun"]
+    for rt in runtimes:
+        if shutil.which(rt):
+            logger.debug("Found JS runtime: %s", rt)
+            return
+    raise RuntimeError(
+        "No JavaScript runtime found (node/deno/bun). Install one to avoid yt-dlp player issues."
+    )
+
+
+def sanitize_channel_name(name: str) -> str:
+    """Return filesystem-friendly channel name."""
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in (name or ""))
+    return safe or "unknown_channel"
 
 
 def _duration_filter(info_dict: Dict[str, Any], *, incomplete: bool) -> Optional[str]:
@@ -62,9 +81,10 @@ def progress_hook(d: Dict[str, Any]) -> None:
         info = d.get('info_dict', {})
 
         video_id = info.get('id', 'unknown')
-        channel_id = info.get('channel_id', 'unknown')
+        channel_id = info.get('channel_id', 'unknown_channel')
         # Capture channel display name (try 'channel' first, fallback to 'uploader')
         channel_name = info.get('channel', info.get('uploader', ''))
+        channel_folder = sanitize_channel_name(channel_id)
         duration = info.get('duration', 0)
 
         # Construct metadata following the required JSONL schema
@@ -86,14 +106,19 @@ def progress_hook(d: Dict[str, Any]) -> None:
                 'channels': CHANNELS,
                 'format': 'wav'
             },
-            # File path relative to project root
-            'file_path': str(OUTPUT_DIR / f"{video_id}.wav")
+            # File path relative to project root, grouped by channel
+            'file_path': str(OUTPUT_DIR / channel_folder / f"{video_id}.wav")
         }
 
         downloaded_videos_log.append(video_data)
 
 
-def download_channels(url_list: List[str], download_transcript: bool = False) -> None:
+def download_channels(
+    url_list: List[str],
+    download_transcript: bool = False,
+    max_retries: int = 2,
+    extractor_args_default: bool = True
+) -> None:
     """
     Download audio from YouTube channels/videos as 16kHz mono WAV files.
 
@@ -109,6 +134,14 @@ def download_channels(url_list: List[str], download_transcript: bool = False) ->
     """
     # Ensure output directory exists
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # JS runtime check (raises early to avoid partial downloads)
+    try:
+        ensure_js_runtime()
+    except RuntimeError as err:
+        logger.warning(str(err))
+        if extractor_args_default:
+            logger.info("Falling back to yt-dlp extractor args to reduce JS dependency warnings.")
     
     # Base options
     ydl_opts = {
@@ -135,14 +168,17 @@ def download_channels(url_list: List[str], download_transcript: bool = False) ->
             'ffmpeg': ['-ar', str(SAMPLE_RATE), '-ac', str(CHANNELS)],
         },
 
-        # Output template: data/raw/audio/{video_id}.wav
-        'outtmpl': str(OUTPUT_DIR / '%(id)s.%(ext)s'),
+        # Output template grouped by channel id to keep folder names stable
+        'outtmpl': str(OUTPUT_DIR / '%(channel_id)s' / '%(id)s.%(ext)s'),
+        'outtmpl_na_placeholder': 'unknown_channel',
+        'windowsfilenames': True,
 
         # Add the hook to capture metadata
         'progress_hooks': [progress_hook],
 
         'ignoreerrors': True,
         'verbose': True,
+        'extractor_args': {'youtube': {'player_client': ['default']}} if extractor_args_default else {},
     }
 
     # Add transcript options if requested
@@ -154,9 +190,19 @@ def download_channels(url_list: List[str], download_transcript: bool = False) ->
             'subtitlesformat': 'json3/vtt',  # Prefer JSON or VTT
         })
 
-    # Run the download
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download(url_list)
+    # Run the download with retries
+    for attempt in range(1, max_retries + 2):
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download(url_list)
+            break
+        except Exception as exc:
+            if attempt > max_retries:
+                logger.error("Download failed after %s attempts: %s", attempt, exc)
+                raise
+            backoff = min(5 * attempt, 20)
+            logger.warning("Download attempt %s failed (%s). Retrying in %ss...", attempt, exc, backoff)
+            time.sleep(backoff)
 
 
 def fetch_playlist_metadata(url: str) -> List[Dict[str, Any]]:
@@ -249,6 +295,29 @@ def save_jsonl(append: bool = True) -> None:
         print(f"Successfully saved {len(existing_data)} entries to {METADATA_FILE.absolute()}")
     except Exception as e:
         print(f"Failed to save metadata: {e}")
+
+
+def queue_chunk_jobs(entries: List[Dict[str, Any]]) -> None:
+    """Append chunking jobs for downstream processing."""
+    if not entries:
+        return
+
+    CHUNK_QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with open(CHUNK_QUEUE_FILE, 'a', encoding='utf-8') as f:
+            for entry in entries:
+                job = {
+                    'id': entry.get('id'),
+                    'file_path': entry.get('file_path'),
+                    'channel_name': entry.get('channel_name'),
+                    'queued_at': datetime.now().isoformat(),
+                    'prompt_alignment': True,
+                }
+                f.write(json.dumps(job, ensure_ascii=False) + '\n')
+        logger.info("Queued %s chunking jobs -> %s", len(entries), CHUNK_QUEUE_FILE)
+    except Exception as exc:
+        logger.error("Failed to queue chunking jobs: %s", exc)
 
 
 if __name__ == "__main__":

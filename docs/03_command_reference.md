@@ -72,6 +72,9 @@ python src/ingest_youtube.py "URL1" "URL2" "URL3"
 # From channel
 python src/ingest_youtube.py "https://www.youtube.com/@ChannelName"
 
+# Download with manual Vietnamese transcript
+python src/ingest_youtube.py "URL" --download-transcript-vi
+
 # Re-ingest from existing metadata (skip download)
 python src/ingest_youtube.py --skip-download
 
@@ -87,6 +90,7 @@ python src/ingest_youtube.py --db data/custom.db "URL"
 | Option | Description |
 |--------|-------------|
 | `--skip-download` | Use existing metadata.jsonl |
+| `--download-transcript-vi` | Download manual Vietnamese transcript if available |
 | `--db PATH` | Custom SQLite database path |
 | `--dry-run` | Simulate without writing to DB |
 
@@ -99,7 +103,7 @@ python src/ingest_youtube.py --db data/custom.db "URL"
 Remove background noise using DeepFilterNet.
 
 ```powershell
-# Denoise all pending videos (state=ingested)
+# Denoise all pending videos (state=pending)
 python src/preprocessing/denoise_audio.py --all
 
 # Denoise specific video
@@ -125,16 +129,60 @@ python src/preprocessing/denoise_audio.py --all --db data/custom.db
 | `--output DIR` | Output directory for denoised audio |
 | `--db PATH` | Custom SQLite database path |
 
+**Note:** Denoising updates `denoised_audio_path` but keeps `processing_state='pending'` for Gemini processing.
+
+### chunk_audio.py (NEW)
+
+Split long videos into manageable chunks for processing.
+
+```powershell
+# Chunk specific video
+python src/preprocessing/chunk_audio.py --video-id VIDEO_ID
+
+# Chunk all pending long videos (>10 minutes)
+python src/preprocessing/chunk_audio.py --all
+
+# Custom chunk duration (in seconds)
+python src/preprocessing/chunk_audio.py --video-id VIDEO_ID --chunk-duration 600
+
+# Custom database
+python src/preprocessing/chunk_audio.py --all --db data/custom.db
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--all` | Chunk all pending long videos |
+| `--video-id ID` | Chunk specific video |
+| `--chunk-duration N` | Chunk duration in seconds (default: 600) |
+| `--db PATH` | Custom SQLite database path |
+
+**Chunking Strategy:**
+- Default chunk size: 10 minutes (600 seconds)
+- Overlap: 10 seconds between chunks
+- Output: `data/raw/chunks/{video_id}/chunk_*.wav`
+- Creates chunk records in database
+
 ### gemini_process.py
 
 Transcribe and translate audio using Gemini 2.5 Pro.
 
 ```powershell
-# Process all pending videos (state=denoised)
+# Process all pending videos (state=pending)
 python src/preprocessing/gemini_process.py --all
 
 # Process specific video
 python src/preprocessing/gemini_process.py --video-id VIDEO_ID
+
+# Process specific chunk (for chunked videos)
+python src/preprocessing/gemini_process.py --video-id VIDEO_ID --chunk-id CHUNK_ID
+
+# Dry run (test without API calls)
+python src/preprocessing/gemini_process.py --video-id VIDEO_ID --dry-run
+
+# Standalone mode (process audio file directly, no DB)
+python src/preprocessing/gemini_process.py --standalone path/to/audio.wav
 
 # Limit number of videos
 python src/preprocessing/gemini_process.py --all --limit 3
@@ -147,6 +195,17 @@ python src/preprocessing/gemini_process.py --all --verbose
 ```
 
 **Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--all` | Process all pending videos |
+| `--video-id ID` | Process specific video |
+| `--chunk-id ID` | Process specific chunk (requires --video-id) |
+| `--standalone PATH` | Process audio file directly without database |
+| `--dry-run` | Test mode without actual API calls |
+| `--limit N` | Maximum videos to process |
+| `--db PATH` | Custom SQLite database path |
+| `--verbose` | Enable debug logging |
 
 | Option | Description |
 |--------|-------------|
@@ -191,13 +250,20 @@ streamlit run src/review_app.py --server.headless true
 
 | Feature | Description |
 |---------|-------------|
+| Dashboard | Statistics and state overview |
 | Video selector | Choose video to review |
-| Waveform player | Click to play, visualize audio |
-| Segment grid | Edit transcript/translation |
+| Channel filter | Filter videos by channel name |
+| Chunk selector | Select specific chunk for chunked videos |
+| Audio player | Click to play with auto-pause at segment end |
+| Segment editor | Edit transcript/translation |
 | Duration badges | Warnings for >25s segments |
+| Reviewer assignment | Assign reviewers via dropdown (with add option) |
+| Transcript upload/remove | Manage transcript files per video |
+| Keyboard shortcuts | Alt+A (approve), Alt+S (save), Alt+R (reject) |
 | Split button | Split long segments |
 | Reject toggle | Exclude segments |
 | Upload tab | Add new videos via file upload |
+| Download Audios tab | YouTube ingestion with playlist metadata |
 
 ---
 
@@ -417,16 +483,19 @@ tailscale serve reset
 # 1. Ingest
 python src/ingest_youtube.py "https://www.youtube.com/watch?v=VIDEO_ID"
 
-# 2. Denoise
+# 2. (Optional) Chunk if long video (>10 min)
+python src/preprocessing/chunk_audio.py --video-id VIDEO_ID
+
+# 3. (Optional) Denoise
 python src/preprocessing/denoise_audio.py --video-id VIDEO_ID
 
-# 3. Process
+# 4. Process with Gemini
 python src/preprocessing/gemini_process.py --video-id VIDEO_ID
 
-# 4. Review (in browser)
+# 5. Review (in browser)
 streamlit run src/review_app.py
 
-# 5. Export
+# 6. Export
 python src/export_final.py --video-id VIDEO_ID
 ```
 
@@ -436,8 +505,13 @@ python src/export_final.py --video-id VIDEO_ID
 # Ingest multiple videos
 python src/ingest_youtube.py "URL1" "URL2" "URL3"
 
-# Process all pending
+# Chunk long videos
+python src/preprocessing/chunk_audio.py --all
+
+# (Optional) Denoise all pending
 python src/preprocessing/denoise_audio.py --all
+
+# Process all pending
 python src/preprocessing/gemini_process.py --all
 
 # Export all approved
@@ -466,6 +540,7 @@ WHERE is_rejected = 0;
 
 ## Next Steps
 
+- 📖 [Complete Workflow Guide](08_complete_workflow.md) - Detailed workflow examples
 - 🔧 [Troubleshooting](04_troubleshooting.md) - Common issues
 - 📚 [API Reference](05_api_reference.md) - Developer documentation
 - ⚠️ [Known Caveats](06_known_caveats.md) - Limitations

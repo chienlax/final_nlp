@@ -77,6 +77,8 @@ python src/export_final.py
 | [04_troubleshooting.md](docs/04_troubleshooting.md) | Common issues and solutions |
 | [05_api_reference.md](docs/05_api_reference.md) | Developer API documentation |
 | [06_known_caveats.md](docs/06_known_caveats.md) | Known issues and limitations |
+| [07_todo-list.md](docs/07_todo-list.md) | Active tasks and completed items |
+| [08_complete_workflow.md](docs/08_complete_workflow.md) | **Detailed workflow examples** |
 | [CHANGELOG.md](CHANGELOG.md) | Project history and updates |
 
 ---
@@ -87,13 +89,17 @@ python src/export_final.py
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                           PIPELINE FLOW                                   │
 │                                                                           │
-│  YouTube ──► Denoise ──► Gemini Process ──► Streamlit ──► Export Dataset │
-│  Ingest     (DeepFilterNet)  (Transcribe+    Review      (2-25s WAV +    │
-│                               Translate)                  manifest.tsv)   │
+│  YouTube ──► Gemini Process ──► Streamlit ──► Export Dataset │
+│  Ingest      (Transcribe+    Review      (2-25s WAV +    │
+│              Translate)                  manifest.tsv)   │
+│      │                                                                   │
+│      └───► Denoise (Optional - DeepFilterNet)                       │
 │                                                                           │
-│  ingested ───► denoised ─────► processed ───► reviewed ───► exported     │
+│  pending ───► transcribed ───► reviewed ───► exported     │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Note:** Denoising is optional and keeps state as `pending`. See [Complete Workflow Guide](docs/08_complete_workflow.md) for details.
 
 ---
 
@@ -104,6 +110,7 @@ final_nlp/
 ├── data/
 │   ├── lab_data.db             # SQLite database
 │   ├── raw/audio/              # Raw audio from YouTube
+│   ├── raw/chunks/             # Chunked audio for long videos
 │   ├── denoised/               # Denoised audio files
 │   ├── segments/               # Processed segment audio
 │   └── export/                 # Final dataset output
@@ -113,6 +120,7 @@ final_nlp/
 │   ├── review_app.py           # Streamlit review app
 │   ├── export_final.py         # Dataset export
 │   └── preprocessing/
+│       ├── chunk_audio.py      # Audio chunking for long videos
 │       ├── gemini_process.py   # Transcription + translation
 │       └── denoise_audio.py    # DeepFilterNet denoising
 ├── init_scripts/

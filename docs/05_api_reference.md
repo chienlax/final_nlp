@@ -65,6 +65,18 @@ def init_database(db_path: Optional[Path] = None) -> None:
     Initialize database with schema from sqlite_schema.sql.
     Creates tables, indexes, triggers, and views.
     """
+
+def upgrade_schema(db_path: Optional[Path] = None) -> None:
+    """
+    Upgrade existing database schema to support new features.
+    Adds columns and tables without data loss:
+    - reviewer column to videos table
+    - denoised_audio_path column to videos table
+    - chunks table for audio chunking
+    - reviewed_start_ms/reviewed_end_ms to segments
+    - reviewer_notes to segments
+    Safe to call multiple times (idempotent).
+    """
 ```
 
 #### Video Operations
@@ -109,6 +121,60 @@ def update_video_denoised_path(
     db_path: Optional[Path] = None
 ) -> None:
     """Set denoised audio path for video."""
+
+def update_video_reviewer(
+    video_id: str,
+    reviewer: str,
+    db_path: Optional[Path] = None
+) -> None:
+    """
+    Assign reviewer to video.
+    NEW: Added for reviewer workflow management.
+    """
+```
+
+#### Chunk Operations (NEW)
+
+```python
+def create_chunk(
+    video_id: str,
+    chunk_index: int,
+    start_ms: int,
+    end_ms: int,
+    audio_path: str,
+    db_path: Optional[Path] = None
+) -> str:
+    """
+    Create a chunk record for long video processing.
+    Returns chunk_id in format: {video_id}_chunk_{index}
+    """
+
+def get_chunks(
+    video_id: str,
+    db_path: Optional[Path] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get all chunks for a video, ordered by chunk_index.
+    """
+
+def update_chunk_state(
+    chunk_id: str,
+    new_state: str,
+    db_path: Optional[Path] = None
+) -> None:
+    """
+    Update chunk processing state.
+    States: 'pending', 'transcribed', 'reviewed', 'exported'
+    """
+
+def get_chunks_by_state(
+    video_id: str,
+    state: str,
+    db_path: Optional[Path] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get chunks in specific processing state for a video.
+    """
 ```
 
 #### Segment Operations
@@ -117,11 +183,13 @@ def update_video_denoised_path(
 def insert_segments(
     video_id: str,
     segments: List[Dict[str, Any]],  # [{text, start, end, translation}, ...]
+    chunk_id: Optional[str] = None,  # NEW: Link segments to specific chunk
     db_path: Optional[Path] = None
 ) -> int:
     """
-    Insert segments for video (clears existing first).
+    Insert segments for video (clears existing first unless chunk_id specified).
     Converts seconds to milliseconds automatically.
+    If chunk_id provided, only clears segments for that chunk.
     Returns count of inserted segments.
     """
 
@@ -303,6 +371,44 @@ data/raw/audio/{video_id}_denoised.wav # Denoised
 
 ---
 
+### chunk_audio.py (NEW)
+
+**Location:** `src/preprocessing/chunk_audio.py`
+
+**Purpose:** Split long videos into manageable chunks for independent processing.
+
+#### Key Behavior
+
+- Processes videos longer than 10 minutes
+- Creates overlapping chunks for seamless merging
+- Stores chunk records in database with timestamps
+- Enables parallel processing and better error recovery
+
+#### Chunking Strategy
+
+```python
+CHUNK_DURATION_SECONDS = 600  # 10 minutes per chunk
+OVERLAP_SECONDS = 10          # 10 second overlap
+```
+
+#### Output
+
+```
+data/raw/chunks/{video_id}/
+├── chunk_0.wav  # 0:00 - 10:00
+├── chunk_1.wav  # 9:50 - 19:50  (10s overlap)
+├── chunk_2.wav  # 19:40 - 29:40
+└── ...
+```
+
+#### Database Updates
+
+- Creates chunk records in `chunks` table
+- Each chunk has: chunk_id, video_id, chunk_index, start_ms, end_ms, audio_path
+- Chunk state defaults to 'pending'
+
+---
+
 ### gemini_process.py
 
 **Location:** `src/preprocessing/gemini_process.py`
@@ -313,8 +419,12 @@ data/raw/audio/{video_id}_denoised.wav # Denoised
 
 - **Single-pass processing**: Audio → Transcript + Translation
 - **Adaptive chunking**: Splits audio >10 minutes with 10s overlap
+- **Chunk-aware processing**: Can process individual chunks with `--chunk-id`
+- **Standalone mode**: Process audio files directly without database
 - **Deduplication**: Removes duplicates from chunk overlaps
 - **Structured output**: Returns JSON with timestamps
+- **Multi-API key support**: Automatic rotation for high-volume processing
+- **Retry logic**: Exponential backoff for failed requests
 
 #### Constants
 
@@ -322,6 +432,22 @@ data/raw/audio/{video_id}_denoised.wav # Denoised
 MAX_AUDIO_DURATION_SECONDS = 10 * 60  # 10 min chunking threshold
 CHUNK_OVERLAP_SECONDS = 10            # Overlap between chunks
 TEXT_SIMILARITY_THRESHOLD = 0.8       # Deduplication threshold
+```
+
+#### Command Line Options
+
+```powershell
+# Process full video
+python src/preprocessing/gemini_process.py --video-id VIDEO_ID
+
+# Process specific chunk
+python src/preprocessing/gemini_process.py --video-id VIDEO_ID --chunk-id CHUNK_ID
+
+# Standalone mode (no database)
+python src/preprocessing/gemini_process.py --standalone audio.wav
+
+# Dry run (test without API calls)
+python src/preprocessing/gemini_process.py --video-id VIDEO_ID --dry-run
 ```
 
 #### Output Schema
@@ -353,15 +479,42 @@ TEXT_SIMILARITY_THRESHOLD = 0.8       # Deduplication threshold
 
 **Purpose:** Streamlit web application for human review of segments.
 
+#### Tabs/Pages
+
+1. **Dashboard** - Statistics and state overview
+2. **Review Audio Transcript** - Main review interface
+3. **Upload Data** - Direct audio + JSON upload
+4. **Audio Refinement** - DeepFilterNet UI (placeholder)
+5. **Download Audios** - YouTube ingestion with GUI
+
 #### Features
 
+**Review Audio Transcript Tab:**
+- Channel filtering (dropdown)
 - Video selection with progress tracking
-- Segment-by-segment review interface
-- Audio playback for each segment
-- Edit transcript and translation
-- Adjust timestamps
-- Split long segments
+- Chunk selection for chunked videos
+- Audio playback with auto-pause at segment boundaries
+- Segment editor (transcript, translation, timestamps)
+- Reviewer assignment (dropdown with "Add new" option)
+- Transcript upload/removal per video
+- Keyboard shortcuts: Alt+A (approve), Alt+S (save), Alt+R (reject)
+- Split long segments at cursor position
 - Approve/reject controls
+- Filter: Show all / Unreviewed / Reviewed / Rejected
+
+**Download Audios Tab (NEW):**
+- Single video or playlist URL input
+- Playlist metadata fetching with thumbnails
+- Date range filtering for selective download
+- Dry run mode
+- Manual transcript download option
+- Real-time progress tracking
+
+**Upload Data Tab:**
+- Audio file upload (WAV, MP3, M4A, etc.)
+- JSON transcript upload (optional)
+- Metadata entry (title, source)
+- Auto-conversion to 16kHz mono WAV
 
 #### Running
 
@@ -374,6 +527,7 @@ streamlit run src/review_app.py --server.address 0.0.0.0
 - Reviewing: `transcribed` → `reviewed`
 - Approving segment: `is_reviewed = 1`
 - Rejecting segment: `is_rejected = 1`
+- Assigning reviewer: Updates `videos.reviewer` column
 
 ---
 

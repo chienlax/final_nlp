@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 # Add parent directory to path
 import sys
@@ -34,6 +35,8 @@ from db import (
     get_video,
     get_videos_by_state,
     get_segments,
+    get_chunks_by_video,
+    aggregate_chunk_state,
     update_segment_review,
     reject_segment,
     split_segment,
@@ -43,14 +46,16 @@ from db import (
     insert_video,
     insert_segments,
     update_video_state,
+    update_video_reviewer,
     validate_transcript_json,
     parse_transcript_json,
     init_database,
+    ensure_schema_upgrades,
     DEFAULT_DB_PATH,
 )
 
 from ingest_youtube import run_pipeline
-from utils.video_downloading_utils import fetch_playlist_metadata
+from utils.video_downloading_utils import fetch_playlist_metadata, ensure_js_runtime, CHUNK_QUEUE_FILE
 
 # =============================================================================
 # CONFIGURATION
@@ -81,7 +86,37 @@ def apply_custom_css() -> None:
     """Apply custom CSS styling."""
     st.markdown("""
     <style>
-    /* Duration warning badges */
+    :root {
+        --nav-bg: #0f172a;
+        --nav-accent: #22c55e;
+        --card-bg: #0b1221;
+        --border-soft: #1f2937;
+    }
+
+    /* Navigation rail */
+    .nav-rail {
+        background: var(--nav-bg);
+        padding: 18px 14px;
+        border-radius: 14px;
+        color: #e5e7eb;
+        border: 1px solid #1e293b;
+        height: 100%;
+    }
+    .nav-rail h3 { margin-top: 0; margin-bottom: 12px; }
+    .nav-rail .stRadio > div { gap: 10px; }
+    .nav-rail label { color: #e5e7eb !important; font-weight: 600; }
+    .nav-rail .stRadio [data-baseweb="radio"] { background: #111827; border-radius: 10px; padding: 6px 8px; }
+    .nav-rail .stRadio [data-baseweb="radio"]:hover { border-color: var(--nav-accent); }
+
+    /* Cards */
+    .surface-card {
+        background: #0b1221;
+        border: 1px solid var(--border-soft);
+        border-radius: 12px;
+        padding: 16px;
+    }
+
+    /* Duration badges */
     .duration-warning {
         background-color: #ff6b6b;
         color: white;
@@ -176,58 +211,121 @@ def get_audio_path(video: Dict[str, Any]) -> Optional[Path]:
     return None
 
 
-# =============================================================================
-# SIDEBAR
-# =============================================================================
+def js_runtime_status() -> str:
+    """Return JS runtime health string."""
+    try:
+        ensure_js_runtime()
+        return "ok"
+    except RuntimeError as err:
+        st.warning(str(err))
+        return "missing"
 
-def render_sidebar() -> str:
-    """Render sidebar with navigation and stats."""
-    with st.sidebar:
-        st.title("🎧 NLP Review Tool")
-        st.markdown("---")
-        
-        # Navigation
-        page = st.radio(
-            "Navigation",
-            ["📊 Dashboard", "📝 Review Videos", "⬆️ Upload Data", "📥 Ingest Videos"],
-            label_visibility="collapsed"
+
+def request_playback(start_ms: int, end_ms: Optional[int]) -> None:
+    """Store playback request with optional stop time."""
+    st.session_state["play_request"] = (start_ms, end_ms)
+
+
+def render_audio_player_with_jump(audio_path: Path) -> None:
+    """Render audio player and honor pending jump requests with auto-pause."""
+    st.audio(str(audio_path))
+    play_request = st.session_state.pop("play_request", None)
+    if play_request is not None:
+        start_ms, end_ms = play_request
+        stop_time = end_ms / 1000 if end_ms is not None else None
+        components.html(
+            f"""
+            <script>
+            const audioEl = window.parent.document.querySelector('audio');
+            if (audioEl) {{
+                audioEl.currentTime = {start_ms/1000:.3f};
+                audioEl.play();
+                {'const stopAt = ' + str(stop_time) + '; audioEl.ontimeupdate = () => { if (audioEl.currentTime >= stopAt) { audioEl.pause(); audioEl.ontimeupdate = null; } };' if stop_time else ''}
+            }}
+            </script>
+            """,
+            height=0,
         )
-        
-        st.markdown("---")
-        
-        # Quick stats
-        try:
-            stats = get_database_stats()
-            
-            st.markdown("### 📈 Quick Stats")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Videos", stats.get('total_videos', 0))
-            with col2:
-                st.metric("Hours", stats.get('total_hours', 0))
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Segments", stats.get('total_segments', 0))
-            with col2:
-                reviewed = stats.get('reviewed_segments', 0)
-                total = stats.get('total_segments', 1)
-                pct = int(100 * reviewed / total) if total > 0 else 0
-                st.metric("Reviewed", f"{pct}%")
-            
-            # Long segments warning
-            long_count = stats.get('long_segments', 0)
-            if long_count > 0:
-                st.warning(f"⚠️ {long_count} segments exceed 25s")
-                
-        except Exception as e:
-            st.error(f"Database error: {e}")
-            st.info("Click 'Initialize Database' on Dashboard to set up.")
-        
-        st.markdown("---")
-        st.caption("v2.0 - SQLite + Streamlit")
-        
-        return str(page)
+
+
+def inject_keyboard_shortcuts() -> None:
+    """Add simple keyboard shortcuts for review flow."""
+    components.html(
+        """
+        <script>
+        document.addEventListener('keydown', (event) => {
+            if (event.altKey && event.key.toLowerCase() === 'a') {
+                const approve = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Approve'));
+                if (approve) { approve.click(); }
+            }
+            if (event.altKey && event.key.toLowerCase() === 's') {
+                const save = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Save'));
+                if (save) { save.click(); }
+            }
+            if (event.altKey && event.key.toLowerCase() === 'r') {
+                const reject = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Reject'));
+                if (reject) { reject.click(); }
+            }
+        });
+        </script>
+        """,
+        height=0,
+    )
+
+
+NAV_ITEMS = [
+    "📊 Dashboard",
+    "📝 Review Audio Transcript",
+    "⬆️ Upload Data",
+    "🎛️ Audio Refinement",
+    "📥 Download Audios",
+]
+
+
+def render_navigation_column() -> str:
+    """Render navigation rail with quick stats."""
+    st.markdown("<div class='nav-rail'>", unsafe_allow_html=True)
+    st.markdown("### 🎧 NLP Review Tool")
+    page = st.radio(
+        "Navigation",
+        NAV_ITEMS,
+        index=NAV_ITEMS.index(st.session_state.get("nav_page", NAV_ITEMS[0]))
+        if st.session_state.get("nav_page") in NAV_ITEMS
+        else 0,
+        label_visibility="collapsed"
+    )
+    st.session_state["nav_page"] = page
+
+    st.markdown("---")
+    try:
+        stats = get_database_stats()
+        st.markdown("#### 📈 Quick Stats")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Videos", stats.get('total_videos', 0))
+        with col2:
+            st.metric("Hours", stats.get('total_hours', 0))
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Segments", stats.get('total_segments', 0))
+        with col2:
+            reviewed = stats.get('reviewed_segments', 0)
+            total = stats.get('total_segments', 1)
+            pct = int(100 * reviewed / total) if total > 0 else 0
+            st.metric("Reviewed", f"{pct}%")
+
+        long_count = stats.get('long_segments', 0)
+        if long_count > 0:
+            st.warning(f"⚠️ {long_count} segments exceed 25s")
+    except Exception as e:
+        st.error(f"Database error: {e}")
+        st.info("Click 'Initialize Database' on Dashboard to set up.")
+
+    st.markdown("---")
+    st.caption("v2.0 - SQLite + Streamlit")
+    st.markdown("</div>", unsafe_allow_html=True)
+    return str(page)
 
 
 # =============================================================================
@@ -284,6 +382,14 @@ def render_dashboard() -> None:
         )
     
     st.markdown("---")
+
+    # Operational warnings
+    status = js_runtime_status()
+    if status == "missing":
+        st.error("Install Node/Deno/Bun to avoid yt-dlp player client failures.")
+    if CHUNK_QUEUE_FILE.exists():
+        queued = sum(1 for _ in CHUNK_QUEUE_FILE.open("r", encoding="utf-8"))
+        st.info(f"Chunking jobs queued: {queued} ({CHUNK_QUEUE_FILE}")
     
     # Videos by state
     col1, col2 = st.columns(2)
@@ -329,124 +435,198 @@ def render_dashboard() -> None:
 def render_review_page() -> None:
     """Render video review page."""
     st.title("📝 Review Videos")
-    
-    # Video selection
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        # Get videos that need review (transcribed state)
-        transcribed = get_videos_by_state('transcribed')
-        pending = get_videos_by_state('pending')
-        reviewed = get_videos_by_state('reviewed')
-        
-        all_videos = transcribed + reviewed + pending
-        
-        if not all_videos:
-            st.info("No videos to review. Upload some data first!")
-            return
-        
-        video_options = {
-            f"{v['title'][:50]}... ({v['processing_state']})": v['video_id']
-            for v in all_videos
-        }
-        
-        selected_label = st.selectbox(
-            "Select Video",
-            options=list(video_options.keys()),
-            key="video_selector"
+    inject_keyboard_shortcuts()
+
+    transcribed = get_videos_by_state('transcribed')
+    pending = get_videos_by_state('pending')
+    reviewed = get_videos_by_state('reviewed')
+    all_videos = transcribed + reviewed + pending
+
+    if not all_videos:
+        st.info("No videos to review. Upload some data first!")
+        return
+
+    channel_names = sorted({v.get('channel_name') or "Unknown" for v in all_videos})
+    col_sel, col_refresh = st.columns([3, 1])
+    with col_sel:
+        selected_channel = st.selectbox(
+            "Filter by channel",
+            options=["All channels"] + channel_names,
+            key="channel_filter"
         )
-        
-        selected_video_id = video_options.get(selected_label)
-    
-    with col2:
-        st.write("")  # Spacing
+    with col_refresh:
         st.write("")
-        if st.button("🔄 Refresh", use_container_width=True):
+        st.write("")
+        if st.button("🔄 Refresh", width="stretch"):
             st.rerun()
-    
+
+    filtered_videos = all_videos if selected_channel == "All channels" else [
+        v for v in all_videos if (v.get('channel_name') or "Unknown") == selected_channel
+    ]
+
+    video_options = {
+        f"[{v.get('channel_name') or 'Unknown'}] {v['title'][:50]} ({v['processing_state']})": v['video_id']
+        for v in filtered_videos
+    }
+
+    selected_label = st.selectbox(
+        "Select Video",
+        options=list(video_options.keys()),
+        key="video_selector"
+    )
+
+    selected_video_id = video_options.get(selected_label)
     if not selected_video_id:
         return
-    
-    # Load video and segments
+
     video = get_video(selected_video_id)
-    segments = get_segments(selected_video_id, include_rejected=True)
-    
+    chunks = get_chunks_by_video(selected_video_id)
+    selected_chunk_id: Optional[int] = None
+    if chunks:
+        chunk_labels = {f"Chunk {c['chunk_index']} ({format_timestamp(c['start_ms'])}-{format_timestamp(c['end_ms'])})": c['chunk_id'] for c in chunks}
+        selected_chunk_label = st.selectbox("Select chunk", list(chunk_labels.keys()), key=f"chunk_{selected_video_id}")
+        selected_chunk_id = chunk_labels.get(selected_chunk_label)
+
+    segments = get_segments(selected_video_id, chunk_id=selected_chunk_id, include_rejected=True)
+
     if not video:
         st.error("Video not found")
         return
-    
-    # Video info header
-    st.markdown("---")
-    col1, col2, col3 = st.columns([2, 1, 1])
-    
-    with col1:
-        st.subheader(video['title'])
-        if video.get('url'):
-            st.caption(f"🔗 {video['url']}")
-    
-    with col2:
+
+    if 'reviewer_assignments' not in st.session_state:
+        st.session_state.reviewer_assignments = {}
+
+    main_col, info_col = st.columns([3, 1])
+
+    with main_col:
+        st.markdown("---")
+        header_col, progress_col, state_col = st.columns([2, 1, 1])
+
+        with header_col:
+            st.subheader(video['title'])
+            if video.get('url'):
+                st.caption(f"🔗 {video['url']}")
+            st.caption(f"Channel: {video.get('channel_name') or 'Unknown'}")
+
+        with progress_col:
+            progress = get_video_progress(selected_video_id)
+            reviewed_pct = progress.get('review_percent', 0) or 0
+            st.metric("Progress", f"{reviewed_pct:.0f}%")
+
+        with state_col:
+            agg_state = aggregate_chunk_state(selected_video_id)
+            state_display = agg_state if agg_state else video['processing_state']
+            st.metric("State", state_display)
+
+        audio_path = None
+        if selected_chunk_id:
+            chunk_obj = next((c for c in chunks if c['chunk_id'] == selected_chunk_id), None)
+            if chunk_obj:
+                candidate = DATA_ROOT / chunk_obj['audio_path']
+                audio_path = candidate if candidate.exists() else candidate
+        if audio_path is None:
+            audio_path = get_audio_path(video)
+        if audio_path:
+            render_audio_player_with_jump(audio_path)
+        else:
+            st.warning("Audio file not found")
+
+        st.markdown("---")
+
+        if not segments:
+            st.info("No segments for this video. Process it with Gemini first.")
+            return
+
+        st.subheader(f"Segments ({len(segments)})")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            show_reviewed = st.checkbox("Show reviewed", value=True)
+        with col2:
+            show_unreviewed = st.checkbox("Show unreviewed", value=True)
+        with col3:
+            show_rejected = st.checkbox("Show rejected", value=False)
+
+        filtered_segments = []
+        for seg in segments:
+            if seg['is_rejected'] and not show_rejected:
+                continue
+            if seg['is_reviewed'] and not seg['is_rejected'] and not show_reviewed:
+                continue
+            if not seg['is_reviewed'] and not show_unreviewed:
+                continue
+            filtered_segments.append(seg)
+
+        for seg in filtered_segments:
+            render_segment_editor(seg, video, audio_path)
+
+    with info_col:
+        st.markdown("<div class='surface-card'>", unsafe_allow_html=True)
+        st.markdown("#### Video Details")
+        st.write(f"**Channel**: {video.get('channel_name') or 'Unknown'}")
+        st.write(f"**Duration**: {video.get('duration_seconds') or 0}s")
+        st.write(f"**Source**: {video.get('source_type', 'n/a')}")
         progress = get_video_progress(selected_video_id)
-        reviewed_pct = progress.get('review_percent', 0) or 0
-        st.metric("Progress", f"{reviewed_pct:.0f}%")
-    
-    with col3:
-        st.metric("State", video['processing_state'])
-    
-    # Audio player
-    audio_path = get_audio_path(video)
-    if audio_path:
-        st.audio(str(audio_path))
-    else:
-        st.warning("Audio file not found")
-    
-    st.markdown("---")
-    
-    # Segments
-    if not segments:
-        st.info("No segments for this video. Process it with Gemini first.")
-        return
-    
-    st.subheader(f"Segments ({len(segments)})")
-    
-    # Filter options
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        show_reviewed = st.checkbox("Show reviewed", value=True)
-    with col2:
-        show_unreviewed = st.checkbox("Show unreviewed", value=True)
-    with col3:
-        show_rejected = st.checkbox("Show rejected", value=False)
-    
-    # Filter segments
-    filtered_segments = []
-    for seg in segments:
-        if seg['is_rejected'] and not show_rejected:
-            continue
-        if seg['is_reviewed'] and not seg['is_rejected'] and not show_reviewed:
-            continue
-        if not seg['is_reviewed'] and not show_unreviewed:
-            continue
-        filtered_segments.append(seg)
-    
-    # Render each segment
-    for seg in filtered_segments:
-        render_segment_editor(seg, video, audio_path)
-    
-    # Mark all reviewed button
-    st.markdown("---")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("✅ Mark Video as Reviewed", use_container_width=True):
+        if progress.get('review_percent', 0) == 100 and not any(seg.get('is_rejected') for seg in segments):
+            st.success("Export-ready ✅")
+
+        # Reviewer dropdown with add option (per-video)
+        if 'reviewer_options' not in st.session_state:
+            st.session_state.reviewer_options = []
+        current_assignee = st.session_state.reviewer_assignments.get(selected_video_id, video.get('reviewer') or "")
+        options = [opt for opt in st.session_state.reviewer_options]
+        if current_assignee and current_assignee not in options:
+            options.append(current_assignee)
+        options.append("+ Add new")
+        selected_reviewer = st.selectbox("Reviewer", options=options or ["+ Add new"], index=options.index(current_assignee) if current_assignee in options else len(options)-1, key=f"rev_sel_{selected_video_id}")
+        new_reviewer = ""
+        if selected_reviewer == "+ Add new":
+            new_reviewer = st.text_input("New reviewer", key=f"rev_new_{selected_video_id}")
+        assignee = new_reviewer or (selected_reviewer if selected_reviewer != "+ Add new" else "")
+        if st.button("💾 Save assignment", key=f"assign_{selected_video_id}", width="stretch"):
+            update_video_reviewer(selected_video_id, assignee if assignee else None)
+            st.session_state.reviewer_assignments[selected_video_id] = assignee
+            if assignee and assignee not in st.session_state.reviewer_options:
+                st.session_state.reviewer_options.append(assignee)
+            st.success("Assignment saved")
+
+        st.markdown("---")
+
+        transcripts_dir = DATA_ROOT / "review" / "transcripts"
+        transcripts_dir.mkdir(parents=True, exist_ok=True)
+        existing = list(transcripts_dir.glob(f"{selected_video_id}.*"))
+        if existing:
+            st.success(f"Transcript on file: {existing[0].name}")
+        transcript_file = st.file_uploader("Replace/upload transcript", type=["json", "vtt", "srt"], key=f"trans_{selected_video_id}")
+        audit_note = st.text_input("Audit note", key=f"audit_{selected_video_id}")
+        if transcript_file:
+            ext = Path(transcript_file.name).suffix or ".json"
+            dest = transcripts_dir / f"{selected_video_id}{ext}"
+            with open(dest, "wb") as f:
+                f.write(transcript_file.getbuffer())
+            st.success(f"Saved transcript to {dest}")
+            if audit_note:
+                (transcripts_dir / f"{selected_video_id}.note.txt").write_text(audit_note, encoding="utf-8")
+        if existing and st.button("🗑️ Remove transcript", key=f"del_{selected_video_id}", width="stretch"):
+            for fpath in existing:
+                fpath.unlink(missing_ok=True)
+            note_file = transcripts_dir / f"{selected_video_id}.note.txt"
+            if note_file.exists():
+                note_file.unlink()
+            st.warning("Transcript removed")
+
+        st.markdown("---")
+        if st.button("✅ Mark Video as Reviewed", key=f"mark_rev_{selected_video_id}", width="stretch"):
             update_video_state(selected_video_id, 'reviewed')
             st.success("Video marked as reviewed!")
             st.rerun()
-    
-    with col2:
-        if st.button("📦 Mark as Exported", use_container_width=True):
+
+        if st.button("📦 Mark as Exported", key=f"mark_exp_{selected_video_id}", width="stretch"):
             update_video_state(selected_video_id, 'exported')
             st.success("Video marked as exported!")
             st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_segment_editor(
@@ -474,6 +654,10 @@ def render_segment_editor(
         # Duration warning
         if duration_ms > WARNING_DURATION_MS:
             st.warning(f"⚠️ Segment is {duration_ms/1000:.1f}s (exceeds 25s limit). Consider splitting.")
+
+        if audio_path:
+            if st.button("▶️ Play segment", key=f"play_{segment_id}", width="stretch"):
+                request_playback(start_ms, end_ms)
         
         # Timestamps
         col1, col2, col3 = st.columns([1, 1, 2])
@@ -534,7 +718,7 @@ def render_segment_editor(
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            if st.button("💾 Save", key=f"save_{segment_id}", use_container_width=True):
+            if st.button("💾 Save", key=f"save_{segment_id}", width="stretch"):
                 update_segment_review(
                     segment_id=segment_id,
                     reviewed_transcript=new_transcript,
@@ -547,7 +731,7 @@ def render_segment_editor(
                 st.rerun()
         
         with col2:
-            if st.button("✅ Approve", key=f"approve_{segment_id}", use_container_width=True):
+            if st.button("✅ Approve", key=f"approve_{segment_id}", width="stretch"):
                 update_segment_review(
                     segment_id=segment_id,
                     reviewed_transcript=new_transcript,
@@ -561,7 +745,7 @@ def render_segment_editor(
                 st.rerun()
         
         with col3:
-            if st.button("❌ Reject", key=f"reject_{segment_id}", use_container_width=True):
+            if st.button("❌ Reject", key=f"reject_{segment_id}", width="stretch"):
                 reject_segment(segment_id, notes if notes else "Rejected by reviewer")
                 st.warning("Rejected")
                 st.rerun()
@@ -569,7 +753,7 @@ def render_segment_editor(
         with col4:
             # Split segment button (only if duration > 5s)
             if new_duration > 5000:
-                if st.button("✂️ Split", key=f"split_{segment_id}", use_container_width=True):
+                if st.button("✂️ Split", key=f"split_{segment_id}", width="stretch"):
                     st.session_state[f'splitting_{segment_id}'] = True
         
         # Split segment form
@@ -714,7 +898,7 @@ def render_audio_upload() -> None:
     
     # Upload button
     if audio_file and json_file and title:
-        if st.button("📤 Upload", use_container_width=True):
+        if st.button("📤 Upload", width="stretch"):
             try:
                 # Generate video ID
                 video_id = str(uuid.uuid4())[:8]
@@ -813,7 +997,7 @@ def render_json_import() -> None:
         except json.JSONDecodeError as e:
             st.error(f"Invalid JSON: {e}")
     
-    if st.button("📥 Import", use_container_width=True):
+    if st.button("📥 Import", width="stretch"):
         if selected_audio == "-- Select audio file --" or not json_content_str.strip() or not title:
             st.warning("Please fill in all fields")
         else:
@@ -849,10 +1033,42 @@ def render_json_import() -> None:
                 st.error(f"Import failed: {e}")
 
 
+# =============================================================================
+# AUDIO REFINEMENT PAGE (DENOISING)
+# =============================================================================
+
+def render_audio_refinement() -> None:
+    """Render DeepFilterNet refinement tab."""
+    st.title("🎛️ Audio Refinement")
+    st.markdown("Run DeepFilterNet on ingested audio and track outputs.")
+
+    ingested = get_videos_by_state('ingested')
+    if not ingested:
+        st.info("No ingested audio pending denoise.")
+        return
+
+    options = {f"{v['title'][:60]} ({v['video_id']})": v['video_id'] for v in ingested}
+    selection = st.multiselect("Select audio to denoise", list(options.keys()))
+    st.caption("This triggers DeepFilterNet via the denoise script; ensure the environment has deepfilternet installed.")
+
+    if st.button("🚀 Run DeepFilterNet", type="primary", disabled=not selection, key="run_denoise"):
+        st.warning("Please run `python src/preprocessing/denoise_audio.py --video-id <id>` for each selected item in a terminal. Automation hook not wired here to avoid blocking the UI.")
+        st.write("Selected IDs:")
+        for label in selection:
+            st.code(options[label])
+
+
 def render_ingest_page() -> None:
     """Render the YouTube ingestion page."""
-    st.title("📥 Ingest Videos from YouTube")
+    st.title("📥 Download Audios")
     st.markdown("Fetch and download audio from YouTube videos, playlists, or channels.")
+
+    with st.expander("Runtime Health", expanded=False):
+        status = js_runtime_status()
+        if status == "ok":
+            st.success("JS runtime detected ✔️")
+        else:
+            st.warning("Downloads will rely on extractor_args fallback; some formats may be skipped.")
 
     # Input section
     with st.expander("ℹ️ Instructions", expanded=False):
@@ -867,11 +1083,13 @@ def render_ingest_page() -> None:
     
     col1, col2 = st.columns(2)
     with col1:
-        fetch_btn = st.button("🔍 Fetch Metadata", use_container_width=True)
+        fetch_btn = st.button("🔍 Fetch Metadata", width="stretch")
     
     # Session state for fetched videos
     if 'ingest_videos' not in st.session_state:
         st.session_state.ingest_videos = []
+    if 'playlist_cache' not in st.session_state:
+        st.session_state.playlist_cache = {}
     
     if fetch_btn and url_input:
         urls = [u.strip() for u in url_input.split('\n') if u.strip()]
@@ -882,7 +1100,11 @@ def render_ingest_page() -> None:
         
         for i, url in enumerate(urls):
             status_text.text(f"Fetching metadata for: {url}...")
-            videos = fetch_playlist_metadata(url)
+            if url in st.session_state.playlist_cache:
+                videos = st.session_state.playlist_cache[url]
+            else:
+                videos = fetch_playlist_metadata(url)
+                st.session_state.playlist_cache[url] = videos
             all_videos.extend(videos)
             progress_bar.progress((i + 1) / len(urls))
             
@@ -961,7 +1183,7 @@ def render_ingest_page() -> None:
                 },
                 disabled=["Title", "Date", "Duration (s)", "ID", "URL"],
                 hide_index=True,
-                use_container_width=True
+                width="stretch"
             )
             
             selected_videos = edited_df[edited_df["Select"] == True]
@@ -1012,19 +1234,29 @@ def main() -> None:
             init_database()
         except Exception as e:
             st.error(f"Failed to initialize database: {e}")
+    else:
+        try:
+            ensure_schema_upgrades()
+        except Exception as e:
+            st.error(f"Schema upgrade failed: {e}")
+            return
     
-    # Render sidebar and get page selection
-    page = render_sidebar()
-    
-    # Render selected page
-    if page == "📊 Dashboard":
-        render_dashboard()
-    elif page == "📝 Review Videos":
-        render_review_page()
-    elif page == "⬆️ Upload Data":
-        render_upload_page()
-    elif page == "📥 Ingest Videos":
-        render_ingest_page()
+    nav_col, content_col = st.columns([1.05, 4.0], gap="large")
+
+    with nav_col:
+        page = render_navigation_column()
+
+    with content_col:
+        if page == "📊 Dashboard":
+            render_dashboard()
+        elif page == "📝 Review Audio Transcript":
+            render_review_page()
+        elif page == "⬆️ Upload Data":
+            render_upload_page()
+        elif page == "🎛️ Audio Refinement":
+            render_audio_refinement()
+        elif page == "📥 Download Audios":
+            render_ingest_page()
 
 
 if __name__ == "__main__":

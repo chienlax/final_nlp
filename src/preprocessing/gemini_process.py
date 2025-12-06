@@ -42,7 +42,16 @@ from typing import Any, Dict, List, Optional, Tuple
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from db import get_db, insert_segments, update_video_state, get_videos_by_state, get_video
+from db import (
+    get_db,
+    insert_segments,
+    update_video_state,
+    update_chunk_state,
+    aggregate_chunk_state,
+    get_videos_by_state,
+    get_video,
+    get_chunk,
+)
 
 
 # =============================================================================
@@ -688,7 +697,8 @@ def process_audio_file(
 def process_video(
     video_id: str,
     data_root: Path,
-    model: str = DEFAULT_MODEL
+    model: str = DEFAULT_MODEL,
+    chunk_id: Optional[int] = None
 ) -> bool:
     """
     Process a video with Gemini and save results to SQLite.
@@ -707,8 +717,16 @@ def process_video(
         print(f"[ERROR] Video not found: {video_id}")
         return False
 
-    audio_path_str = video['denoised_audio_path'] or video['audio_path']
-    title = video['title']
+    if chunk_id:
+        chunk = get_chunk(chunk_id)
+        if not chunk:
+            print(f"[ERROR] Chunk not found: {chunk_id}")
+            return False
+        audio_path_str = chunk['audio_path']
+        title = f"{video['title']} (chunk {chunk['chunk_index']})"
+    else:
+        audio_path_str = video['denoised_audio_path'] or video['audio_path']
+        title = video['title']
 
     print(f"\n{'='*60}")
     print(f"Processing: {title}")
@@ -751,8 +769,14 @@ def process_video(
 
         # Save to database
         print(f"\n[INFO] Saving to database...")
-        segment_count = insert_segments(video_id, sentences)
-        update_video_state(video_id, 'transcribed')
+        segment_count = insert_segments(video_id, sentences, chunk_id=chunk_id)
+        if chunk_id:
+            update_chunk_state(chunk_id, 'transcribed')
+            agg_state = aggregate_chunk_state(video_id)
+            if agg_state == 'transcribed':
+                update_video_state(video_id, 'transcribed')
+        else:
+            update_video_state(video_id, 'transcribed')
 
         elapsed = time.time() - start_time
         print(f"\n[SUCCESS] Processed {video_id}")
@@ -850,6 +874,11 @@ Environment Variables:
         help="Video ID to process"
     )
     parser.add_argument(
+        "--chunk-id",
+        type=int,
+        help="Chunk ID to process (uses chunk audio path and updates chunk state)"
+    )
+    parser.add_argument(
         "--batch",
         action="store_true",
         help="Process batch of pending videos"
@@ -908,6 +937,15 @@ Environment Variables:
             args.output,
             args.model
         )
+        sys.exit(0 if success else 1)
+
+    # Chunk-specific mode
+    if args.chunk_id:
+        if not args.video_id:
+            parser.print_help()
+            print("\nError: --chunk-id requires --video-id for state updates")
+            sys.exit(1)
+        success = process_video(args.video_id, args.data_root, args.model, chunk_id=args.chunk_id)
         sys.exit(0 if success else 1)
 
     # Database mode
