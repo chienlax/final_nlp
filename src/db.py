@@ -124,7 +124,10 @@ def init_database(db_path: Optional[Path] = None) -> None:
     schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
 
     with get_db(db_path) as db:
+        # Temporarily disable FK constraints during schema creation
+        db.execute("PRAGMA foreign_keys = OFF")
         db.executescript(schema_sql)
+        db.execute("PRAGMA foreign_keys = ON")
         logger.info(f"Database initialized: {db_path or DEFAULT_DB_PATH}")
 
 

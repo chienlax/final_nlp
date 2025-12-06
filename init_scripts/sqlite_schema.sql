@@ -5,6 +5,9 @@
 -- Tables: videos (metadata) + segments (training data)
 -- =============================================================================
 
+-- Defer foreign key enforcement during schema creation
+PRAGMA foreign_keys = OFF;
+
 -- Enable WAL mode for better concurrency (run this after connecting)
 -- PRAGMA journal_mode=WAL;
 -- PRAGMA busy_timeout=5000;
@@ -44,6 +47,27 @@ CREATE INDEX IF NOT EXISTS idx_videos_created ON videos(created_at);
 
 
 -- =============================================================================
+-- CHUNKS TABLE
+-- =============================================================================
+-- Optional table to track chunked audio files derived from long sources.
+
+CREATE TABLE IF NOT EXISTS chunks (
+    chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id TEXT NOT NULL REFERENCES videos(video_id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    start_ms INTEGER NOT NULL,
+    end_ms INTEGER NOT NULL,
+    audio_path TEXT NOT NULL,
+    processing_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (processing_state IN ('pending', 'transcribed', 'reviewed', 'exported', 'rejected')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(video_id, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_video ON chunks(video_id);
+
+
+-- =============================================================================
 -- SEGMENTS TABLE
 -- =============================================================================
 -- Stores sentence-level transcription and translation data.
@@ -52,7 +76,7 @@ CREATE INDEX IF NOT EXISTS idx_videos_created ON videos(created_at);
 CREATE TABLE IF NOT EXISTS segments (
     segment_id INTEGER PRIMARY KEY AUTOINCREMENT,
     video_id TEXT NOT NULL REFERENCES videos(video_id) ON DELETE CASCADE,
-    chunk_id INTEGER REFERENCES chunks(chunk_id) ON DELETE CASCADE,
+    chunk_id INTEGER,  -- FK added after chunks table creation
     segment_index INTEGER NOT NULL,                 -- Order within video (0-indexed)
     
     -- Timestamps in milliseconds for precision
@@ -89,27 +113,6 @@ CREATE INDEX IF NOT EXISTS idx_segments_video ON segments(video_id);
 CREATE INDEX IF NOT EXISTS idx_segments_chunk ON segments(chunk_id);
 CREATE INDEX IF NOT EXISTS idx_segments_reviewed ON segments(is_reviewed);
 CREATE INDEX IF NOT EXISTS idx_segments_rejected ON segments(is_rejected);
-
-
--- =============================================================================
--- CHUNKS TABLE
--- =============================================================================
--- Optional table to track chunked audio files derived from long sources.
-
-CREATE TABLE IF NOT EXISTS chunks (
-    chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    video_id TEXT NOT NULL REFERENCES videos(video_id) ON DELETE CASCADE,
-    chunk_index INTEGER NOT NULL,
-    start_ms INTEGER NOT NULL,
-    end_ms INTEGER NOT NULL,
-    audio_path TEXT NOT NULL,
-    processing_state TEXT NOT NULL DEFAULT 'pending'
-        CHECK (processing_state IN ('pending', 'transcribed', 'reviewed', 'exported', 'rejected')),
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(video_id, chunk_index)
-);
-
-CREATE INDEX IF NOT EXISTS idx_chunks_video ON chunks(video_id);
 
 
 -- =============================================================================
@@ -187,3 +190,9 @@ FROM segments s
 JOIN videos v ON s.video_id = v.video_id
 WHERE (COALESCE(s.reviewed_end_ms, s.end_ms) - COALESCE(s.reviewed_start_ms, s.start_ms)) > 25000
   AND s.is_rejected = 0;
+
+
+-- =============================================================================
+-- Re-enable foreign keys
+-- =============================================================================
+PRAGMA foreign_keys = ON;
