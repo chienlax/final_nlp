@@ -31,7 +31,7 @@ from typing import List, Dict, Any, Optional
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from db import get_connection, init_database, add_video
+from db import get_connection, init_database, insert_video
 from utils.video_downloading_utils import (
     download_channels,
     save_jsonl,
@@ -134,7 +134,7 @@ def ingest_to_database(
                 continue
 
             # Insert video record
-            add_video(
+            insert_video(
                 db_path=db_path,
                 video_id=video_id,
                 url=url,
