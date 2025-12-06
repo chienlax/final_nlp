@@ -3,11 +3,11 @@
 # GPU-enabled container for audio preprocessing pipeline
 #
 # Tools:
-#   - WhisperX: ASR + word-level alignment + VAD + diarization
-#   - DeepFilterNet: Background noise removal
+#   - Gemini 2.5 Pro: Transcription + translation via API
+#   - DeepFilterNet: Background noise removal (GPU-accelerated)
 #   - FFmpeg: Audio processing
 #
-# Note: Requires NVIDIA GPU with CUDA 12.4 support
+# Note: GPU required for DeepFilterNet (CUDA 12.4)
 # =============================================================================
 
 # PyTorch with CUDA 12.4 support
@@ -43,7 +43,7 @@ WORKDIR /app
 
 # Core dependencies first
 RUN pip install --no-cache-dir \
-    # API
+    # Gemini API for transcription/translation
     google-generativeai \
     # Streamlit for review app
     streamlit>=1.28.0 \
@@ -60,11 +60,6 @@ RUN pip install --no-cache-dir \
     python-dotenv \
     # Logging
     loguru
-
-# WhisperX (includes faster-whisper, ctranslate2)
-# Note: whisperx has specific dependency requirements
-RUN pip install --no-cache-dir \
-    whisperx
 
 # DeepFilterNet for noise removal
 RUN pip install --no-cache-dir \
