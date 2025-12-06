@@ -152,7 +152,7 @@ def run_dvc_pull_test() -> bool:
 
     try:
         result = subprocess.run(
-            ['dvc', 'pull', '--verbose'],
+            [sys.executable, '-m', 'dvc', 'pull', '--verbose'],
             cwd=str(PROJECT_ROOT),
             timeout=300,  # 5 minutes for auth flow
         )
@@ -161,7 +161,7 @@ def run_dvc_pull_test() -> bool:
         logger.error("DVC pull timed out. Authentication may have failed.")
         return False
     except FileNotFoundError:
-        logger.error("DVC command not found. Is DVC installed?")
+        logger.error("Python or DVC module not found. Is DVC installed?")
         return False
 
 
