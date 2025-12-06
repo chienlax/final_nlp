@@ -8,12 +8,14 @@
 #   2. Dependency installation
 #   3. SQLite database initialization
 #   4. Tailscale configuration (optional, for remote access)
-#   5. Backup scheduling to Google Drive (optional)
+#   5. DVC setup for database synchronization (optional)
+#   6. Backup scheduling to Google Drive (optional, deprecated - use DVC instead)
 #
 # Usage:
 #   .\setup.ps1                    # Full setup
 #   .\setup.ps1 -SkipTailscale     # Skip Tailscale setup
 #   .\setup.ps1 -SkipBackup        # Skip backup scheduling
+#   .\setup.ps1 -SkipDVC           # Skip DVC setup
 #   .\setup.ps1 -DevMode           # Development mode (includes extra tools)
 #
 # Requirements:
@@ -21,11 +23,13 @@
 #   - FFmpeg installed (for audio processing)
 #   - Git (optional, for version control)
 #   - Administrator privileges (for Tailscale installation)
+#   - Google OAuth client secret in .secrets/ (for DVC setup)
 # ============================================================================
 
 param(
     [switch]$SkipTailscale,
     [switch]$SkipBackup,
+    [switch]$SkipDVC,
     [switch]$DevMode,
     [string]$DriveBackupPath = "G:\My Drive\NLP_Backups",
     [string]$PythonVersion = "3.10"
@@ -290,11 +294,139 @@ function Setup-Tailscale {
 }
 
 # ---------------------------------------------------------------------------
-# Backup Setup
+# DVC Setup (Database Synchronization)
+# ---------------------------------------------------------------------------
+
+function Setup-DVC {
+    Write-Header "DVC Setup for Database Synchronization"
+    
+    Write-Info "DVC (Data Version Control) enables team collaboration via Google Drive"
+    Write-Info "This allows syncing the database between dev and lab machines"
+    Write-Host ""
+    
+    # Check if DVC is installed
+    Write-Step "Checking DVC installation..."
+    $pythonExe = Join-Path $VENV_DIR "Scripts\python.exe"
+    
+    try {
+        & $pythonExe -m dvc version 2>&1 | Out-Null
+        Write-Success "DVC already installed"
+    } catch {
+        Write-Error2 "DVC not found in virtual environment"
+        Write-Info "DVC should be installed via requirements.txt"
+        return
+    }
+    
+    # Check for client secret
+    $secretsDir = Join-Path $ScriptDir ".secrets"
+    $clientSecret = Get-ChildItem -Path $secretsDir -Filter "client_secret_*.json" -ErrorAction SilentlyContinue | Select-Object -First 1
+    
+    if (-not $clientSecret) {
+        Write-Error2 "Google OAuth client secret not found in .secrets/"
+        Write-Host ""
+        Write-Host "To set up DVC authentication:" -ForegroundColor Yellow
+        Write-Host "  1. Obtain client_secret_*.json from project owner" -ForegroundColor Gray
+        Write-Host "  2. Place it in .secrets/ folder" -ForegroundColor Gray
+        Write-Host "  3. Run: python manual_gdrive_auth.py" -ForegroundColor Gray
+        Write-Host "  4. A browser will open for Google sign-in" -ForegroundColor Gray
+        Write-Host "  5. After authentication, run: python -m dvc pull" -ForegroundColor Gray
+        Write-Host ""
+        Write-Info "Skipping DVC authentication setup"
+        return
+    }
+    
+    Write-Success "Found client secret: $($clientSecret.Name)"
+    
+    # Check if already authenticated
+    $dvcCacheDir = Join-Path $env:USERPROFILE ".cache\pydrive2fs"
+    $credentialsFile = Join-Path $dvcCacheDir "credentials.json"
+    
+    if (Test-Path $credentialsFile) {
+        Write-Success "DVC already authenticated"
+        Write-Info "Credentials found at: $credentialsFile"
+        
+        # Test DVC connection
+        Write-Step "Testing DVC remote connection..."
+        try {
+            & $pythonExe -m dvc remote list 2>&1 | Out-Null
+            Write-Success "DVC remote configured"
+            
+            # Offer to pull latest data
+            Write-Host ""
+            $pull = Read-Host "Pull latest database from Google Drive? (y/N)"
+            if ($pull -eq 'y' -or $pull -eq 'Y') {
+                Write-Step "Pulling latest data from DVC remote..."
+                & $pythonExe -m dvc pull
+                Write-Success "Data pulled successfully!"
+            }
+        } catch {
+            Write-Error2 "DVC remote test failed: $_"
+        }
+    } else {
+        # Need to authenticate
+        Write-Step "DVC authentication required"
+        Write-Host ""
+        Write-Host "Google Drive authentication setup:" -ForegroundColor Yellow
+        Write-Host "  1. A browser window will open" -ForegroundColor Gray
+        Write-Host "  2. Sign in with your Google account" -ForegroundColor Gray
+        Write-Host "  3. Grant access to Google Drive" -ForegroundColor Gray
+        Write-Host "  4. Return here after authorization" -ForegroundColor Gray
+        Write-Host ""
+        
+        $auth = Read-Host "Start authentication now? (Y/n)"
+        if ($auth -ne 'n' -and $auth -ne 'N') {
+            try {
+                Write-Step "Running OAuth authentication..."
+                & $pythonExe manual_gdrive_auth.py
+                
+                if (Test-Path $credentialsFile) {
+                    Write-Success "Authentication successful!"
+                    Write-Info "Credentials saved to: $credentialsFile"
+                    
+                    # Pull data after authentication
+                    Write-Step "Pulling latest data from DVC remote..."
+                    & $pythonExe -m dvc pull
+                    Write-Success "Data pulled successfully!"
+                } else {
+                    Write-Error2 "Authentication failed - credentials not found"
+                }
+            } catch {
+                Write-Error2 "Authentication error: $_"
+                Write-Info "Try running manually: python manual_gdrive_auth.py"
+            }
+        } else {
+            Write-Info "Skipping authentication. Run later with: python manual_gdrive_auth.py"
+        }
+    }
+    
+    Write-Host ""
+    Write-Host "DVC Quick Reference:" -ForegroundColor Yellow
+    Write-Host "  Pull latest data:  python -m dvc pull" -ForegroundColor Gray
+    Write-Host "  Push your changes: python -m dvc add data/lab_data.db && python -m dvc push" -ForegroundColor Gray
+    Write-Host "  Check status:      python -m dvc status" -ForegroundColor Gray
+    Write-Host ""
+    Write-Info "See docs/09_database_sync.md for full guide"
+}
+
+# ---------------------------------------------------------------------------
+# Backup Setup (Deprecated - Use DVC instead)
 # ---------------------------------------------------------------------------
 
 function Setup-Backup {
-    Write-Header "Backup Configuration"
+    Write-Header "Backup Configuration (Deprecated)"
+    
+    Write-Host ""
+    Write-Host "⚠ NOTICE: Direct Google Drive backups are deprecated" -ForegroundColor Yellow
+    Write-Host "   Use DVC for database synchronization instead (more reliable)" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Info "To skip this step in future, use: .\setup.ps1 -SkipBackup"
+    Write-Host ""
+    
+    $continue = Read-Host "Continue with legacy backup setup anyway? (y/N)"
+    if ($continue -ne 'y' -and $continue -ne 'Y') {
+        Write-Info "Skipping backup setup. Use DVC instead!"
+        return
+    }
     
     # Verify Google Drive path
     if (-not (Test-Path $DriveBackupPath)) {
@@ -420,6 +552,13 @@ function Show-Summary {
     Write-Host "     python src/export_final.py" -ForegroundColor Gray
     Write-Host ""
     
+    if (-not $SkipDVC) {
+        Write-Host "Database Synchronization:" -ForegroundColor Yellow
+        Write-Host "  Pull latest:  python -m dvc pull" -ForegroundColor Gray
+        Write-Host "  Push updates: python -m dvc add data/lab_data.db && python -m dvc push" -ForegroundColor Gray
+        Write-Host ""
+    }
+    
     if (-not $SkipTailscale) {
         Write-Host "Remote Access:" -ForegroundColor Yellow
         Write-Host "  Your Streamlit app is accessible via Tailscale" -ForegroundColor Gray
@@ -429,6 +568,7 @@ function Show-Summary {
     
     Write-Host "Documentation:" -ForegroundColor Yellow
     Write-Host "  See docs/ folder for detailed guides" -ForegroundColor Gray
+    Write-Host "  Database sync: docs/09_database_sync.md" -ForegroundColor Gray
     Write-Host ""
 }
 
@@ -447,6 +587,10 @@ Setup-Database
 
 if (-not $SkipTailscale) {
     Setup-Tailscale
+}
+
+if (-not $SkipDVC) {
+    Setup-DVC
 }
 
 if (-not $SkipBackup) {
