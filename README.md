@@ -79,6 +79,7 @@ python src/export_final.py
 | [06_known_caveats.md](docs/06_known_caveats.md) | Known issues and limitations |
 | [07_todo-list.md](docs/07_todo-list.md) | Active tasks and completed items |
 | [08_complete_workflow.md](docs/08_complete_workflow.md) | **Detailed workflow examples** |
+| [09_database_sync.md](docs/09_database_sync.md) | **Database sync for team collaboration** |
 | [CHANGELOG.md](CHANGELOG.md) | Project history and updates |
 
 ---
@@ -151,7 +152,34 @@ final_nlp/
 | Service | Port | URL |
 |---------|------|-----|
 | Streamlit | 8501 | http://localhost:8501 |
-| Audio Server | 8081 | http://localhost:8081 |
+
+---
+
+## Database Synchronization (Team Collaboration)
+
+For team collaboration between development and lab machines, we use **DVC (Data Version Control)** with Google Drive as the remote storage.
+
+### Quick Sync Commands
+
+```powershell
+# Pull latest database from team
+python -m dvc pull
+
+# Push local database updates to team
+python -m dvc add data/lab_data.db
+git add data/lab_data.db.dvc data/.gitignore
+git commit -m "Update database with new annotations"
+python -m dvc push
+git push
+```
+
+### Workflow Summary
+
+1. **Dev Machine**: Ingest/process videos → commit → push via DVC
+2. **Lab Machine**: Pull via DVC → run Streamlit for annotation → push updates back
+3. **Automated Backups**: Hourly snapshots to `data/db_sync/backups/`
+
+📖 **Full sync guide**: [docs/09_database_sync.md](docs/09_database_sync.md)
 
 ---
 

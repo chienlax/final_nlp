@@ -205,10 +205,9 @@ python src/setup_gdrive_auth.py
 
 ## Service Ports
 
-| Service | Port | URL |
-|---------|------|-----|
-| Streamlit | 8501 | http://localhost:8501 |
-| Audio Server (Docker) | 8081 | http://localhost:8081 |
+| Service | Port | URL | Access |
+|---------|------|-----|--------|
+| Streamlit Review App | 8501 | http://localhost:8501 | Local + Tailscale |
 
 ---
 

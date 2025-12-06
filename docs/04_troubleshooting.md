@@ -172,13 +172,7 @@ streamlit run src/review_app.py --server.port 8502
    Test-Path "data/segments/VIDEO_ID/segment_000.wav"
    ```
 
-2. **Audio server not running** (for Docker deployment):
-   ```powershell
-   docker compose ps audio_server
-   docker compose logs audio_server
-   ```
-
-3. **Browser blocking autoplay**:
+2. **Browser blocking autoplay**:
    - Click the audio player manually
    - Check browser console for errors
 
@@ -504,9 +498,70 @@ dvc remote list
 
 ---
 
+---
+
+## 8. Database Sync Issues
+
+### DVC Push Fails
+
+**Symptoms:**
+```
+ERROR: failed to push data to the cloud
+```
+
+**Solutions:**
+1. Check authentication:
+   ```powershell
+   python -m dvc doctor
+   python src/setup_gdrive_auth.py
+   ```
+
+2. Verify remote configuration:
+   ```powershell
+   python -m dvc remote list
+   ```
+
+3. Check Google Drive permissions on folder `1bn9HIlEzbBX_Vofb5Y3gp530_kH938wr`
+
+### Database Lock During Backup
+
+**Symptoms:**
+```
+database is locked
+```
+
+**Solutions:**
+1. Close Streamlit review app
+2. Check for WAL files:
+   ```powershell
+   Get-ChildItem data/lab_data.db*
+   ```
+3. Wait for WAL checkpoint, then retry backup
+
+### Merge Conflicts in .dvc File
+
+**Symptoms:**
+```
+CONFLICT (content): Merge conflict in data/lab_data.db.dvc
+```
+
+**Solutions:**
+1. Keep most recent database version:
+   ```powershell
+   git checkout --theirs data/lab_data.db.dvc
+   python -m dvc checkout data/lab_data.db.dvc
+   ```
+
+2. Or manually merge based on timestamp in md5 hash
+
+See [Database Sync Guide](09_database_sync.md#disaster-recovery-procedures) for detailed recovery procedures.
+
+---
+
 ## Related Documentation
 
 - 📖 [Getting Started](01_getting_started.md) - Setup guide
 - 🏗️ [Architecture](02_architecture.md) - Pipeline overview
 - 🛠️ [Command Reference](03_command_reference.md) - All commands
+- 💾 [Database Sync](09_database_sync.md) - Team collaboration
 - ⚠️ [Known Caveats](06_known_caveats.md) - Limitations

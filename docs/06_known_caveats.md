@@ -324,19 +324,20 @@ icacls "data/lab_data.db" /inheritance:r /grant:r "$($env:USERNAME):(F)"
 3. **Automated Download/Chunking Pipeline**: Background job queue for video processing
 4. **Improved State Handling**: Unified state machine for all processing steps
 
-**Docker Deployment (Planned):**
+**Database Synchronization (Completed - December 2025):**
 
-- Docker Compose configuration exists but not actively maintained
-- Planned for team deployments requiring isolated environments
-- Current focus is on local SQLite + Streamlit workflow
-- Files: `Dockerfile.ingest`, `Dockerfile.preprocess`, `docker-compose.yml`
+- ✅ DVC tracking for database version control
+- ✅ Automated hourly backups to Google Drive
+- ✅ Hybrid sync strategy (backups + DVC snapshots)
+- ✅ Team collaboration workflow via Tailscale
+- See [`docs/09_database_sync.md`](09_database_sync.md)
 
 **Automation Features (Planned):**
 
-- Scheduled hourly backups to Google Drive (script exists, not scheduled by default)
 - Automated chunking queue processing
 - Batch processing orchestration
 - Progress notifications
+- Automated quality checks
 
 ### Longer-Term Enhancements
 

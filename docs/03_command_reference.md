@@ -351,40 +351,48 @@ conn.close()
 
 ---
 
-## Docker Commands (Optional)
+## Database Management
 
-### Start Services
-
-```powershell
-# Start audio server only
-docker-compose up -d audio_server
-
-# Start Streamlit in Docker
-docker-compose up -d streamlit
-
-# Start all services
-docker-compose up -d
-```
-
-### Run Commands in Docker
+### Backup Database
 
 ```powershell
-# Interactive shell
-docker-compose run --rm ingestion bash
+# Manual backup to Google Drive
+.\backup_db.ps1
 
-# Run specific script
-docker-compose run --rm ingestion python src/ingest_youtube.py "URL"
+# View recent backups
+Get-ChildItem "G:\My Drive\NLP_Backups" | Sort-Object LastWriteTime -Descending | Select-Object -First 10
 ```
 
-### View Logs
+### Sync Database via DVC
 
 ```powershell
-# All services
-docker-compose logs -f
+# Snapshot current database state
+python -m dvc add data/lab_data.db
+git add data/lab_data.db.dvc
+git commit -m "DB snapshot: milestone description"
 
-# Specific service
-docker-compose logs -f streamlit
+# Upload to Google Drive
+python -m dvc push
+
+# Download latest from Google Drive
+python -m dvc pull data/lab_data.db.dvc
 ```
+
+### Restore from Backup
+
+```powershell
+# Restore from latest hourly backup
+Copy-Item "G:\My Drive\NLP_Backups\lab_data_latest.db" data/lab_data.db
+
+# Or restore from specific timestamp
+Copy-Item "G:\My Drive\NLP_Backups\lab_data_20251206_143022.db" data/lab_data.db
+
+# Or restore from DVC history
+git checkout abc123 data/lab_data.db.dvc
+python -m dvc checkout data/lab_data.db.dvc
+```
+
+See [`docs/09_database_sync.md`](09_database_sync.md) for detailed sync workflow.
 
 ---
 
