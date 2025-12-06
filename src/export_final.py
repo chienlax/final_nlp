@@ -20,7 +20,7 @@ from typing import Optional
 
 from pydub import AudioSegment
 
-from db import get_connection, compute_duration_ms
+from db import get_connection, compute_duration_ms, validate_video_for_export
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -310,8 +310,24 @@ def export_segments(
         "skipped_short": 0,
         "skipped_long": 0,
         "failed": 0,
-        "videos_processed": set()
+        "videos_processed": set(),
+        "validation_errors": []
     }
+    
+    # Validate video if specific video_id provided
+    if video_id:
+        logger.info(f"Validating video {video_id} before export...")
+        validation = validate_video_for_export(video_id, db_path)
+        
+        if not validation['is_valid']:
+            logger.error(f"Validation failed for video {video_id}:")
+            for error in validation['errors']:
+                logger.error(f"  - {error}")
+            
+            stats["validation_errors"] = validation['errors']
+            return stats
+        
+        logger.info(f"✓ Video {video_id} passed validation")
     
     # Create output directories
     audio_dir = output_dir / "audio"

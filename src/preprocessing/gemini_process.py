@@ -35,7 +35,6 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -51,6 +50,7 @@ from db import (
     get_videos_by_state,
     get_video,
     get_chunk,
+    get_chunks_by_video,
 )
 
 
@@ -64,19 +64,9 @@ SUPPORTED_AUDIO_FORMATS = {'.wav', '.mp3', '.aiff', '.aac', '.ogg', '.flac'}
 # Gemini settings
 DEFAULT_MODEL = "gemini-2.5-pro"
 
-# Audio chunking settings (per user spec)
-MAX_CHUNK_DURATION_SECONDS = 10 * 60  # 10 minutes
-CHUNK_OVERLAP_SECONDS = 10  # 10 seconds overlap
-TAIL_MERGE_THRESHOLD_SECONDS = 11 * 60  # 11 minutes - merge if tail is <= this
-
-# Overlap deduplication settings
-OVERLAP_TIME_TOLERANCE_SECONDS = 2.0  # ±2 seconds for timestamp overlap
-TEXT_SIMILARITY_THRESHOLD = 0.8  # >80% text similarity for deduplication
-
 # Rate limiting
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
-RATE_LIMIT_WAIT_SECONDS = 60
 
 # Thinking configuration for Gemini 2.5 Pro
 THINKING_BUDGET = 15668
@@ -92,14 +82,14 @@ FEW_SHOT_EXAMPLES = """
 [
   {
     "text": "Hôm nay mình sẽ review cái framework mới này, nó rất là powerful.",
-    "start": 0.0,
-    "end": 4.5,
+    "start": 0.00,
+    "end": 4.54,
     "translation": "Hôm nay mình sẽ đánh giá khung phần mềm mới này, nó rất là mạnh mẽ."
   },
   {
     "text": "Cái feature chính của nó là support real-time collaboration.",
-    "start": 4.5,
-    "end": 8.2,
+    "start": 4.54,
+    "end": 8.22,
     "translation": "Tính năng chính của nó là hỗ trợ cộng tác theo thời gian thực."
   }
 ]
@@ -110,14 +100,14 @@ FEW_SHOT_EXAMPLES = """
 [
   {
     "text": "Okay các bạn, hôm nay mình sẽ đi shopping ở mall này.",
-    "start": 0.0,
-    "end": 3.8,
+    "start": 3.81,
+    "end": 7.03,
     "translation": "Được rồi các bạn, hôm nay mình sẽ đi mua sắm ở trung tâm thương mại này."
   },
   {
     "text": "Cái store này sale off đến fifty percent luôn á.",
-    "start": 3.8,
-    "end": 7.1,
+    "start": 9.92,
+    "end": 11.65,
     "translation": "Cửa hàng này đang giảm giá đến năm mươi phần trăm luôn đấy."
   }
 ]
@@ -128,14 +118,14 @@ FEW_SHOT_EXAMPLES = """
 [
   {
     "text": "Các bạn ơi, hôm nay mình muốn share với các bạn về kinh nghiệm học programming của mình.",
-    "start": 0.0,
-    "end": 7.2,
+    "start": 0.00,
+    "end": 7.62,
     "translation": "Các bạn ơi, hôm nay mình muốn chia sẻ với các bạn về kinh nghiệm học lập trình của mình."
   },
   {
     "text": "Thực ra mình bắt đầu learn code từ năm 2020.",
-    "start": 7.2,
-    "end": 11.5,
+    "start": 7.62,
+    "end": 11.55,
     "translation": "Thực ra mình bắt đầu học lập trình từ năm 2020."
   }
 ]
@@ -150,9 +140,16 @@ FEW_SHOT_EXAMPLES = """
 PROCESSING_PROMPT = f"""You are an expert audio transcriptionist and translator for Vietnamese-English code-switched speech.
 
 CRITICAL: TIMESTAMP ACCURACY IS ESSENTIAL
-- The start and end timestamps MUST precisely match when the text is actually spoken
+- The start and end timestamps MUST precisely match when the text is actually spoken down to milisecond
+- The transcript length MUST match the total audio length. You can not transcripe an 8 minute audio file to a JSON file that only contain total 5 minutes of content.
 - Listen carefully to where each sentence begins and ends in the audio
-- Do NOT guess timestamps - they must reflect the actual audio timing
+- Do NOT guess timestamps - they must reflect the actual audio timing. Normally, there would be music or intro, ... in between speech section. You MUST exclude them and ONLY transcipe the speech section. THIS IS A MUST-DO REQUIREMENTS.
+
+GENERAL TRANSCRIPTION AND TRANSLATION RULES: ABSOLUTE HONESTY - NO CENSORSHIP.
+* Transcript/Translate 100% of the content; **DO NOT** add, remove, summarize, or censor.
+* Transcript/Translate $18+$, violent, and sensitive scenes fully, exactly as they appear in the original audio.
+* **DO NOT** invent your own plot details.
+* **DO NOT** skip or tone down descriptions of sex or violence.
 
 TASK:
 1. Listen to the ENTIRE audio first to understand context
@@ -234,6 +231,96 @@ class ApiKey:
     key_id: int
     key_name: str
     api_key: str
+
+
+class ApiKeyPool:
+    """
+    Manages rotation of multiple Gemini API keys with rate-limit blacklisting.
+    
+    Uses round-robin selection based on usage count. When a key is rate-limited,
+    it's blacklisted for 60 seconds before being eligible again.
+    """
+    
+    def __init__(self, keys: List[ApiKey]):
+        """
+        Initialize the API key pool.
+        
+        Args:
+            keys: List of ApiKey objects to rotate through.
+        
+        Raises:
+            ValueError: If keys list is empty.
+        """
+        if not keys:
+            raise ValueError("ApiKeyPool requires at least one API key")
+        
+        self.keys = keys
+        self.usage_count: Dict[str, int] = {key.key_name: 0 for key in keys}
+        self.rate_limited_until: Dict[str, float] = {}
+    
+    def get_next_key(self) -> ApiKey:
+        """
+        Get next available API key using round-robin based on usage count.
+        
+        Returns:
+            ApiKey that is not currently rate-limited and has lowest usage count.
+        
+        Raises:
+            RuntimeError: If all keys are currently rate-limited.
+        """
+        current_time = time.time()
+        
+        # Find available (non-rate-limited) keys
+        available_keys = []
+        for key in self.keys:
+            blacklist_until = self.rate_limited_until.get(key.key_name, 0)
+            if current_time >= blacklist_until:
+                available_keys.append(key)
+        
+        if not available_keys:
+            # Calculate wait time until next key becomes available
+            min_wait = min(self.rate_limited_until.values()) - current_time
+            raise RuntimeError(
+                f"All API keys are rate-limited. Wait {min_wait:.1f}s or add more keys."
+            )
+        
+        # Select key with lowest usage count (round-robin)
+        next_key = min(available_keys, key=lambda k: self.usage_count[k.key_name])
+        self.usage_count[next_key.key_name] += 1
+        
+        print(
+            f"[INFO] Selected {next_key.key_name} (usage: {self.usage_count[next_key.key_name]}, "
+            f"available: {len(available_keys)}/{len(self.keys)})"
+        )
+        
+        return next_key
+    
+    def mark_rate_limited(self, key_name: str, timeout_seconds: int = 60) -> None:
+        """
+        Mark an API key as rate-limited for specified duration.
+        
+        Args:
+            key_name: Name of the key to blacklist.
+            timeout_seconds: Duration in seconds to blacklist (default: 60s).
+        """
+        blacklist_until = time.time() + timeout_seconds
+        self.rate_limited_until[key_name] = blacklist_until
+        
+        print(
+            f"[WARNING] API key {key_name} rate-limited until "
+            f"{time.strftime('%H:%M:%S', time.localtime(blacklist_until))}"
+        )
+    
+    def reset_key(self, key_name: str) -> None:
+        """
+        Reset rate-limit status for a specific key (make it available immediately).
+        
+        Args:
+            key_name: Name of the key to reset.
+        """
+        if key_name in self.rate_limited_until:
+            del self.rate_limited_until[key_name]
+            print(f"[INFO] Reset rate-limit for {key_name}")
 
 
 def get_api_keys_from_env() -> List[ApiKey]:
@@ -337,165 +424,22 @@ def get_audio_duration_seconds(audio_path: Path) -> Optional[float]:
         return None
 
 
-def chunk_audio_file(
-    audio_path: Path,
-    max_chunk_sec: float = MAX_CHUNK_DURATION_SECONDS,
-    overlap_sec: float = CHUNK_OVERLAP_SECONDS,
-    tail_merge_threshold: float = TAIL_MERGE_THRESHOLD_SECONDS
-) -> List[Tuple[Path, float, float]]:
-    """
-    Split audio file into chunks with overlap.
-
-    Chunking rules (per user spec):
-    - Chunk every 10 minutes
-    - Cut at 10:05 but start next chunk at 9:55 (10s overlap on both sides)
-    - If last chunk is <= 11 minutes, keep as-is
-    - If last chunk > 11 minutes, apply overlap rule
-
-    Args:
-        audio_path: Path to the audio file.
-        max_chunk_sec: Maximum duration per chunk (10 minutes).
-        overlap_sec: Overlap between chunks (10 seconds).
-        tail_merge_threshold: Threshold for merging tail (11 minutes).
-
-    Returns:
-        List of tuples (chunk_path, start_offset_sec, end_offset_sec).
-    """
-    from pydub import AudioSegment
-
-    audio = AudioSegment.from_file(str(audio_path))
-    duration_ms = len(audio)
-    duration_sec = duration_ms / 1000.0
-
-    # No chunking needed if audio is short enough
-    if duration_sec <= max_chunk_sec:
-        return [(audio_path, 0.0, duration_sec)]
-
-    print(f"[INFO] Audio duration {duration_sec:.1f}s > {max_chunk_sec}s, chunking...")
-
-    chunks = []
-    temp_dir = Path(tempfile.mkdtemp(prefix="gemini_chunks_"))
-
-    # Calculate chunks
-    chunk_positions: List[Tuple[float, float]] = []
-    current_start = 0.0
-
-    while current_start < duration_sec:
-        # Calculate end of this chunk (with 5s buffer for overlap)
-        chunk_end = current_start + max_chunk_sec + (overlap_sec / 2)
-
-        # Check remaining duration
-        remaining = duration_sec - current_start
-
-        if remaining <= tail_merge_threshold:
-            # Last chunk - include everything
-            chunk_positions.append((current_start, duration_sec))
-            break
-        else:
-            # Normal chunk
-            chunk_positions.append((current_start, min(chunk_end, duration_sec)))
-            # Next chunk starts 10s before this chunk ends (overlap)
-            current_start = current_start + max_chunk_sec - (overlap_sec / 2)
-
-    print(f"[INFO] Creating {len(chunk_positions)} chunks with {overlap_sec}s overlap")
-
-    for chunk_idx, (start_sec, end_sec) in enumerate(chunk_positions):
-        start_ms = int(start_sec * 1000)
-        end_ms = int(end_sec * 1000)
-
-        chunk = audio[start_ms:end_ms]
-        chunk_path = temp_dir / f"chunk_{chunk_idx:03d}.wav"
-        chunk.export(str(chunk_path), format="wav")
-
-        chunks.append((chunk_path, start_sec, end_sec))
-        print(f"  Chunk {chunk_idx}: {start_sec:.1f}s - {end_sec:.1f}s ({end_sec - start_sec:.1f}s)")
-
-    return chunks
-
-
-# =============================================================================
-# TEXT SIMILARITY FOR DEDUPLICATION
-# =============================================================================
-
-def text_similarity(text1: str, text2: str) -> float:
-    """Calculate text similarity ratio using SequenceMatcher."""
-    if not text1 or not text2:
-        return 0.0
-    return SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
-
-
-def deduplicate_sentences(
-    all_sentences: List[Dict[str, Any]],
-    time_tolerance: float = OVERLAP_TIME_TOLERANCE_SECONDS,
-    text_threshold: float = TEXT_SIMILARITY_THRESHOLD
-) -> List[Dict[str, Any]]:
-    """
-    Deduplicate sentences from overlapping chunks.
-
-    Uses: remove sentences with >80% text similarity AND timestamp overlap
-    within ±2 seconds. Keeps the version from earlier chunk.
-
-    Args:
-        all_sentences: List of all sentences from all chunks.
-        time_tolerance: Timestamp overlap tolerance in seconds.
-        text_threshold: Text similarity threshold (0.0 to 1.0).
-
-    Returns:
-        Deduplicated list of sentences.
-    """
-    if not all_sentences:
-        return []
-
-    # Sort by start time
-    sorted_sentences = sorted(all_sentences, key=lambda x: x.get('start', 0))
-
-    deduplicated = []
-
-    for sentence in sorted_sentences:
-        is_duplicate = False
-
-        for existing in deduplicated:
-            # Check timestamp overlap
-            time_overlap = (
-                abs(sentence.get('start', 0) - existing.get('start', 0)) <= time_tolerance or
-                abs(sentence.get('end', 0) - existing.get('end', 0)) <= time_tolerance
-            )
-
-            if not time_overlap:
-                continue
-
-            # Check text similarity
-            similarity = text_similarity(
-                sentence.get('text', ''),
-                existing.get('text', '')
-            )
-
-            if similarity >= text_threshold:
-                is_duplicate = True
-                break
-
-        if not is_duplicate:
-            deduplicated.append(sentence)
-
-    return deduplicated
-
-
 # =============================================================================
 # GEMINI API CALLS
 # =============================================================================
 
 def process_audio_chunk(
     audio_path: Path,
-    api_key: ApiKey,
+    api_key_pool: ApiKeyPool,
     model: str = DEFAULT_MODEL,
     offset_seconds: float = 0.0
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    Process a single audio chunk with Gemini.
+    Process a single audio chunk with Gemini using API key pool.
 
     Args:
         audio_path: Path to the audio file/chunk.
-        api_key: API key to use.
+        api_key_pool: ApiKeyPool for key rotation and rate-limit handling.
         model: Gemini model to use.
         offset_seconds: Time offset to add to all timestamps.
 
@@ -516,33 +460,35 @@ def process_audio_chunk(
 
     print(f"  Processing: {audio_path.name} ({audio_size_mb:.2f} MB)")
 
-    # Initialize client
-    genai.configure(api_key=api_key.api_key)
-
-    generation_config = {
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "max_output_tokens": 65536,
-        "response_mime_type": "application/json",
-        "response_schema": OUTPUT_SCHEMA
-    }
-
-    client = genai.GenerativeModel(
-        model_name=model,
-        generation_config=generation_config
-    )
-
-    # Create audio part
-    audio_part = {
-        "mime_type": mime_type,
-        "data": base64.standard_b64encode(audio_bytes).decode("utf-8")
-    }
-
     start_time = time.time()
     last_error: Optional[Exception] = None
 
     for attempt in range(MAX_RETRIES):
         try:
+            # Get next available API key
+            api_key = api_key_pool.get_next_key()
+            
+            # Initialize client with selected key
+            genai.configure(api_key=api_key.api_key)
+
+            generation_config = {
+                "temperature": 1.0,
+                "top_p": 0.95,
+                "max_output_tokens": 65536,
+                "response_mime_type": "application/json",
+                "response_schema": OUTPUT_SCHEMA
+            }
+
+            client = genai.GenerativeModel(
+                model_name=model,
+                generation_config=generation_config
+            )
+
+            # Create audio part
+            audio_part = {
+                "mime_type": mime_type,
+                "data": base64.standard_b64encode(audio_bytes).decode("utf-8")
+            }
             response = client.generate_content([PROCESSING_PROMPT, audio_part])
 
             # Check for blocked content
@@ -582,6 +528,7 @@ def process_audio_chunk(
 
             metadata = {
                 "model": model,
+                "api_key": api_key.key_name,
                 "audio_file": audio_path.name,
                 "audio_size_mb": round(audio_size_mb, 2),
                 "sentence_count": len(sentences),
@@ -603,91 +550,15 @@ def process_audio_chunk(
             error_str = str(e).lower()
 
             if "rate" in error_str or "quota" in error_str or "429" in error_str:
-                print(f"  [WARNING] Rate limit hit on attempt {attempt + 1}")
-                time.sleep(RATE_LIMIT_WAIT_SECONDS)
+                # Mark this key as rate-limited
+                api_key_pool.mark_rate_limited(api_key.key_name, timeout_seconds=60)
+                print(f"  [WARNING] Rate limit hit on {api_key.key_name}, switching keys...")
+                # Continue to retry with different key (no sleep needed)
             elif attempt < MAX_RETRIES - 1:
                 print(f"  [WARNING] Attempt {attempt + 1} failed: {e}")
                 time.sleep(RETRY_DELAY_SECONDS)
 
     raise Exception(f"Processing failed after {MAX_RETRIES} attempts: {last_error}")
-
-
-def process_audio_file(
-    audio_path: Path,
-    api_key: ApiKey,
-    model: str = DEFAULT_MODEL
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """
-    Process entire audio file, chunking if necessary.
-
-    Args:
-        audio_path: Path to the audio file.
-        api_key: API key to use.
-        model: Gemini model to use.
-
-    Returns:
-        Tuple of (sentences_list, metadata).
-    """
-    duration_seconds = get_audio_duration_seconds(audio_path)
-
-    # Check if chunking is needed
-    if duration_seconds and duration_seconds > MAX_CHUNK_DURATION_SECONDS:
-        chunks = chunk_audio_file(audio_path)
-
-        all_sentences: List[Dict[str, Any]] = []
-        all_metadata: Dict[str, Any] = {
-            "model": model,
-            "audio_file": audio_path.name,
-            "duration_seconds": duration_seconds,
-            "chunk_count": len(chunks),
-            "chunks": []
-        }
-
-        for chunk_path, start_offset, end_offset in chunks:
-            try:
-                sentences, chunk_meta = process_audio_chunk(
-                    chunk_path,
-                    api_key,
-                    model,
-                    offset_seconds=start_offset
-                )
-                all_sentences.extend(sentences)
-                all_metadata["chunks"].append(chunk_meta)
-
-                # Delay between chunks
-                time.sleep(2)
-
-            finally:
-                # Clean up temp chunk file
-                if chunk_path != audio_path and chunk_path.exists():
-                    chunk_path.unlink()
-
-        # Clean up temp directory
-        if chunks and chunks[0][0] != audio_path:
-            temp_dir = chunks[0][0].parent
-            if temp_dir.exists() and "gemini_chunks_" in temp_dir.name:
-                try:
-                    temp_dir.rmdir()
-                except OSError:
-                    pass
-
-        # Deduplicate overlapping sentences
-        print(f"[INFO] Deduplicating {len(all_sentences)} sentences...")
-        deduplicated = deduplicate_sentences(all_sentences)
-        print(f"[INFO] Result: {len(deduplicated)} sentences after deduplication")
-
-        all_metadata["sentence_count"] = len(deduplicated)
-        all_metadata["sentences_before_dedup"] = len(all_sentences)
-
-        return deduplicated, all_metadata
-
-    else:
-        # Single chunk processing
-        sentences, metadata = process_audio_chunk(
-            audio_path, api_key, model, offset_seconds=0.0
-        )
-        metadata["sentence_count"] = len(sentences)
-        return sentences, metadata
 
 
 # =============================================================================
@@ -701,12 +572,16 @@ def process_video(
     chunk_id: Optional[int] = None
 ) -> bool:
     """
-    Process a video with Gemini and save results to SQLite.
+    Process a video with Gemini using pre-chunked audio from database.
+
+    Processes either all pending chunks (if chunk_id=None) or a specific chunk.
+    Uses ApiKeyPool for automatic key rotation and rate-limit handling.
 
     Args:
         video_id: Video identifier.
-        data_root: Root directory for data files.
-        model: Gemini model to use.
+        data_root: Root directory for data files (used for path resolution).
+        model: Gemini model to use (default: gemini-2.0-flash-exp).
+        chunk_id: Optional specific chunk ID to process. If None, processes all pending chunks.
 
     Returns:
         True if successful, False otherwise.
@@ -717,71 +592,126 @@ def process_video(
         print(f"[ERROR] Video not found: {video_id}")
         return False
 
-    if chunk_id:
-        chunk = get_chunk(chunk_id)
-        if not chunk:
-            print(f"[ERROR] Chunk not found: {chunk_id}")
-            return False
-        audio_path_str = chunk['audio_path']
-        title = f"{video['title']} (chunk {chunk['chunk_index']})"
-    else:
-        audio_path_str = video['denoised_audio_path'] or video['audio_path']
-        title = video['title']
-
     print(f"\n{'='*60}")
-    print(f"Processing: {title}")
+    print(f"Processing: {video['title']}")
     print(f"Video ID: {video_id}")
-    print(f"Audio: {audio_path_str}")
     print(f"{'='*60}")
 
-    # Resolve audio path
-    audio_path = data_root / audio_path_str
-    if not audio_path.exists():
-        audio_path = Path(audio_path_str)
-        if not audio_path.exists():
-            print(f"[ERROR] Audio file not found: {audio_path_str}")
-            return False
+    # Initialize API key pool
+    env_keys = get_api_keys_from_env()
+    if not env_keys:
+        print(f"[ERROR] No API keys found in environment")
+        return False
+    
+    api_key_pool = ApiKeyPool(env_keys)
+    print(f"[INFO] Initialized API key pool with {len(env_keys)} keys")
+    print(f"[INFO] Using model: {model}")
 
     start_time = time.time()
 
     try:
-        # Get API key
-        api_key = get_available_api_key()
-        if not api_key:
-            raise ValueError("No API keys available")
-
-        print(f"[INFO] Using API key: {api_key.key_name}")
-        print(f"[INFO] Using model: {model}")
-
-        # Process audio
-        print(f"[INFO] Processing audio...")
-        sentences, metadata = process_audio_file(audio_path, api_key, model)
-
-        print(f"[INFO] Processing complete ({metadata.get('processing_time_seconds', 0):.1f}s)")
-        print(f"[INFO] Sentence count: {len(sentences)}")
-
-        # Preview first few sentences
-        print(f"\n[PREVIEW] First 3 sentences:")
-        for i, s in enumerate(sentences[:3]):
-            print(f"  {i+1}. [{s['start']:.1f}s-{s['end']:.1f}s]")
-            text_preview = s['text'][:60] + "..." if len(s['text']) > 60 else s['text']
-            print(f"     {text_preview}")
-
-        # Save to database
-        print(f"\n[INFO] Saving to database...")
-        segment_count = insert_segments(video_id, sentences, chunk_id=chunk_id)
-        if chunk_id:
-            update_chunk_state(chunk_id, 'transcribed')
-            agg_state = aggregate_chunk_state(video_id)
-            if agg_state == 'transcribed':
-                update_video_state(video_id, 'transcribed')
+        # Get chunks to process
+        if chunk_id is not None:
+            # Process specific chunk
+            chunk = get_chunk(chunk_id)
+            if not chunk:
+                print(f"[ERROR] Chunk not found: {chunk_id}")
+                return False
+            
+            if chunk['video_id'] != video_id:
+                print(f"[ERROR] Chunk {chunk_id} does not belong to video {video_id}")
+                return False
+            
+            chunks_to_process = [chunk]
         else:
-            update_video_state(video_id, 'transcribed')
+            # Process all pending chunks for this video
+            all_chunks = get_chunks_by_video(video_id)
+            chunks_to_process = [
+                c for c in all_chunks 
+                if c['processing_state'] in ('pending', 'rejected')  # 'rejected' used for failed chunks
+            ]
+            
+            if not chunks_to_process:
+                print(f"[INFO] No pending chunks to process for {video_id}")
+                return True
+
+        print(f"[INFO] Processing {len(chunks_to_process)} chunk(s)...")
+
+        # Process each chunk
+        for idx, chunk in enumerate(chunks_to_process, 1):
+            chunk_id_current = chunk['chunk_id']
+            chunk_index = chunk['chunk_index']
+            audio_path_str = chunk['audio_path']
+            
+            print(f"\n[{idx}/{len(chunks_to_process)}] Chunk {chunk_index} (ID: {chunk_id_current})")
+            print(f"  Audio: {audio_path_str}")
+            
+            # Resolve audio path from chunk record (stored relative to project root)
+            # chunk['audio_path'] format: 'data/raw/chunks/<video_id>/chunk_<idx>.wav'
+            audio_path = Path(data_root).parent / audio_path_str
+            
+            if not audio_path.exists():
+                print(f"  [ERROR] Chunk audio file not found: {audio_path}")
+                update_chunk_state(chunk_id_current, 'failed')
+                continue
+            
+            # Verify chunk duration matches expected (6 minutes max)
+            actual_duration_sec = get_audio_duration_seconds(audio_path)
+            expected_duration_sec = (chunk['end_ms'] - chunk['start_ms']) / 1000.0
+            
+            if actual_duration_sec:
+                print(f"  [INFO] Chunk duration: {actual_duration_sec:.1f}s (expected: {expected_duration_sec:.1f}s)")
+                if abs(actual_duration_sec - expected_duration_sec) > 1.0:
+                    print(f"  [WARNING] Duration mismatch! Actual: {actual_duration_sec:.1f}s, Expected: {expected_duration_sec:.1f}s")
+            else:
+                print(f"  [WARNING] Could not verify chunk duration")
+
+            # Calculate offset for timestamps
+            offset_seconds = chunk['start_ms'] / 1000.0
+
+            # Process chunk with Gemini
+            try:
+                print(f"  [INFO] Transcribing with Gemini...")
+                sentences, metadata = process_audio_chunk(
+                    audio_path, 
+                    api_key_pool, 
+                    model,
+                    offset_seconds=offset_seconds
+                )
+
+                print(f"  [INFO] Complete ({metadata.get('processing_time_seconds', 0):.1f}s)")
+                print(f"  [INFO] Sentences: {len(sentences)}")
+                print(f"  [INFO] API key used: {metadata.get('api_key', 'unknown')}")
+
+                # Preview first sentence
+                if sentences:
+                    s = sentences[0]
+                    text_preview = s['text'][:50] + "..." if len(s['text']) > 50 else s['text']
+                    print(f"  [PREVIEW] [{s['start']:.1f}s-{s['end']:.1f}s] {text_preview}")
+
+                # Save to database (will replace existing segments for this chunk)
+                print(f"  [INFO] Saving to database...")
+                segment_count = insert_segments(video_id, sentences, chunk_id=chunk_id_current)
+                
+                # Update chunk state
+                update_chunk_state(chunk_id_current, 'transcribed')
+                print(f"  [SUCCESS] Saved {segment_count} segments")
+
+            except Exception as e:
+                print(f"  [ERROR] Failed to process chunk {chunk_id_current}: {e}")
+                update_chunk_state(chunk_id_current, 'rejected')  # Mark as rejected (failed is not valid state)
+                import traceback
+                traceback.print_exc()
+                continue
+
+        # Aggregate chunk states to update video state
+        agg_state = aggregate_chunk_state(video_id)
+        update_video_state(video_id, agg_state)
 
         elapsed = time.time() - start_time
         print(f"\n[SUCCESS] Processed {video_id}")
-        print(f"  Segments: {segment_count}")
-        print(f"  Time: {elapsed:.2f}s")
+        print(f"  Video state: {agg_state}")
+        print(f"  Total time: {elapsed:.2f}s")
 
         return True
 
@@ -821,11 +751,21 @@ def process_audio_standalone(
     print(f"{'='*60}")
 
     try:
-        api_key = get_available_api_key()
-        if not api_key:
+        # Initialize API key pool
+        env_keys = get_api_keys_from_env()
+        if not env_keys:
             raise ValueError("No API keys available")
+        
+        api_key_pool = ApiKeyPool(env_keys)
+        print(f"[INFO] Using {len(env_keys)} API key(s)")
 
-        sentences, metadata = process_audio_file(audio_path, api_key, model)
+        # Process audio (no offset for standalone)
+        sentences, metadata = process_audio_chunk(
+            audio_path, 
+            api_key_pool, 
+            model, 
+            offset_seconds=0.0
+        )
 
         # Save to JSON
         with open(output_path, 'w', encoding='utf-8') as f:

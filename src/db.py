@@ -245,6 +245,109 @@ def get_video(
         return dict(row) if row else None
 
 
+def update_video_channel(
+    video_id: str,
+    channel_name: str,
+    db_path: Optional[Path] = None
+) -> bool:
+    """
+    Update the channel name for a video.
+
+    Args:
+        video_id: Video ID.
+        channel_name: New channel name.
+        db_path: Database path.
+
+    Returns:
+        True if updated successfully, False otherwise.
+    """
+    with get_db(db_path) as db:
+        result = db.execute(
+            "UPDATE videos SET channel_name = ? WHERE video_id = ?",
+            (channel_name, video_id)
+        )
+        return result.rowcount > 0
+
+
+def validate_video_for_export(
+    video_id: str,
+    db_path: Optional[Path] = None
+) -> Dict[str, Any]:
+    """
+    Validate if a video is ready for export.
+
+    Checks:
+    1. All chunks must be in 'reviewed' or 'approved' state
+    2. No segments should have empty/missing translations
+    3. All segments should be approved or reviewed (not pending/rejected)
+
+    Args:
+        video_id: Video ID to validate.
+        db_path: Database path.
+
+    Returns:
+        Dictionary with 'is_valid' (bool), 'errors' (list of error messages).
+    """
+    errors = []
+    
+    with get_db(db_path) as db:
+        # Check chunk states
+        chunks = db.execute(
+            "SELECT chunk_id, chunk_index, processing_state FROM chunks WHERE video_id = ?",
+            (video_id,)
+        ).fetchall()
+        
+        if not chunks:
+            errors.append("No chunks found for this video")
+        else:
+            pending_chunks = [
+                c['chunk_index'] for c in chunks 
+                if c['processing_state'] not in ('reviewed', 'approved')
+            ]
+            if pending_chunks:
+                errors.append(
+                    f"Chunks not reviewed: {', '.join(map(str, pending_chunks))}"
+                )
+        
+        # Check segment validation
+        empty_translations = db.execute(
+            """
+            SELECT COUNT(*) as count 
+            FROM segments 
+            WHERE video_id = ? 
+            AND (translation IS NULL OR translation = '' OR TRIM(translation) = '')
+            AND review_state != 'rejected'
+            """,
+            (video_id,)
+        ).fetchone()
+        
+        if empty_translations and empty_translations['count'] > 0:
+            errors.append(
+                f"{empty_translations['count']} segment(s) have empty translations"
+            )
+        
+        # Check for pending/unreviewed segments
+        pending_segments = db.execute(
+            """
+            SELECT COUNT(*) as count 
+            FROM segments 
+            WHERE video_id = ? 
+            AND (review_state IS NULL OR review_state = 'pending')
+            """,
+            (video_id,)
+        ).fetchone()
+        
+        if pending_segments and pending_segments['count'] > 0:
+            errors.append(
+                f"{pending_segments['count']} segment(s) are still pending review"
+            )
+    
+    return {
+        'is_valid': len(errors) == 0,
+        'errors': errors
+    }
+
+
 def get_videos_by_state(
     state: str,
     limit: Optional[int] = None,
@@ -416,32 +519,41 @@ def update_video_denoised_path(
 def insert_segments(
     video_id: str,
     segments: List[Dict[str, Any]],
-    chunk_id: Optional[int] = None,
+    chunk_id: int,
     db_path: Optional[Path] = None
 ) -> int:
     """
-    Insert multiple segments for a video.
+    Insert multiple segments for a video chunk.
 
+    Deletes existing segments for (video_id, chunk_id) pair before inserting.
     Each segment dict should have: text, start, end, translation.
     Duration is computed automatically (not stored).
 
     Args:
         video_id: Video identifier.
         segments: List of segment dictionaries from Gemini output.
+        chunk_id: Chunk identifier (required - all segments belong to a chunk).
         db_path: Database path.
 
     Returns:
         Number of segments inserted.
     """
     with get_db(db_path) as db:
-        # Clear existing segments for this video
-        if chunk_id is None:
-            db.execute("DELETE FROM segments WHERE video_id = ?", (video_id,))
-        else:
-            db.execute(
-                "DELETE FROM segments WHERE video_id = ? AND chunk_id = ?",
-                (video_id, chunk_id)
-            )
+        # Delete existing segments for this (video_id, chunk_id) pair
+        db.execute(
+            "DELETE FROM segments WHERE video_id = ? AND chunk_id = ?",
+            (video_id, chunk_id)
+        )
+
+        # Get the maximum segment_index for this video to calculate global offset
+        # (segment_index is unique across video, not per-chunk)
+        max_index_result = db.execute(
+            "SELECT MAX(segment_index) FROM segments WHERE video_id = ?",
+            (video_id,)
+        ).fetchone()
+        
+        max_index = max_index_result[0] if max_index_result[0] is not None else -1
+        global_offset = max_index + 1  # Next available index
 
         # Insert new segments
         inserted = 0
@@ -459,6 +571,9 @@ def insert_segments(
                 )
                 continue
 
+            # Use global segment_index (offset + local idx)
+            global_segment_index = global_offset + idx
+
             db.execute(
                 """
                 INSERT INTO segments (
@@ -469,7 +584,7 @@ def insert_segments(
                 (
                     video_id,
                     chunk_id,
-                    idx,
+                    global_segment_index,
                     start_ms,
                     end_ms,
                     seg["text"],

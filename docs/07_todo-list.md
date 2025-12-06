@@ -5,6 +5,8 @@
 [] Automate the downloading/chunking process - How to link the raw audio to the cut one? How to make sure the transcript is consistent?
 [] Wire up Audio Refinement tab to actually run DeepFilterNet denoising
 [] Add reviewer assignment by channel name (currently per-video only)
+[] Change to gemini-2.5-flash-preview-09-2025, update the system prompt and example to match the needed timestamp type
+[] Failed: no such column: review_state - fix error
 
 ## Medium Priority
 [] Improve Gemini processing state handling (accept both 'pending' and 'denoised' states)
