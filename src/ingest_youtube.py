@@ -31,7 +31,7 @@ from typing import List, Dict, Any, Optional
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from db import get_connection, init_database, add_video
+from db import get_connection, init_database, insert_video
 from utils.video_downloading_utils import (
     download_channels,
     save_jsonl,
@@ -134,7 +134,7 @@ def ingest_to_database(
                 continue
 
             # Insert video record
-            add_video(
+            insert_video(
                 db_path=db_path,
                 video_id=video_id,
                 url=url,
@@ -142,7 +142,7 @@ def ingest_to_database(
                 channel_name=channel_name,
                 duration_seconds=duration,
                 audio_path=audio_file_path,
-                processing_state="ingested"
+                source_type="youtube"
             )
 
             logger.info(f"[INSERTED] {video_id}: {title[:50]}...")
@@ -159,7 +159,8 @@ def run_pipeline(
     urls: List[str],
     db_path: Path,
     skip_download: bool = False,
-    dry_run: bool = False
+    dry_run: bool = False,
+    download_transcript: bool = False
 ) -> None:
     """
     Run the full YouTube ingestion pipeline.
@@ -169,6 +170,7 @@ def run_pipeline(
         db_path: Path to SQLite database.
         skip_download: If True, skip download and use existing metadata.
         dry_run: If True, simulate without database writes.
+        download_transcript: If True, attempt to download subtitles.
     """
     logger.info("=" * 60)
     logger.info("YouTube Ingestion Pipeline v4 (SQLite)")
@@ -180,7 +182,7 @@ def run_pipeline(
     if not skip_download:
         logger.info("\n[STEP 1/2] Downloading audio files...")
         logger.info(f"Output directory: {OUTPUT_DIR.absolute()}")
-        download_channels(urls)
+        download_channels(urls, download_transcript=download_transcript)
         save_jsonl(append=True)
     else:
         logger.info("\n[STEP 1/2] Skipping download (using existing metadata)")
@@ -266,6 +268,11 @@ Examples:
         action='store_true',
         help='Simulate ingestion without database writes'
     )
+    parser.add_argument(
+        '--download-transcript',
+        action='store_true',
+        help='Download manual Vietnamese subtitles if available'
+    )
 
     args = parser.parse_args()
 
@@ -278,7 +285,8 @@ Examples:
         urls=args.urls,
         db_path=args.db,
         skip_download=args.skip_download,
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        download_transcript=args.download_transcript
     )
 
 

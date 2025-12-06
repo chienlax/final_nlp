@@ -49,6 +49,9 @@ from db import (
     DEFAULT_DB_PATH,
 )
 
+from ingest_youtube import run_pipeline
+from utils.video_downloading_utils import fetch_playlist_metadata
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -186,7 +189,7 @@ def render_sidebar() -> str:
         # Navigation
         page = st.radio(
             "Navigation",
-            ["📊 Dashboard", "📝 Review Videos", "⬆️ Upload Data"],
+            ["📊 Dashboard", "📝 Review Videos", "⬆️ Upload Data", "📥 Ingest Videos"],
             label_visibility="collapsed"
         )
         
@@ -846,6 +849,155 @@ def render_json_import() -> None:
                 st.error(f"Import failed: {e}")
 
 
+def render_ingest_page() -> None:
+    """Render the YouTube ingestion page."""
+    st.title("📥 Ingest Videos from YouTube")
+    st.markdown("Fetch and download audio from YouTube videos, playlists, or channels.")
+
+    # Input section
+    with st.expander("ℹ️ Instructions", expanded=False):
+        st.markdown("""
+        1. Paste YouTube URLs (Video, Playlist, or Channel) below.
+        2. Click **Fetch Metadata** to see available videos.
+        3. Filter by date or manually select videos.
+        4. Click **Start Ingestion** to download audio and transcripts.
+        """)
+
+    url_input = st.text_area("YouTube URLs (one per line)", height=100, placeholder="https://www.youtube.com/watch?v=...\nhttps://www.youtube.com/playlist?list=...")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        fetch_btn = st.button("🔍 Fetch Metadata", use_container_width=True)
+    
+    # Session state for fetched videos
+    if 'ingest_videos' not in st.session_state:
+        st.session_state.ingest_videos = []
+    
+    if fetch_btn and url_input:
+        urls = [u.strip() for u in url_input.split('\n') if u.strip()]
+        all_videos = []
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for i, url in enumerate(urls):
+            status_text.text(f"Fetching metadata for: {url}...")
+            videos = fetch_playlist_metadata(url)
+            all_videos.extend(videos)
+            progress_bar.progress((i + 1) / len(urls))
+            
+        st.session_state.ingest_videos = all_videos
+        status_text.empty()
+        progress_bar.empty()
+        
+        if not all_videos:
+            st.warning("No videos found.")
+        else:
+            st.success(f"Found {len(all_videos)} videos.")
+
+    # Display and Filter section
+    if st.session_state.ingest_videos:
+        st.divider()
+        st.subheader("Select Videos to Download")
+        
+        # Date Filter
+        min_date = datetime(2000, 1, 1).date()
+        max_date = datetime.now().date()
+        
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            start_date = st.date_input("From Date", value=None)
+        with col_f2:
+            end_date = st.date_input("To Date", value=None)
+            
+        # Filter logic
+        filtered_videos = []
+        for v in st.session_state.ingest_videos:
+            upload_date_str = v.get('upload_date') # YYYYMMDD
+            if not upload_date_str:
+                filtered_videos.append(v) # Keep if no date
+                continue
+                
+            try:
+                v_date = datetime.strptime(upload_date_str, "%Y%m%d").date()
+                if start_date and v_date < start_date:
+                    continue
+                if end_date and v_date > end_date:
+                    continue
+                filtered_videos.append(v)
+            except ValueError:
+                filtered_videos.append(v) # Keep if date parse fails
+
+        st.write(f"Showing {len(filtered_videos)} / {len(st.session_state.ingest_videos)} videos")
+
+        # Selection Dataframe
+        import pandas as pd
+        
+        df_data = []
+        for v in filtered_videos:
+            df_data.append({
+                "Select": True,
+                "Title": v.get('title'),
+                "Date": v.get('upload_date'),
+                "Duration (s)": v.get('duration'),
+                "ID": v.get('id'),
+                "URL": v.get('webpage_url') or v.get('url') or f"https://youtu.be/{v.get('id')}"
+            })
+            
+        if not df_data:
+            st.warning("No videos match the filter.")
+        else:
+            df = pd.DataFrame(df_data)
+            
+            edited_df = st.data_editor(
+                df,
+                column_config={
+                    "Select": st.column_config.CheckboxColumn(
+                        "Download?",
+                        help="Select videos to download",
+                        default=True,
+                    ),
+                    "URL": st.column_config.LinkColumn("Link"),
+                },
+                disabled=["Title", "Date", "Duration (s)", "ID", "URL"],
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            selected_videos = edited_df[edited_df["Select"] == True]
+            
+            st.divider()
+            st.subheader("Download Options")
+            
+            col_opt1, col_opt2 = st.columns(2)
+            with col_opt1:
+                download_transcript = st.checkbox("Download Manual Vietnamese Transcripts", value=True, help="Only downloads if manual Vietnamese captions exist. Ignores auto-generated.")
+            with col_opt2:
+                dry_run = st.checkbox("Dry Run (Simulate only)", value=False)
+                
+            if st.button(f"🚀 Start Ingestion ({len(selected_videos)} videos)", type="primary", disabled=len(selected_videos)==0):
+                
+                urls_to_download = selected_videos["URL"].tolist()
+                
+                status_container = st.container()
+                with status_container:
+                    st.info("Starting ingestion pipeline...")
+                    
+                    try:
+                        with st.spinner("Downloading and processing... check terminal for detailed logs"):
+                            run_pipeline(
+                                urls=urls_to_download,
+                                db_path=DEFAULT_DB_PATH,
+                                skip_download=False,
+                                dry_run=dry_run,
+                                download_transcript=download_transcript
+                            )
+                        st.success("Ingestion complete! Check the Dashboard or Review page.")
+                        st.balloons()
+                    except Exception as e:
+                        st.error(f"An error occurred: {e}")
+
+
 # =============================================================================
 # MAIN
 # =============================================================================
@@ -871,6 +1023,8 @@ def main() -> None:
         render_review_page()
     elif page == "⬆️ Upload Data":
         render_upload_page()
+    elif page == "📥 Ingest Videos":
+        render_ingest_page()
 
 
 if __name__ == "__main__":

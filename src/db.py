@@ -301,10 +301,20 @@ def insert_segments(
         db.execute("DELETE FROM segments WHERE video_id = ?", (video_id,))
 
         # Insert new segments
+        inserted = 0
+
         for idx, seg in enumerate(segments):
             # Convert seconds to milliseconds
             start_ms = int(seg["start"] * 1000)
             end_ms = int(seg["end"] * 1000)
+
+            # Skip invalid timestamps (end must be strictly greater than start)
+            if end_ms <= start_ms or start_ms < 0:
+                logger.warning(
+                    "[SKIP] Invalid segment timestamps for video %s idx %s: start_ms=%s end_ms=%s",
+                    video_id, idx, start_ms, end_ms
+                )
+                continue
 
             db.execute(
                 """
@@ -323,8 +333,10 @@ def insert_segments(
                 )
             )
 
-        logger.info(f"Inserted {len(segments)} segments for video {video_id}")
-        return len(segments)
+            inserted += 1
+
+        logger.info(f"Inserted {inserted} segments for video {video_id}")
+        return inserted
 
 
 def get_segments(

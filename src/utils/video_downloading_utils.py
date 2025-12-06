@@ -17,7 +17,7 @@ import yt_dlp
 SAMPLE_RATE = 16000  # 16kHz as per data requirements
 CHANNELS = 1  # Mono
 MIN_DURATION = 120  # 2 minutes in seconds
-MAX_DURATION = 3600  # 60 minutes in seconds
+MAX_DURATION = 7200  # 120 minutes in seconds
 
 # Output directories (relative to project root)
 OUTPUT_DIR = Path("data/raw/audio")
@@ -93,7 +93,7 @@ def progress_hook(d: Dict[str, Any]) -> None:
         downloaded_videos_log.append(video_data)
 
 
-def download_channels(url_list: List[str]) -> None:
+def download_channels(url_list: List[str], download_transcript: bool = False) -> None:
     """
     Download audio from YouTube channels/videos as 16kHz mono WAV files.
 
@@ -105,12 +105,14 @@ def download_channels(url_list: List[str]) -> None:
 
     Args:
         url_list: List of YouTube channel or video URLs to download.
+        download_transcript: If True, download manual Vietnamese transcripts (no auto-generated).
     """
     # Ensure output directory exists
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
+    
+    # Base options
     ydl_opts = {
-        # Format: Best Audio
+        # Format: Best Audio (Original)
         'format': 'bestaudio/best',
 
         # Duration filter: 2-60 minutes
@@ -143,9 +145,62 @@ def download_channels(url_list: List[str]) -> None:
         'verbose': True,
     }
 
+    # Add transcript options if requested
+    if download_transcript:
+        ydl_opts.update({
+            'writesubtitles': True,
+            'writeautomaticsub': False,  # STRICTLY Manual captions only (no auto-generated)
+            'subtitleslangs': ['vi'],    # STRICTLY Vietnamese only
+            'subtitlesformat': 'json3/vtt',  # Prefer JSON or VTT
+        })
+
     # Run the download
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download(url_list)
+
+
+def fetch_playlist_metadata(url: str) -> List[Dict[str, Any]]:
+    """
+    Fetch metadata for a playlist or channel without downloading.
+    
+    Used for the GUI to list videos before downloading.
+    
+    Args:
+        url: YouTube playlist, channel, or video URL.
+        
+    Returns:
+        List of dictionaries containing video metadata (id, title, date, duration).
+    """
+    ydl_opts = {
+        'extract_flat': 'in_playlist', # Extract video details but don't download
+        'dump_single_json': True,
+        'ignoreerrors': True,
+        'quiet': True,
+    }
+    
+    results = []
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            if not info:
+                return []
+                
+            # If it's a single video, info is the dict
+            if 'entries' not in info:
+                results.append(info)
+            else:
+                # It's a playlist/channel
+                for entry in info['entries']:
+                    if entry:
+                        results.append(entry)
+                        
+    except Exception as e:
+        print(f"Error fetching metadata: {e}")
+        return []
+        
+    return results
 
 
 def save_jsonl(append: bool = True) -> None:
