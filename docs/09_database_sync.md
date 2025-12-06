@@ -25,36 +25,105 @@ This project uses a **hybrid sync strategy** combining automated backups with ve
 
 ## Setup (One-Time)
 
+### Prerequisites
+
+1. **Google OAuth Client Secret**: Required for DVC authentication
+   - Obtain `client_secret_*.json` from project owner
+   - Place in `.secrets/` folder
+   - Must be added as test user in Google Cloud Console
+
+2. **DVC Installed**: Automatically installed via `requirements.txt`
+
+3. **Google Drive Remote**: Already configured in `.dvc/config`
+   - Remote URL: `gdrive://1bn9HIlEzbBX_Vofb5Y3gp530_kH938wr`
+
 ### On Development Machine
 
 ```powershell
-# 1. Initialize DVC tracking
-python -m dvc add data/lab_data.db
+# 1. Run setup script (installs everything + prompts for DVC auth)
+.\setup.ps1
 
-# 2. Commit to git
+# The script will:
+#  - Create virtual environment
+#  - Install dependencies (including DVC)
+#  - Initialize database
+#  - Prompt for Google Drive authentication
+#  - Open browser for OAuth sign-in
+#  - Pull latest database automatically
+
+# 2. Verify DVC is working
+python -m dvc status
+python -m dvc remote list
+
+# 3. Initialize database tracking (first time only)
+python -m dvc add data/lab_data.db
 git add data/lab_data.db.dvc data/.gitignore
 git commit -m "feat: track database with DVC"
 
-# 3. Push to remotes
+# 4. Push to remotes
 python -m dvc push
 git push
+```
 
-# 4. Enable automated backups (optional but recommended)
-.\setup.ps1  # Creates hourly backup task
+#### Manual Authentication (if setup.ps1 was skipped)
+
+If you ran `.\setup.ps1 -SkipDVC` or need to re-authenticate:
+
+```powershell
+# Run the manual authentication script
+python manual_gdrive_auth.py
+
+# This will:
+#  1. Open browser for Google sign-in
+#  2. Save OAuth credentials to ~/.cache/pydrive2fs/
+#  3. Allow DVC commands to work
+
+# Test authentication
+python -m dvc pull
 ```
 
 ### On Lab Machine
+
+**Option 1: Automated Setup (Recommended)**
 
 ```powershell
 # 1. Clone repository
 git clone https://github.com/chienlax/final_nlp.git
 cd final_nlp
 
-# 2. Setup environment
-.\setup.ps1  # Creates venv, downloads database, enables backups
+# 2. Run setup script (handles everything)
+.\setup.ps1
 
-# 3. Pull database from DVC
+# The script will:
+#  - Create virtual environment
+#  - Install dependencies
+#  - Prompt for Google Drive authentication
+#  - Pull latest database via DVC
+#  - Set up hourly backups (optional)
+#  - Configure Tailscale (optional)
+
+# 3. Start Streamlit for team annotation
+streamlit run src/review_app.py
+```
+
+**Option 2: Manual Setup**
+
+```powershell
+# 1. Clone and create environment
+git clone https://github.com/chienlax/final_nlp.git
+cd final_nlp
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# 2. Authenticate with Google Drive
+python manual_gdrive_auth.py
+
+# 3. Pull database
 python -m dvc pull data/lab_data.db.dvc
+
+# 4. Start Streamlit
+streamlit run src/review_app.py
 ```
 
 ## Daily Workflow
