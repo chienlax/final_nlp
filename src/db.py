@@ -1010,6 +1010,63 @@ def get_database_stats(db_path: Optional[Path] = None) -> Dict[str, Any]:
 # JSON VALIDATION (for uploads)
 # =============================================================================
 
+import re
+
+def _parse_timestamp(value) -> float:
+    """
+    Parse timestamp value to seconds.
+    
+    Accepts:
+    - float/int: treated as seconds
+    - str "M:SS.ms" format (e.g., "1:23.45" -> 83.45 seconds)
+    
+    Args:
+        value: Timestamp value (number or string).
+        
+    Returns:
+        Time in seconds as float.
+        
+    Raises:
+        ValueError: If string format is invalid.
+    """
+    if isinstance(value, (int, float)):
+        return float(value)
+    
+    if isinstance(value, str):
+        # Try M:SS.ms format (e.g., "1:23.45")
+        match = re.match(r'^(\d+):(\d{1,2})\.(\d+)$', value.strip())
+        if match:
+            minutes = int(match.group(1))
+            seconds = int(match.group(2))
+            # Milliseconds - handle variable precision
+            ms_str = match.group(3)
+            milliseconds = int(ms_str) / (10 ** len(ms_str))
+            return minutes * 60 + seconds + milliseconds
+        
+        # Try plain number as string
+        try:
+            return float(value)
+        except ValueError:
+            raise ValueError(f"Invalid timestamp format: {value}")
+    
+    raise ValueError(f"Timestamp must be number or string, got {type(value).__name__}")
+
+
+def _is_valid_timestamp(value) -> bool:
+    """Check if value is a valid timestamp (number or M:SS.ms string)."""
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
+        # M:SS.ms format
+        if re.match(r'^\d+:\d{1,2}\.\d+$', value.strip()):
+            return True
+        # Plain number as string
+        try:
+            float(value)
+            return True
+        except ValueError:
+            return False
+    return False
 def validate_transcript_json(data: Union[Dict, List]) -> tuple:
     """
     Validate transcript JSON against expected schema.
@@ -1072,20 +1129,30 @@ def validate_transcript_json(data: Union[Dict, List]) -> tuple:
             errors.append(f"Sentence {idx}: 'translation' must be a string")
 
         if "start" in sent:
-            if not isinstance(sent["start"], (int, float)):
-                errors.append(f"Sentence {idx}: 'start' must be a number")
-            elif sent["start"] < 0:
-                errors.append(f"Sentence {idx}: 'start' cannot be negative")
+            if not _is_valid_timestamp(sent["start"]):
+                errors.append(f"Sentence {idx}: 'start' must be a number or 'M:SS.ms' string")
+            else:
+                try:
+                    start_val = _parse_timestamp(sent["start"])
+                    if start_val < 0:
+                        errors.append(f"Sentence {idx}: 'start' cannot be negative")
+                except ValueError:
+                    errors.append(f"Sentence {idx}: 'start' has invalid format")
 
         if "end" in sent:
-            if not isinstance(sent["end"], (int, float)):
-                errors.append(f"Sentence {idx}: 'end' must be a number")
+            if not _is_valid_timestamp(sent["end"]):
+                errors.append(f"Sentence {idx}: 'end' must be a number or 'M:SS.ms' string")
 
         # Validate start < end
         if "start" in sent and "end" in sent:
-            if isinstance(sent["start"], (int, float)) and isinstance(sent["end"], (int, float)):
-                if sent["end"] <= sent["start"]:
-                    errors.append(f"Sentence {idx}: 'end' must be greater than 'start'")
+            if _is_valid_timestamp(sent["start"]) and _is_valid_timestamp(sent["end"]):
+                try:
+                    start_sec = _parse_timestamp(sent["start"])
+                    end_sec = _parse_timestamp(sent["end"])
+                    if end_sec <= start_sec:
+                        errors.append(f"Sentence {idx}: 'end' must be greater than 'start'")
+                except ValueError:
+                    pass  # Already caught above
 
     return len(errors) == 0, errors
 
@@ -1109,13 +1176,13 @@ def parse_transcript_json(data: Union[Dict, List]) -> List[Dict[str, Any]]:
     else:
         sentences = data
 
-    # Normalize: remove duration, ensure consistent keys
+    # Normalize: remove duration, convert timestamps, ensure consistent keys
     normalized = []
     for sent in sentences:
         normalized.append({
             "text": sent["text"].strip(),
-            "start": float(sent["start"]),
-            "end": float(sent["end"]),
+            "start": _parse_timestamp(sent["start"]),
+            "end": _parse_timestamp(sent["end"]),
             "translation": sent["translation"].strip(),
         })
 

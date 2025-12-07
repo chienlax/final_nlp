@@ -33,6 +33,18 @@ python src/gui_app.py
 
 Access at: **http://localhost:8501**
 
+### Quick Reference
+
+```powershell
+# Pipeline Commands
+python src/ingest_youtube.py <URL>                       # Download audio
+python src/preprocessing/chunk_audio.py --video-id <ID>  # Chunk into segments
+python src/preprocessing/denoise_audio.py --all          # Optional: denoise
+python src/preprocessing/gemini_process.py --video-id <ID> # Transcribe + translate
+python src/gui_app.py                                    # Review in web UI
+python src/export_final.py                               # Export dataset
+```
+
 ---
 
 ## Web Interface Overview
@@ -47,8 +59,8 @@ The application uses a **tab-based single-page interface** with 5 main sections:
 
 ### Navigation
 
-- **Left Sidebar**: Quick stats and navigation shortcuts
-- **Top Tabs**: Switch between main sections
+- **Dark Header Bar**: Contains app title and navigation tabs
+- **Top Tabs**: Switch between Dashboard, Review, Upload, Refinement, and Download
 - **Bulk Edit Mode**: Toggle with switch in Review tab
 
 ---

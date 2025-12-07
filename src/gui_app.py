@@ -263,6 +263,8 @@ class AppState:
     """
     # Review page state
     current_page_num: Dict[int, int] = field(default_factory=dict)  # chunk_id -> page_num
+    bulk_edit_mode: bool = False
+    bulk_selected: Dict[int, bool] = field(default_factory=dict)
     
     # Download page state
     ingest_videos: List[Dict[str, Any]] = field(default_factory=list)
@@ -274,6 +276,10 @@ class AppState:
         cached_get_database_stats.cache_clear()
         cached_get_segments.cache_clear()
         cached_get_chunks_by_video.cache_clear()
+    
+    def clear_bulk_selection(self):
+        """Clear all bulk selections."""
+        self.bulk_selected.clear()
 
 
 # Global state instance
@@ -308,19 +314,19 @@ class AudioPlayer:
         self.player_id = f"audio_{id(self)}"
         
     def render(self):
-        """Render audio player as dedicated player bar with enhanced styling."""
-        with ui.card().classes('w-full p-4 mb-6 shadow-md border-l-4 border-blue-500 bg-gradient-to-r from-blue-50 to-indigo-50'):
+        """Render audio player as dedicated player bar with dark theme styling."""
+        with ui.card().classes('w-full p-4 mb-6 shadow-md border-l-4 border-blue-500 bg-slate-800'):
             with ui.row().classes('w-full items-center gap-4'):
-                ui.icon('audiotrack', size='lg').classes('text-blue-600')
-                ui.label('🎵 Audio Player').classes('text-lg font-bold')
+                ui.icon('audiotrack', size='lg').classes('text-blue-400')
+                ui.label('🎵 Audio Player').classes('text-lg font-bold text-white')
                 ui.space()
-                ui.label('Ctrl+Space to play selected segment').classes('text-xs text-gray-500')
+                ui.label('Ctrl+Space to play selected segment').classes('text-xs text-gray-400')
             
             ui.separator().classes('my-3')
             
-            # HTML5 audio element with full width
+            # HTML5 audio element with full width and dark theme
             self.audio_element = ui.html(f'''
-                <audio id="{self.player_id}" controls preload="metadata" style="width: 100%;">
+                <audio id="{self.player_id}" controls preload="metadata" style="width: 100%; filter: invert(1) hue-rotate(180deg);">
                     <source src="{self.audio_url}" type="audio/wav">
                     Your browser does not support the audio element.
                 </audio>
@@ -367,55 +373,14 @@ class AudioPlayer:
 def main_page():
     """Main application UI with tab-based navigation (no routing)."""
     
-    # Shared navigation sidebar
-    with ui.left_drawer(fixed=False, bordered=True).classes('bg-slate-50'):
-        ui.label('Navigation').classes('text-xs font-bold text-gray-500 mb-4 mt-4 px-4')
-        
-        # Tab shortcuts (visual only, actual tabs below)
-        ui.label('📊 Dashboard').classes('block px-4 py-2 text-sm mb-1')
-        ui.label('📝 Review Audio Transcript').classes('block px-4 py-2 text-sm mb-1')
-        ui.label('⬆️ Upload Data').classes('block px-4 py-2 text-sm mb-1')
-        ui.label('🎛️ Audio Refinement').classes('block px-4 py-2 text-sm mb-1')
-        ui.label('📥 Download Audios').classes('block px-4 py-2 text-sm mb-1')
-        
-        ui.separator().classes('my-4')
-        
-        # Quick stats section
-        ui.label('Quick Stats').classes('text-xs font-bold text-gray-500 mb-2 px-4')
-        stats_container = ui.column().classes('px-4')
-        
-        def update_stats():
-            """Update stats display."""
-            stats_container.clear()
-            with stats_container:
-                try:
-                    stats = cached_get_database_stats()
-                    ui.label(f"Videos: {stats.get('total_videos', 0)}").classes('text-sm')
-                    ui.label(f"Segments: {stats.get('total_segments', 0)}").classes('text-sm')
-                    
-                    reviewed = stats.get('reviewed_segments', 0)
-                    total = stats.get('total_segments', 1)
-                    pct = int(100 * reviewed / total) if total > 0 else 0
-                    ui.label(f"Progress: {pct}%").classes('text-sm')
-                    
-                    long_count = stats.get('long_segments', 0)
-                    if long_count > 0:
-                        ui.label(f"⚠️ Long segments: {long_count}").classes('text-sm text-orange-600')
-                except Exception as e:
-                    ui.label(f"Error: {e}").classes('text-sm text-red-600')
-        
-        update_stats()
-        
-        ui.separator().classes('my-4')
-        ui.label('v2.0 - NiceGUI').classes('text-xs text-gray-400 px-4')
-    
-    # Tab-based navigation (working pattern, no URL routing)
-    with ui.tabs().classes('w-full') as tabs:
-        ui.tab('dashboard', label='📊 Dashboard', icon='dashboard')
-        ui.tab('review', label='📝 Review', icon='edit')
-        ui.tab('upload', label='⬆️ Upload', icon='upload')
-        ui.tab('refinement', label='🎛️ Refinement', icon='tune')
-        ui.tab('download', label='📥 Download', icon='download')
+    # Dark header with centered tabs
+    with ui.header().classes('bg-slate-900 text-white items-center justify-center'):
+        with ui.tabs().classes('text-white') as tabs:
+            ui.tab('dashboard', label='📊 Dashboard')
+            ui.tab('review', label='📝 Review')
+            ui.tab('upload', label='⬆️ Upload')
+            ui.tab('refinement', label='🎛️ Refinement')
+            ui.tab('download', label='📥 Download')
     
     # Tab panels with content
     with ui.tab_panels(tabs, value='dashboard').classes('w-full'):
@@ -774,7 +739,7 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
             async def handle_chunk_json_upload(e: events.UploadEventArguments):
                 """Handle JSON upload for this specific chunk."""
                 try:
-                    content = e.content.read().decode('utf-8')
+                    content = await e.file.text()
                     parsed = json.loads(content)
                     
                     # Validate JSON
@@ -963,7 +928,7 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
             
             # Standard bulk actions (always visible)
             ui.separator().classes('my-6')
-            with ui.expansion(f'🔧 Bulk Actions ({len(filtered_segments)} segments in Chunk {chunk_index})', icon='settings').classes('w-full'):
+            with ui.expansion(f'🔧 Bulk Actions ({len(filtered_segments)} segments in Chunk {chunk_index})', icon='settings', value=True).classes('w-full'):
                 ui.label('Apply actions to all visible segments in this chunk').classes('text-sm text-gray-600 mb-4')
                 
                 with ui.row().classes('gap-4'):
@@ -1321,121 +1286,124 @@ def upload_content():
         audio_file_data = {'content': None, 'name': None}
         json_file_data = {'content': None, 'name': None, 'parsed': None}
         
-        # Audio file upload
-        with ui.card().classes('w-full mb-4 p-4'):
-            ui.label('📁 Audio File').classes('text-lg font-bold mb-2')
-            audio_info = ui.label('No file selected').classes('text-sm text-gray-600')
-            
-            async def handle_audio_upload(e: events.UploadEventArguments):
-                """Handle audio file upload."""
-                audio_file_data['content'] = e.content.read()
-                audio_file_data['name'] = e.name
+        # Side-by-side upload areas
+        with ui.row().classes('w-full gap-4 mb-4'):
+            # Audio file upload
+            with ui.card().classes('flex-1 p-4'):
+                ui.label('📁 Audio File').classes('text-lg font-bold mb-2')
+                audio_info = ui.label('No file selected').classes('text-sm text-gray-600')
                 
-                # Try to extract audio metadata
-                try:
-                    from pydub import AudioSegment
-                    import tempfile
+                async def handle_audio_upload(e: events.UploadEventArguments):
+                    """Handle audio file upload."""
+                    content_bytes = await e.file.read()
+                    audio_file_data['content'] = content_bytes
+                    audio_file_data['name'] = 'uploaded_audio.wav'  # Filename not directly available
                     
-                    # Save to temp file to analyze
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(e.name).suffix) as tmp:
-                        tmp.write(audio_file_data['content'])
-                        tmp_path = tmp.name
-                    
-                    audio = AudioSegment.from_file(tmp_path)
-                    duration_sec = len(audio) / 1000.0
-                    sample_rate = audio.frame_rate
-                    channels = audio.channels
-                    file_size_mb = len(audio_file_data['content']) / (1024 * 1024)
-                    
-                    Path(tmp_path).unlink()  # Clean up temp file
-                    
-                    # Display info
-                    info_text = f"✅ {e.name} ({file_size_mb:.1f} MB)\n"
-                    info_text += f"Duration: {duration_sec:.1f}s, {sample_rate}Hz, {channels} channel(s)"
-                    
-                    if sample_rate != 16000:
-                        info_text += f"\n⚠️ Warning: Expected 16kHz, got {sample_rate}Hz"
-                    if channels != 1:
-                        info_text += f"\n⚠️ Warning: Expected mono, got {channels} channels"
-                    
-                    audio_info.text = info_text
-                    ui.notify('Audio file loaded', type='positive')
-                    
-                except Exception as ex:
-                    audio_info.text = f"❌ Error reading audio: {ex}"
-                    ui.notify(f'Invalid audio file: {ex}', type='negative')
-                    audio_file_data['content'] = None
-                    audio_file_data['name'] = None
+                    # Try to extract audio metadata
+                    try:
+                        from pydub import AudioSegment
+                        import tempfile
+                        
+                        # Save to temp file to analyze
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp:
+                            tmp.write(audio_file_data['content'])
+                            tmp_path = tmp.name
+                        
+                        audio = AudioSegment.from_file(tmp_path)
+                        duration_sec = len(audio) / 1000.0
+                        sample_rate = audio.frame_rate
+                        channels = audio.channels
+                        file_size_mb = len(audio_file_data['content']) / (1024 * 1024)
+                        
+                        Path(tmp_path).unlink()  # Clean up temp file
+                        
+                        # Display info
+                        info_text = f"✅ {audio_file_data['name']} ({file_size_mb:.1f} MB)\n"
+                        info_text += f"Duration: {duration_sec:.1f}s, {sample_rate}Hz, {channels} channel(s)"
+                        
+                        if sample_rate != 16000:
+                            info_text += f"\n⚠️ Warning: Expected 16kHz, got {sample_rate}Hz"
+                        if channels != 1:
+                            info_text += f"\n⚠️ Warning: Expected mono, got {channels} channels"
+                        
+                        audio_info.text = info_text
+                        ui.notify('Audio file loaded', type='positive')
+                        
+                    except Exception as ex:
+                        audio_info.text = f"❌ Error reading audio: {ex}"
+                        ui.notify(f'Invalid audio file: {ex}', type='negative')
+                        audio_file_data['content'] = None
+                        audio_file_data['name'] = None
+                
+                ui.upload(
+                    label='Choose Audio File',
+                    on_upload=handle_audio_upload,
+                    auto_upload=True
+                ).props('accept=".wav,.mp3,.flac,.ogg"').classes('max-w-full')
             
-            ui.upload(
-                label='Choose Audio File',
-                on_upload=handle_audio_upload,
-                auto_upload=True
-            ).props('accept=".wav,.mp3,.flac,.ogg"').classes('max-w-full')
-        
-        # JSON file upload
-        with ui.card().classes('w-full mb-4 p-4'):
-            ui.label('📄 Transcript JSON').classes('text-lg font-bold mb-2')
-            json_info = ui.label('No file selected').classes('text-sm text-gray-600')
-            json_preview = ui.column().classes('mt-2')
-            
-            async def handle_json_upload(e: events.UploadEventArguments):
-                """Handle JSON file upload."""
-                try:
-                    content = e.content.read().decode('utf-8')
-                    parsed = json.loads(content)
-                    
-                    json_file_data['content'] = content
-                    json_file_data['name'] = e.name
-                    json_file_data['parsed'] = parsed
-                    
-                    # Validate JSON structure
-                    is_valid, errors = validate_transcript_json(parsed)
-                    
-                    if is_valid:
-                        sentences = parse_transcript_json(parsed)
-                        json_info.text = f"✅ {e.name} - {len(sentences)} segments"
+            # JSON file upload
+            with ui.card().classes('flex-1 p-4'):
+                ui.label('📄 Transcript JSON').classes('text-lg font-bold mb-2')
+                json_info = ui.label('No file selected').classes('text-sm text-gray-600')
+                json_preview = ui.column().classes('mt-2')
+                
+                async def handle_json_upload(e: events.UploadEventArguments):
+                    """Handle JSON file upload."""
+                    try:
+                        content = await e.file.text()
+                        parsed = json.loads(content)
                         
-                        # Show preview of first 3 segments
+                        json_file_data['content'] = content
+                        json_file_data['name'] = 'uploaded_transcript.json'
+                        json_file_data['parsed'] = parsed
+                        
+                        # Validate JSON structure
+                        is_valid, errors = validate_transcript_json(parsed)
+                        
+                        if is_valid:
+                            sentences = parse_transcript_json(parsed)
+                            json_info.text = f"✅ uploaded_transcript.json - {len(sentences)} segments"
+                            
+                            # Show preview of first 3 segments
+                            json_preview.clear()
+                            with json_preview:
+                                ui.label('Preview (first 3 segments):').classes('text-sm font-bold mt-2')
+                                for i, seg in enumerate(sentences[:3], 1):
+                                    start_str = format_timestamp(int(seg['start'] * 1000))
+                                    end_str = format_timestamp(int(seg['end'] * 1000))
+                                    ui.label(f"{i}. [{start_str} - {end_str}] {seg['text'][:50]}...").classes('text-xs text-gray-700')
+                            
+                            ui.notify('JSON validated successfully', type='positive')
+                        else:
+                            json_info.text = f"❌ Validation failed: {len(errors)} error(s)"
+                            json_preview.clear()
+                            with json_preview:
+                                ui.label('Errors:').classes('text-sm font-bold text-red-600 mt-2')
+                                for error in errors[:5]:  # Show first 5 errors
+                                    ui.label(f"• {error}").classes('text-xs text-red-600')
+                            
+                            ui.notify(f'JSON validation failed: {errors[0]}', type='negative')
+                            json_file_data['content'] = None
+                            json_file_data['parsed'] = None
+                        
+                    except json.JSONDecodeError as ex:
+                        json_info.text = f"❌ Invalid JSON syntax: {ex}"
                         json_preview.clear()
-                        with json_preview:
-                            ui.label('Preview (first 3 segments):').classes('text-sm font-bold mt-2')
-                            for i, seg in enumerate(sentences[:3], 1):
-                                start_str = format_timestamp(int(seg['start'] * 1000))
-                                end_str = format_timestamp(int(seg['end'] * 1000))
-                                ui.label(f"{i}. [{start_str} - {end_str}] {seg['text'][:50]}...").classes('text-xs text-gray-700')
-                        
-                        ui.notify('JSON validated successfully', type='positive')
-                    else:
-                        json_info.text = f"❌ Validation failed: {len(errors)} error(s)"
-                        json_preview.clear()
-                        with json_preview:
-                            ui.label('Errors:').classes('text-sm font-bold text-red-600 mt-2')
-                            for error in errors[:5]:  # Show first 5 errors
-                                ui.label(f"• {error}").classes('text-xs text-red-600')
-                        
-                        ui.notify(f'JSON validation failed: {errors[0]}', type='negative')
+                        ui.notify(f'JSON syntax error: {ex}', type='negative')
                         json_file_data['content'] = None
                         json_file_data['parsed'] = None
-                    
-                except json.JSONDecodeError as ex:
-                    json_info.text = f"❌ Invalid JSON syntax: {ex}"
-                    json_preview.clear()
-                    ui.notify(f'JSON syntax error: {ex}', type='negative')
-                    json_file_data['content'] = None
-                    json_file_data['parsed'] = None
-                except Exception as ex:
-                    json_info.text = f"❌ Error: {ex}"
-                    json_preview.clear()
-                    ui.notify(f'Error processing JSON: {ex}', type='negative')
-                    json_file_data['content'] = None
-                    json_file_data['parsed'] = None
-            
-            ui.upload(
-                label='Choose JSON File',
-                on_upload=handle_json_upload,
-                auto_upload=True
-            ).props('accept=".json"').classes('max-w-full')
+                    except Exception as ex:
+                        json_info.text = f"❌ Error: {ex}"
+                        json_preview.clear()
+                        ui.notify(f'Error processing JSON: {ex}', type='negative')
+                        json_file_data['content'] = None
+                        json_file_data['parsed'] = None
+                
+                ui.upload(
+                    label='Choose JSON File',
+                    on_upload=handle_json_upload,
+                    auto_upload=True
+                ).props('accept=".json"').classes('max-w-full')
         
         # Metadata inputs
         with ui.card().classes('w-full mb-4 p-4'):
@@ -1924,7 +1892,8 @@ def download_content():
                         # Run pipeline in background (simplified - in production use asyncio)
                         for url in urls:
                             run_pipeline(
-                                url=url,
+                                urls=[url],
+                                db_path=DEFAULT_DB_PATH,
                                 download_transcript=True,
                                 dry_run=dry_run_check.value
                             )

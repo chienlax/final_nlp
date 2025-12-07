@@ -313,27 +313,6 @@ def dashboard_content():
     """Dashboard tab content."""
     # Implementation...
 
-def review_content_sync():
-    """Review tab content."""
-    # Implementation...
-
-# 7. Main Page with Tabs
-def main_page():
-    """Main SPA with tab-based navigation."""
-    with ui.left_drawer():
-        # Navigation sidebar
-        pass
-    
-    with ui.tabs() as tabs:
-        ui.tab('dashboard', label='Dashboard')
-        ui.tab('review', label='Review')
-        # ...
-    
-    with ui.tab_panels(tabs):
-        with ui.tab_panel('dashboard'):
-            dashboard_content()
-        # ...
-
 # 8. Entry Point
 def main():
     app.add_static_files('/data', str(DATA_ROOT))
