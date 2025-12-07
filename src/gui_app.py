@@ -308,11 +308,17 @@ class AudioPlayer:
         self.player_id = f"audio_{id(self)}"
         
     def render(self):
-        """Render audio player with controls."""
-        with ui.card().classes('w-full p-4'):
-            ui.label('🎵 Audio Player').classes('text-lg font-bold mb-2')
+        """Render audio player as dedicated player bar with enhanced styling."""
+        with ui.card().classes('w-full p-4 mb-6 shadow-md border-l-4 border-blue-500 bg-gradient-to-r from-blue-50 to-indigo-50'):
+            with ui.row().classes('w-full items-center gap-4'):
+                ui.icon('audiotrack', size='lg').classes('text-blue-600')
+                ui.label('🎵 Audio Player').classes('text-lg font-bold')
+                ui.space()
+                ui.label('Ctrl+Space to play selected segment').classes('text-xs text-gray-500')
             
-            # HTML5 audio element
+            ui.separator().classes('my-3')
+            
+            # HTML5 audio element with full width
             self.audio_element = ui.html(f'''
                 <audio id="{self.player_id}" controls preload="metadata" style="width: 100%;">
                     <source src="{self.audio_url}" type="audio/wav">
@@ -424,11 +430,14 @@ def create_navigation():
 
 
 # =============================================================================
-# DASHBOARD PAGE
+# DASHBOARD PAGE (Multi-page routing)
 # =============================================================================
 
-def dashboard_page_content():
-    """Dashboard with overview statistics - Content only (no header/nav)."""
+@ui.page('/')
+def dashboard_page():
+    """Dashboard with overview statistics and channel progress."""
+    create_navigation()
+    
     with ui.column().classes('w-full p-8'):
         ui.label('📊 Dashboard').classes('text-3xl font-bold mb-6')
         
@@ -511,11 +520,27 @@ def dashboard_page_content():
 
 
 # =============================================================================
-# REVIEW PAGE
+# REVIEW PAGE (Multi-page routing)
 # =============================================================================
 
-def review_page_content():
-    """Chunk-focused video review page with inline editing - Content only."""
+@ui.page('/review')
+async def review_page():
+    """Video review page with deep linking support.
+    
+    URL params:
+        - video: Video ID to auto-select
+        - chunk: Chunk ID to auto-select
+        - page: Page number for pagination
+    """
+    create_navigation()
+    
+    # Parse URL parameters
+    from nicegui import context
+    client = context.get_client()
+    url_video_id = client.request.args.get('video')
+    url_chunk_id = client.request.args.get('chunk')
+    url_page = int(client.request.args.get('page', 1))
+    
     with ui.column().classes('w-full p-8'):
         ui.label('📝 Review Videos').classes('text-3xl font-bold mb-6')
         
@@ -749,13 +774,45 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
     segments = cached_get_segments(video_id, chunk_id=chunk_id, include_rejected=True)
     
     if not segments:
-        ui.label(f"No segments for Chunk {chunk_index}. Process with gemini_process.py first.").classes('text-gray-600')
+        # Empty state with JSON upload option
+        with ui.card().classes('w-full p-8 text-center'):
+            ui.icon('inbox', size='xl').classes('text-gray-400 mb-4')
+            ui.label(f"No segments for Chunk {chunk_index}").classes('text-xl font-bold text-gray-600 mb-2')
+            ui.label("Upload a JSON transcript or process with gemini_process.py").classes('text-sm text-gray-500 mb-4')
+            
+            async def handle_chunk_json_upload(e: events.UploadEventArguments):
+                """Handle JSON upload for this specific chunk."""
+                try:
+                    content = e.content.read().decode('utf-8')
+                    parsed = json.loads(content)
+                    
+                    # Validate JSON
+                    is_valid, errors = validate_transcript_json(parsed)
+                    if not is_valid:
+                        ui.notify(f'Invalid JSON: {", ".join(errors)}', type='negative')
+                        return
+                    
+                    # Parse and insert segments
+                    sentences = parse_transcript_json(parsed)
+                    num_inserted = insert_segments(video_id, chunk_id, sentences)
+                    
+                    ui.notify(f'Uploaded {num_inserted} segments successfully!', type='positive')
+                    state.clear_cache()
+                    ui.navigate.reload()  # Refresh page to show new segments
+                except Exception as ex:
+                    ui.notify(f'Upload failed: {ex}', type='negative')
+            
+            ui.upload(
+                label='📤 Upload JSON Transcript',
+                on_upload=handle_chunk_json_upload,
+                auto_upload=True
+            ).props('accept=.json').classes('max-w-md mx-auto')
         return
     
-    # Filter controls
+    # Filter controls and bulk edit mode
     ui.label('📝 Review Segments').classes('text-2xl font-bold mb-4')
     
-    filter_container = ui.row().classes('w-full gap-4 mb-4')
+    filter_container = ui.row().classes('w-full gap-4 mb-4 items-center')
     
     show_pending_check = ui.checkbox('Pending', value=True).classes('')
     show_reviewed_check = ui.checkbox('Reviewed', value=True).classes('')
@@ -765,12 +822,18 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
     filter_container.add(show_reviewed_check)
     filter_container.add(show_rejected_check)
     
+    ui.separator().props('vertical').classes('mx-2')
+    
+    # Bulk edit mode toggle
+    bulk_mode_switch = ui.switch('Bulk Edit Mode', value=state.bulk_edit_mode).classes('')
+    filter_container.add(bulk_mode_switch)
+    
     # Segment count
     segment_count_label = ui.label('').classes('ml-auto font-bold')
     filter_container.add(segment_count_label)
     
     # Segments container
-    segments_container = ui.column().classes('w-full gap-4 mt-4')
+    segments_container = ui.column().classes('w-full mt-4')
     
     # Pagination state
     if chunk_id not in state.current_page_num:
@@ -778,6 +841,9 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
     
     def render_segments():
         segments_container.clear()
+        
+        # Update bulk edit mode state
+        state.bulk_edit_mode = bulk_mode_switch.value
         
         # Filter segments
         filtered_segments = [
@@ -829,9 +895,30 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
                     ui.label(f'Page {current_page} of {total_pages}').classes('self-center')
                     ui.button('Next →', on_click=go_next).props('outline').set_enabled(current_page < total_pages)
             
-            # Render segments
+            # DATA GRID LAYOUT - Header row
+            with ui.card().classes('w-full p-3 bg-slate-100 border-b-2 border-slate-300'):
+                header_row = ui.row().classes('w-full items-center gap-2')
+                
+                if state.bulk_edit_mode:
+                    # Bulk select all checkbox
+                    def toggle_all_selection():
+                        all_selected = all(state.bulk_selected.get(s['segment_id'], False) for s in paginated_segments)
+                        for seg in paginated_segments:
+                            state.bulk_selected[seg['segment_id']] = not all_selected
+                        render_segments()
+                    
+                    ui.checkbox('', value=False, on_change=toggle_all_selection).classes('w-8')
+                
+                # Column headers with width distribution
+                with ui.row().classes('w-full items-center'):
+                    ui.label('Timestamp').classes('font-bold text-sm').style('width: 12%; min-width: 100px;')
+                    ui.label('Original').classes('font-bold text-sm').style('width: 40%;')
+                    ui.label('Translation').classes('font-bold text-sm').style('width: 40%;')
+                    ui.label('Actions').classes('font-bold text-sm text-center').style('width: 8%; min-width: 80px;')
+            
+            # Render segments as compact rows
             for seg in paginated_segments:
-                render_segment_card(seg, video, player, chunk_start_ms, lambda: render_segments())
+                render_segment_row(seg, video, player, chunk_start_ms, lambda: render_segments())
             
             # Bottom pagination
             if total_segments > SEGMENTS_PER_PAGE:
@@ -840,7 +927,50 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
                     ui.label(f'Page {current_page} of {total_pages}').classes('self-center')
                     ui.button('Next →', on_click=go_next).props('outline').set_enabled(current_page < total_pages)
             
-            # Bulk actions
+            # Bulk actions (shown when bulk mode is active)
+            if state.bulk_edit_mode:
+                selected_count = sum(1 for seg_id, is_sel in state.bulk_selected.items() if is_sel)
+                
+                if selected_count > 0:
+                    ui.separator().classes('my-4')
+                    with ui.card().classes('w-full p-4 bg-blue-50 border-l-4 border-blue-500'):
+                        with ui.row().classes('w-full items-center justify-between'):
+                            ui.label(f'🎯 {selected_count} segments selected').classes('text-lg font-bold')
+                            
+                            with ui.row().classes('gap-2'):
+                                def bulk_approve_selected():
+                                    selected_ids = [seg_id for seg_id, is_sel in state.bulk_selected.items() if is_sel]
+                                    with get_db() as db:
+                                        db.executemany(
+                                            "UPDATE segments SET review_state = 'approved' WHERE segment_id = ?",
+                                            [(sid,) for sid in selected_ids]
+                                        )
+                                    ui.notify(f'Approved {len(selected_ids)} segments!', type='positive')
+                                    state.clear_cache()
+                                    state.clear_bulk_selection()
+                                    render_segments()
+                                
+                                def bulk_reject_selected():
+                                    selected_ids = [seg_id for seg_id, is_sel in state.bulk_selected.items() if is_sel]
+                                    with get_db() as db:
+                                        db.executemany(
+                                            "UPDATE segments SET review_state = 'rejected', is_rejected = 1 WHERE segment_id = ?",
+                                            [(sid,) for sid in selected_ids]
+                                        )
+                                    ui.notify(f'Rejected {len(selected_ids)} segments!', type='warning')
+                                    state.clear_cache()
+                                    state.clear_bulk_selection()
+                                    render_segments()
+                                
+                                def clear_selection():
+                                    state.clear_bulk_selection()
+                                    render_segments()
+                                
+                                ui.button('✅ Approve Selected', on_click=bulk_approve_selected).props('color=green')
+                                ui.button('❌ Reject Selected', on_click=bulk_reject_selected).props('color=red outline')
+                                ui.button('Clear Selection', on_click=clear_selection).props('flat')
+            
+            # Standard bulk actions (always visible)
             ui.separator().classes('my-6')
             with ui.expansion(f'🔧 Bulk Actions ({len(filtered_segments)} segments in Chunk {chunk_index})', icon='settings').classes('w-full'):
                 ui.label('Apply actions to all visible segments in this chunk').classes('text-sm text-gray-600 mb-4')
@@ -876,6 +1006,7 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
                     ui.button('📋 Mark Chunk Reviewed', on_click=bulk_review).props('color=blue')
                     ui.button('🔄 Reset All to Pending', on_click=bulk_reset).props('color=orange outline')
     
+    bulk_mode_switch.on_value_change(lambda: render_segments())
     show_pending_check.on_value_change(lambda: render_segments())
     show_reviewed_check.on_value_change(lambda: render_segments())
     show_rejected_check.on_value_change(lambda: render_segments())
@@ -883,7 +1014,7 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
     render_segments()
 
 
-def render_segment_card(
+def render_segment_row(
     seg: Dict[str, Any],
     video: Dict[str, Any],
     player: Optional[AudioPlayer],
@@ -891,7 +1022,7 @@ def render_segment_card(
     refresh_callback: Callable
 ):
     """
-    Render an editable segment card.
+    Render a compact segment row in data-grid layout.
     
     Args:
         seg: Segment dictionary
@@ -910,210 +1041,261 @@ def render_segment_card(
     duration_ms = end_ms - start_ms
     review_state = seg.get('review_state', 'pending') or 'pending'
     
-    # Status icon
+    # State-based row styling
     if seg.get('is_rejected'):
-        status_icon = '🔴 REJECTED'
-        card_classes = 'w-full p-4 bg-red-50 border-2 border-red-300'
-    elif seg.get('is_reviewed'):
-        status_icon = '✅ Reviewed'
-        card_classes = 'w-full p-4 bg-green-50 border-2 border-green-300'
+        row_bg = 'bg-red-50'
+        border_class = 'border-l-4 border-red-400'
+    elif review_state in ('reviewed', 'approved'):
+        row_bg = 'bg-green-50'
+        border_class = 'border-l-4 border-green-400'
     else:
-        status_icon = '⏳ Pending'
-        card_classes = 'w-full p-4'
+        row_bg = 'bg-white hover:bg-gray-50'
+        border_class = 'border-l-4 border-transparent'
     
-    with ui.card().classes(card_classes):
-        # Header
-        with ui.row().classes('w-full justify-between items-center mb-3'):
-            ui.label(f"#{seg['segment_index']} | {format_timestamp(start_ms)} - {format_timestamp(end_ms)}").classes('text-lg font-bold')
-            ui.badge(status_icon)
-        
-        # Duration warning
-        if duration_ms > WARNING_DURATION_MS:
-            ui.label(f"⚠️ Segment is {duration_ms/1000:.1f}s (exceeds 25s limit). Consider splitting.").classes('text-orange-600 font-bold mb-2')
-        
-        # Play button
-        if player:
-            def play_segment():
-                player.play_segment(start_ms, end_ms)
-            
-            ui.button(f'▶️ Play segment ({duration_ms/1000:.1f}s)', on_click=play_segment).props('flat color=blue')
-        
-        ui.separator().classes('my-3')
-        
-        # Timestamps
-        with ui.row().classes('w-full gap-4 mb-4'):
-            start_input = ui.input(label='Start', value=ms_to_min_sec_ms(start_ms), placeholder='M:SS.ss').classes('w-32')
-            end_input = ui.input(label='End', value=ms_to_min_sec_ms(end_ms), placeholder='M:SS.ss').classes('w-32')
-            
-            # Duration display
-            def update_duration():
-                try:
-                    new_start_ms = min_sec_ms_to_ms(start_input.value)
-                    new_end_ms = min_sec_ms_to_ms(end_input.value)
-                    new_duration_ms = new_end_ms - new_start_ms
-                    duration_label.set_text(f"Duration: {new_duration_ms/1000:.2f}s")
-                    
-                    if new_duration_ms > WARNING_DURATION_MS:
-                        duration_label.classes('text-red-600 font-bold', remove='text-green-600')
-                    else:
-                        duration_label.classes('text-green-600', remove='text-red-600 font-bold')
-                except:
-                    duration_label.set_text("Duration: Invalid")
-            
-            duration_label = ui.label(f"Duration: {duration_ms/1000:.2f}s").classes('self-center')
-            if duration_ms > WARNING_DURATION_MS:
-                duration_label.classes('text-red-600 font-bold')
-            else:
-                duration_label.classes('text-green-600')
-            
-            start_input.on_value_change(lambda: update_duration())
-            end_input.on_value_change(lambda: update_duration())
-        
-        # Transcript and translation
-        with ui.row().classes('w-full gap-4 mb-4'):
-            transcript_input = ui.textarea(label='Transcript', value=transcript).classes('flex-1').props('auto-grow')
-            translation_input = ui.textarea(label='Translation', value=translation).classes('flex-1').props('auto-grow')
-        
-        # Action buttons
-        with ui.row().classes('gap-2'):
-            def save_changes():
-                try:
-                    new_start_ms = min_sec_ms_to_ms(start_input.value)
-                    new_end_ms = min_sec_ms_to_ms(end_input.value)
-                    
-                    update_segment_review(
-                        segment_id=segment_id,
-                        reviewed_transcript=transcript_input.value,
-                        reviewed_translation=translation_input.value,
-                        reviewed_start_ms=new_start_ms,
-                        reviewed_end_ms=new_end_ms,
-                        is_rejected=False
-                    )
-                    ui.notify('Segment saved!', type='positive')
-                    state.clear_cache()
-                    refresh_callback()
-                except Exception as e:
-                    ui.notify(f'Error: {e}', type='negative')
-            
-            def approve_segment():
-                try:
-                    new_start_ms = min_sec_ms_to_ms(start_input.value)
-                    new_end_ms = min_sec_ms_to_ms(end_input.value)
-                    
-                    update_segment_review(
-                        segment_id=segment_id,
-                        reviewed_transcript=transcript_input.value,
-                        reviewed_translation=translation_input.value,
-                        reviewed_start_ms=new_start_ms,
-                        reviewed_end_ms=new_end_ms,
-                        is_rejected=False
-                    )
-                    # Update review_state to approved
-                    with get_db() as db:
-                        db.execute(
-                            "UPDATE segments SET review_state = 'approved' WHERE segment_id = ?",
-                            (segment_id,)
-                        )
-                    ui.notify('Segment approved!', type='positive')
-                    state.clear_cache()
-                    refresh_callback()
-                except Exception as e:
-                    ui.notify(f'Error: {e}', type='negative')
-            
-            def reject_segment_action():
-                reject_segment(segment_id)
-                ui.notify('Segment rejected!', type='warning')
-                state.clear_cache()
-                refresh_callback()
-            
-            # Keyboard shortcut handler
-            def handle_keydown(e: events.KeyEventArguments):
-                """Handle keyboard shortcuts for this segment."""
-                # Ctrl+S: Save
-                if e.key == 's' and e.modifiers.ctrl:
-                    e.handled()
-                    save_changes()
-                # Ctrl+Enter: Approve
-                elif e.key == 'Enter' and e.modifiers.ctrl:
-                    e.handled()
-                    approve_segment()
-                # Ctrl+R: Reject
-                elif e.key == 'r' and e.modifiers.ctrl:
-                    e.handled()
-                    reject_segment_action()
-                # Ctrl+Space: Play audio
-                elif e.key == ' ' and e.modifiers.ctrl and player:
-                    e.handled()
-                    player.play_segment(start_ms, end_ms)
-            
-            # Attach keyboard handler to all inputs in this card
-            transcript_input.on('keydown', handle_keydown)
-            translation_input.on('keydown', handle_keydown)
-            start_input.on('keydown', handle_keydown)
-            end_input.on('keydown', handle_keydown)
-            
-            def split_segment_action():
-                # Show split dialog
-                with ui.dialog() as dialog, ui.card().classes('w-96'):
-                    ui.label('Split Segment').classes('text-xl font-bold mb-4')
-                    ui.label(f'Original: {ms_to_min_sec_ms(start_ms)} - {ms_to_min_sec_ms(end_ms)}').classes('text-sm text-gray-600 mb-4')
-                    
-                    split_time_input = ui.input(
-                        label='Split Time (M:SS.ss)',
-                        placeholder='M:SS.ss',
-                        value=ms_to_min_sec_ms(start_ms + (end_ms - start_ms) // 2)
-                    ).classes('w-full mb-4')
-                    
-                    ui.separator().classes('my-4')
-                    
-                    transcript_first_input = ui.textarea(label='First Segment Transcript', value='').classes('w-full mb-2')
-                    translation_first_input = ui.textarea(label='First Segment Translation', value='').classes('w-full mb-4')
-                    
-                    transcript_second_input = ui.textarea(label='Second Segment Transcript', value='').classes('w-full mb-2')
-                    translation_second_input = ui.textarea(label='Second Segment Translation', value='').classes('w-full mb-4')
-                    
-                    with ui.row().classes('w-full justify-end gap-2'):
-                        ui.button('Cancel', on_click=dialog.close).props('flat')
-                        
-                        def confirm_split():
-                            try:
-                                split_time_ms = min_sec_ms_to_ms(split_time_input.value)
-                                
-                                if split_time_ms <= start_ms or split_time_ms >= end_ms:
-                                    ui.notify('Split time must be between start and end', type='negative')
-                                    return
-                                
-                                split_segment(
-                                    segment_id=segment_id,
-                                    split_time_ms=split_time_ms,
-                                    transcript_first=transcript_first_input.value,
-                                    transcript_second=transcript_second_input.value,
-                                    translation_first=translation_first_input.value,
-                                    translation_second=translation_second_input.value
-                                )
-                                ui.notify('Segment split successfully!', type='positive')
-                                state.clear_cache()
-                                dialog.close()
-                                refresh_callback()
-                            except Exception as e:
-                                ui.notify(f'Error: {e}', type='negative')
-                        
-                        ui.button('Split', on_click=confirm_split).props('color=primary')
+    with ui.card().classes(f'w-full p-3 {row_bg} {border_class} border-b border-gray-200 transition-colors').style('margin-bottom: 2px;'):
+        with ui.row().classes('w-full items-start gap-2'):
+            # Bulk select checkbox (if bulk mode active)
+            if state.bulk_edit_mode:
+                is_selected = state.bulk_selected.get(segment_id, False)
                 
-                dialog.open()
+                def toggle_selection(e):
+                    state.bulk_selected[segment_id] = e.value
+                
+                ui.checkbox('', value=is_selected, on_change=toggle_selection).classes('w-8 mt-2')
             
-            ui.button('💾 Save', on_click=save_changes).props('color=blue')
-            ui.button('✅ Approve', on_click=approve_segment).props('color=green')
-            ui.button('❌ Reject', on_click=reject_segment_action).props('color=red flat')
-            ui.button('✂️ Split', on_click=split_segment_action).props('color=orange outline')
+            # Timestamp column with time picker (12%)
+            with ui.column().classes('gap-1').style('width: 12%; min-width: 100px;'):
+                # Status badge
+                if seg.get('is_rejected'):
+                    status_badge = ui.badge('🔴', color='red').classes('text-xs')
+                elif review_state in ('reviewed', 'approved'):
+                    status_badge = ui.badge('✅', color='green').classes('text-xs')
+                else:
+                    status_badge = ui.badge('⏳', color='gray').classes('text-xs')
+                
+                # Time inputs with picker-style
+                start_input = ui.input(
+                    value=ms_to_min_sec_ms(start_ms),
+                    placeholder='M:SS.ss'
+                ).classes('text-xs').style('width: 90px;').props('dense borderless')
+                
+                end_input = ui.input(
+                    value=ms_to_min_sec_ms(end_ms),
+                    placeholder='M:SS.ss'
+                ).classes('text-xs').style('width: 90px;').props('dense borderless')
+                
+                # Duration label with color coding
+                duration_label = ui.label(f"{duration_ms/1000:.1f}s").classes('text-xs')
+                if duration_ms > WARNING_DURATION_MS:
+                    duration_label.classes('text-red-600 font-bold')
+                else:
+                    duration_label.classes('text-green-600')
+                
+                # Play button (icon only)
+                if player:
+                    def play_segment():
+                        player.play_segment(start_ms, end_ms)
+                    
+                    ui.button(icon='play_arrow', on_click=play_segment).props('dense flat size=sm color=blue').classes('mt-1')
+            
+            # Original text column (40%)
+            with ui.column().classes('gap-1').style('width: 40%;'):
+                transcript_input = ui.textarea(
+                    value=transcript,
+                    placeholder='Original transcript...'
+                ).classes('w-full text-sm').props('dense borderless auto-grow').style('min-height: 40px; max-height: 200px;')
+            
+            # Translation column (40%)
+            with ui.column().classes('gap-1').style('width: 40%;'):
+                translation_input = ui.textarea(
+                    value=translation,
+                    placeholder='Translation...'
+                ).classes('w-full text-sm').props('dense borderless auto-grow').style('min-height: 40px; max-height: 200px;')
+            
+            # Actions column (8%)
+            with ui.column().classes('gap-1 items-center').style('width: 8%; min-width: 80px;'):
+                with ui.row().classes('gap-1'):
+                    # Save button
+                    def save_changes():
+                        try:
+                            new_start_ms = min_sec_ms_to_ms(start_input.value)
+                            new_end_ms = min_sec_ms_to_ms(end_input.value)
+                            
+                            update_segment_review(
+                                segment_id=segment_id,
+                                reviewed_transcript=transcript_input.value,
+                                reviewed_translation=translation_input.value,
+                                reviewed_start_ms=new_start_ms,
+                                reviewed_end_ms=new_end_ms,
+                                is_rejected=False
+                            )
+                            ui.notify('Saved', type='positive', position='top-right', timeout=1000)
+                            state.clear_cache()
+                            refresh_callback()
+                        except Exception as e:
+                            ui.notify(f'Error: {e}', type='negative')
+                    
+                    ui.button(icon='save', on_click=save_changes).props('dense flat size=sm color=blue').classes('tooltip').tooltip('Save (Ctrl+S)')
+                    
+                    # Approve button
+                    def approve_segment():
+                        try:
+                            new_start_ms = min_sec_ms_to_ms(start_input.value)
+                            new_end_ms = min_sec_ms_to_ms(end_input.value)
+                            
+                            update_segment_review(
+                                segment_id=segment_id,
+                                reviewed_transcript=transcript_input.value,
+                                reviewed_translation=translation_input.value,
+                                reviewed_start_ms=new_start_ms,
+                                reviewed_end_ms=new_end_ms,
+                                is_rejected=False
+                            )
+                            # Update review_state to approved
+                            with get_db() as db:
+                                db.execute(
+                                    "UPDATE segments SET review_state = 'approved' WHERE segment_id = ?",
+                                    (segment_id,)
+                                )
+                            ui.notify('Approved', type='positive', position='top-right', timeout=1000)
+                            state.clear_cache()
+                            refresh_callback()
+                        except Exception as e:
+                            ui.notify(f'Error: {e}', type='negative')
+                    
+                    ui.button(icon='check', on_click=approve_segment).props('dense flat size=sm color=green').tooltip('Approve (Ctrl+Enter)')
+                
+                with ui.row().classes('gap-1 mt-1'):
+                    # Reject button
+                    def reject_segment_action():
+                        reject_segment(segment_id)
+                        ui.notify('Rejected', type='warning', position='top-right', timeout=1000)
+                        state.clear_cache()
+                        refresh_callback()
+                    
+                    ui.button(icon='close', on_click=reject_segment_action).props('dense flat size=sm color=red').tooltip('Reject (Ctrl+R)')
+                    
+                    # Split button (opens dialog)
+                    def split_segment_action():
+                        with ui.dialog() as dialog, ui.card().classes('w-96'):
+                            ui.label('Split Segment').classes('text-xl font-bold mb-4')
+                            ui.label(f'Original: {ms_to_min_sec_ms(start_ms)} - {ms_to_min_sec_ms(end_ms)}').classes('text-sm text-gray-600 mb-4')
+                            
+                            split_time_input = ui.input(
+                                label='Split Time (M:SS.ss)',
+                                placeholder='M:SS.ss',
+                                value=ms_to_min_sec_ms(start_ms + (end_ms - start_ms) // 2)
+                            ).classes('w-full mb-4')
+                            
+                            ui.separator().classes('my-4')
+                            
+                            transcript_first_input = ui.textarea(label='First Segment Transcript', value='').classes('w-full mb-2')
+                            translation_first_input = ui.textarea(label='First Segment Translation', value='').classes('w-full mb-4')
+                            
+                            transcript_second_input = ui.textarea(label='Second Segment Transcript', value='').classes('w-full mb-2')
+                            translation_second_input = ui.textarea(label='Second Segment Translation', value='').classes('w-full mb-4')
+                            
+                            with ui.row().classes('w-full justify-end gap-2'):
+                                ui.button('Cancel', on_click=dialog.close).props('flat')
+                                
+                                def confirm_split():
+                                    try:
+                                        split_time_ms = min_sec_ms_to_ms(split_time_input.value)
+                                        
+                                        if split_time_ms <= start_ms or split_time_ms >= end_ms:
+                                            ui.notify('Split time must be between start and end', type='negative')
+                                            return
+                                        
+                                        split_segment(
+                                            segment_id=segment_id,
+                                            split_time_ms=split_time_ms,
+                                            transcript_first=transcript_first_input.value,
+                                            transcript_second=transcript_second_input.value,
+                                            translation_first=translation_first_input.value,
+                                            translation_second=translation_second_input.value
+                                        )
+                                        ui.notify('Segment split successfully!', type='positive')
+                                        state.clear_cache()
+                                        dialog.close()
+                                        refresh_callback()
+                                    except Exception as e:
+                                        ui.notify(f'Error: {e}', type='negative')
+                                
+                                ui.button('Split', on_click=confirm_split).props('color=primary')
+                        
+                        dialog.open()
+                    
+                    ui.button(icon='content_cut', on_click=split_segment_action).props('dense flat size=sm color=orange').tooltip('Split segment')
+        
+        # Real-time duration update
+        def update_duration():
+            try:
+                new_start_ms = min_sec_ms_to_ms(start_input.value)
+                new_end_ms = min_sec_ms_to_ms(end_input.value)
+                new_duration_ms = new_end_ms - new_start_ms
+                duration_label.set_text(f"{new_duration_ms/1000:.1f}s")
+                
+                if new_duration_ms > WARNING_DURATION_MS:
+                    duration_label.classes('text-red-600 font-bold', remove='text-green-600')
+                else:
+                    duration_label.classes('text-green-600', remove='text-red-600 font-bold')
+            except:
+                duration_label.set_text("Invalid")
+        
+        start_input.on_value_change(lambda: update_duration())
+        end_input.on_value_change(lambda: update_duration())
+        
+        # Keyboard shortcut handler
+        def handle_keydown(e: events.KeyEventArguments):
+            """Handle keyboard shortcuts for this segment."""
+            # Ctrl+S: Save
+            if e.key == 's' and e.modifiers.ctrl:
+                e.handled()
+                save_changes()
+            # Ctrl+Enter: Approve
+            elif e.key == 'Enter' and e.modifiers.ctrl:
+                e.handled()
+                approve_segment()
+            # Ctrl+R: Reject
+            elif e.key == 'r' and e.modifiers.ctrl:
+                e.handled()
+                reject_segment_action()
+            # Ctrl+Space: Play audio
+            elif e.key == ' ' and e.modifiers.ctrl and player:
+                e.handled()
+                player.play_segment(start_ms, end_ms)
+        
+        # Attach keyboard handler to all inputs in this row
+        transcript_input.on('keydown', handle_keydown)
+        translation_input.on('keydown', handle_keydown)
+        start_input.on('keydown', handle_keydown)
+        end_input.on('keydown', handle_keydown)
+
+
+def render_segment_card(
+    seg: Dict[str, Any],
+    video: Dict[str, Any],
+    player: Optional[AudioPlayer],
+    chunk_start_ms: int,
+    refresh_callback: Callable
+):
+    """
+    DEPRECATED: Legacy card-based rendering. Use render_segment_row() instead.
+    Kept for backward compatibility.
+    """
+    # Delegate to new row renderer
+    render_segment_row(seg, video, player, chunk_start_ms, refresh_callback)
 
 
 # =============================================================================
-# UPLOAD PAGE
+# UPLOAD PAGE (Multi-page routing)
 # =============================================================================
 
-def upload_page_content():
-    """Data upload page - Content only."""
+@ui.page('/upload')
+def upload_page():
+    """Data upload page for audio files and JSON transcripts."""
+    create_navigation()
+    
     with ui.column().classes('w-full p-8'):
         ui.label('⬆️ Upload Data').classes('text-3xl font-bold mb-6')
         
@@ -1407,11 +1589,14 @@ def upload_page_content():
 
 
 # =============================================================================
-# AUDIO REFINEMENT PAGE
+# AUDIO REFINEMENT PAGE (Multi-page routing)
 # =============================================================================
 
-def refinement_page_content():
-    """Audio refinement (denoising) page - Content only."""
+@ui.page('/refinement')
+def refinement_page():
+    """Audio refinement (denoising) page with DeepFilterNet integration."""
+    create_navigation()
+    
     with ui.column().classes('w-full p-8'):
         ui.label('🎛️ Audio Refinement').classes('text-3xl font-bold mb-6')
         
@@ -1635,11 +1820,14 @@ def refinement_page_content():
 
 
 # =============================================================================
-# DOWNLOAD AUDIOS PAGE
+# DOWNLOAD AUDIOS PAGE (Multi-page routing)
 # =============================================================================
 
-def download_page_content():
-    """YouTube ingestion page - Content only."""
+@ui.page('/download')
+def download_page():
+    """YouTube ingestion page with playlist support."""
+    create_navigation()
+    
     with ui.column().classes('w-full p-8'):
         ui.label('📥 Download Audios').classes('text-3xl font-bold mb-6')
         
@@ -1772,7 +1960,7 @@ def download_page_content():
 # =============================================================================
 
 def main():
-    """Main application entry point - SPA version."""
+    """Main application entry point - Multi-page routing version."""
     # Serve audio files statically (critical for audio player)
     app.add_static_files('/data', str(DATA_ROOT))
     
@@ -1787,8 +1975,8 @@ def main():
     else:
         ensure_schema_upgrades()
     
-    # Build SPA with tabs (NO page routing - NiceGUI limitation in script mode)
-    build_spa_ui()
+    # Pages are defined via @ui.page decorators above
+    # No need for build_spa_ui() - routing handled automatically
     
     # Start NiceGUI server
     ui.run(
@@ -1799,48 +1987,6 @@ def main():
         reload=False,
         show=False  # Don't auto-open browser
     )
-
-
-def build_spa_ui():
-    """Build single-page application with tab navigation."""
-    # Header
-    with ui.header().classes('bg-slate-900 text-white items-center'):
-        ui.label('🎧 Code-Switch Review Tool').classes('text-xl font-bold')
-        ui.space()
-        
-        # Quick stats
-        try:
-            stats = cached_get_database_stats()
-            videos = stats.get('total_videos', 0)
-            segments = stats.get('total_segments', 0)
-            ui.label(f"Videos: {videos} | Segments: {segments}").classes('text-sm opacity-75')
-        except Exception:
-            pass
-    
-    # Tab navigation
-    with ui.tabs().classes('w-full bg-slate-100') as tabs:
-        ui.tab('dashboard', label='📊 Dashboard', icon='dashboard')
-        ui.tab('review', label='📝 Review', icon='edit')
-        ui.tab('upload', label='⬆️ Upload', icon='upload')
-        ui.tab('refinement', label='🎛️ Refinement', icon='tune')
-        ui.tab('download', label='📥 Download', icon='download')
-    
-    # Tab panels with content
-    with ui.tab_panels(tabs, value='dashboard').classes('w-full'):
-        with ui.tab_panel('dashboard'):
-            dashboard_page_content()
-        
-        with ui.tab_panel('review'):
-            review_page_content()
-        
-        with ui.tab_panel('upload'):
-            upload_page_content()
-        
-        with ui.tab_panel('refinement'):
-            refinement_page_content()
-        
-        with ui.tab_panel('download'):
-            download_page_content()
 
 
 if __name__ == '__main__':

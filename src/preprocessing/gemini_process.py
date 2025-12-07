@@ -205,7 +205,7 @@ Now transcribe and translate the audio:"""
 
 
 # =============================================================================
-# SIMPLIFIED OUTPUT SCHEMA (no duration field)
+# OUTPUT SCHEMA (no duration field)
 # =============================================================================
 
 SENTENCE_SCHEMA = {
@@ -588,7 +588,10 @@ def process_audio_chunk(
                 "top_p": 0.95,
                 "max_output_tokens": 65536,
                 "response_mime_type": "application/json",
-                "response_schema": OUTPUT_SCHEMA
+                "response_schema": OUTPUT_SCHEMA,
+                "thinking_config": {
+                    "include_thoughts": False 
+                }
             }
 
             client = genai.GenerativeModel(
@@ -711,7 +714,7 @@ def process_video(
     Args:
         video_id: Video identifier.
         data_root: Root directory for data files (used for path resolution).
-        model: Gemini model to use (default: gemini-2.0-flash-exp).
+        model: Gemini model to use (default: gemini-2.5-flash-exp).
         chunk_id: Optional specific chunk ID to process. If None, processes all pending chunks.
 
     Returns:
@@ -972,7 +975,7 @@ Environment Variables:
     )
     parser.add_argument(
         "--model",
-        choices=["gemini-2.5-flash", "gemini-2.5-pro"],
+        choices=["gemini-2.5-flash-preview-09-2025", "gemini-2.5-pro"],
         default=DEFAULT_MODEL,
         help=f"Gemini model (default: {DEFAULT_MODEL})"
     )

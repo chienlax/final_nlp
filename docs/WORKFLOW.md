@@ -267,37 +267,94 @@ python src/preprocessing/gemini_process.py --video-id gBhbKX0pT_0 --force
 
 ### gui_app.py
 
-**Purpose:** NiceGUI web interface for reviewing transcriptions (event-driven SPA).
+**Purpose:** NiceGUI web interface for reviewing transcriptions (v2.0 - Data-Grid Layout).
 
 ```powershell
 # Start app
 python src/gui_app.py
 
-# Custom port (edit gui_app.py main() function)
-# ui.run(port=8502, ...)
+# Access at http://localhost:8501
+# Or via Tailscale for remote access
 ```
 
-**Access:** http://localhost:8501
+**Access:** 
+- Local: http://localhost:8501
+- Tailscale: http://<tailscale-ip>:8501
 
-**Features:**
-- **Review Audio Transcript Tab:**
-  - View videos grouped by channel
-  - Filter by state (`pending`, `reviewed`, `approved`, `rejected`)
-  - Pagination (25 segments per page)
-  - Edit transcript, translation, timestamps (10ms precision)
-  - Audio playback with segment-specific start/end
-  - Bulk operations (approve/reject all segments in video)
-- **Reviewer Management Tab:**
-  - Assign reviewers per video
-  - Bulk assign by channel
-  - Add new reviewers
-- **Audio Refinement Tab:**
-  - Run DeepFilterNet denoising from UI (subprocess integration)
-- **Light/Dark Mode:**
-  - Automatic based on system preference
-  - CSS variables for custom styling
+**New in v2.0:**
 
-**Caching:** Database queries cached with 10-60s TTL for performance
+**✨ UI/UX Improvements:**
+- **Multi-Page Routing**: Browser back/forward buttons work, no more tab-based SPA
+- **Data-Grid Layout**: Compact table-style segment display (40% more segments visible)
+- **Bulk Edit Mode**: Multi-select segments with checkboxes for batch approve/reject
+- **Deep Linking**: Shareable URLs like `/review?video=ID&chunk=42&page=2`
+- **Enhanced Audio Player**: Gradient-styled player bar with shortcuts hint
+- **Persistent Sidebar**: Dark navigation drawer with quick stats footer
+- **Empty State Upload**: Direct JSON upload for chunks without segments
+- **Time-Picker Inputs**: Inline timestamp editing with real-time validation
+
+**Page Structure:**
+
+1. **📊 Dashboard** (`/`)
+   - Overview statistics (cards with gradients)
+   - Videos by state breakdown
+   - Segments needing attention (>25s duration)
+   - Quick navigation to review
+
+2. **📝 Annotations** (`/review`)
+   - **Side-by-side controls**: Channel filter + video selector
+   - **Video metadata**: Channel, reviewer, progress, state (horizontal row)
+   - **Chunk tabs**: One tab per 6-minute audio segment
+   - **Data-grid segment list**:
+     - Header: Timestamp (12%) | Original (40%) | Translation (40%) | Actions (8%)
+     - Compact rows with inline editing
+     - State-based highlighting (green=approved, red=rejected)
+     - Icon-only action buttons (save/approve/reject/split)
+   - **Filter controls**: Pending/Reviewed/Rejected checkboxes + Bulk Edit Mode toggle
+   - **Pagination**: 25 segments per page with prev/next buttons
+   - **Bulk actions**: Approve/reject selected or all in chunk
+
+3. **⬆️ Upload** (`/upload`)
+   - Manual audio + JSON transcript upload
+   - Validation and preview before insertion
+
+4. **🎛️ Refinement** (`/refinement`)
+   - DeepFilterNet denoising (subprocess integration)
+   - Progress tracking for long-running tasks
+
+5. **📥 Download** (`/download`)
+   - YouTube video/playlist ingestion
+   - Queue management for batch downloads
+
+**Keyboard Shortcuts** (in segment inputs):
+- `Ctrl+S` - Save current segment
+- `Ctrl+Enter` - Approve segment
+- `Ctrl+R` - Reject segment
+- `Ctrl+Space` - Play audio for segment
+
+**Bulk Edit Workflow:**
+```powershell
+1. Enable "Bulk Edit Mode" toggle
+2. Check segments to modify (checkbox column appears)
+3. Click "✅ Approve Selected" or "❌ Reject Selected"
+4. Confirm action in notification
+```
+
+**Deep Linking Examples:**
+```powershell
+# Direct link to specific chunk and page
+http://localhost:8501/review?video=gBhbKX0pT_0&chunk=42&page=2
+
+# Share with team for collaboration
+# Browser navigates directly to that chunk/page
+```
+
+**Caching:** 
+- TTL-based query caching (10-60s) for performance
+- Auto-clears after edits to show updates
+- Manual refresh button available
+
+**See Also:** [UI_GUIDE.md](./UI_GUIDE.md) for detailed UI documentation
 
 ---
 

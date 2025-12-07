@@ -38,7 +38,7 @@ from db import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-MAX_CHUNK_MS = 6 * 60 * 1000  # 6 minutes (adjusted to avoid Gemini hallucinations)
+MAX_CHUNK_MS = 5 * 60 * 1000  # 5 minutes (adjusted to avoid Gemini hallucinations)
 OVERLAP_MS = 5 * 1000         # 5 seconds
 
 CHUNK_ROOT = Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "chunks"
