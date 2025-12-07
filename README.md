@@ -220,6 +220,23 @@ git push
 
 ---
 
+## Documentation
+
+📚 **[Start Here: DOCS_INDEX.md](DOCS_INDEX.md)** - Documentation navigation hub
+
+### Quick Links
+
+| Document | Audience | Purpose |
+|----------|----------|---------|
+| **[USER_GUIDE.md](docs/USER_GUIDE.md)** | End-users, reviewers | Complete UI tutorial, keyboard shortcuts, workflow |
+| **[DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)** | Developers, MLOps | Architecture, API reference, development workflow |
+| **[WORKFLOW.md](docs/WORKFLOW.md)** | Data engineers | Pipeline stages, CLI tools, data formats |
+
+**Version**: 2.0 (Tab-based UI, consolidated documentation)  
+**Last Updated**: 2025-01-15
+
+---
+
 ## License
 
 MIT License

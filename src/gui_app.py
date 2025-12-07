@@ -361,41 +361,22 @@ class AudioPlayer:
 
 
 # =============================================================================
-# NAVIGATION & LAYOUT
+# MAIN SPA UI WITH TAB NAVIGATION
 # =============================================================================
 
-def create_header():
-    """Create persistent header bar."""
-    with ui.header().classes('bg-slate-900 text-white items-center'):
-        ui.label('🎧 Code-Switch Review Tool').classes('text-xl font-bold')
-        ui.space()
-        
-        # Quick stats
-        try:
-            stats = cached_get_database_stats()
-            videos = stats.get('total_videos', 0)
-            segments = stats.get('total_segments', 0)
-            ui.label(f"Videos: {videos} | Segments: {segments}").classes('text-sm opacity-75')
-        except Exception:
-            pass
-
-
-def create_navigation():
-    """Create left navigation drawer."""
+def main_page():
+    """Main application UI with tab-based navigation (no routing)."""
+    
+    # Shared navigation sidebar
     with ui.left_drawer(fixed=False, bordered=True).classes('bg-slate-50'):
         ui.label('Navigation').classes('text-xs font-bold text-gray-500 mb-4 mt-4 px-4')
         
-        # Navigation links
-        nav_items = [
-            ('/', '📊 Dashboard'),
-            ('/review', '📝 Review Audio Transcript'),
-            ('/upload', '⬆️ Upload Data'),
-            ('/refinement', '🎛️ Audio Refinement'),
-            ('/download', '📥 Download Audios'),
-        ]
-        
-        for path, label in nav_items:
-            ui.link(label, path).classes('block px-4 py-2 rounded hover:bg-slate-200 mb-1')
+        # Tab shortcuts (visual only, actual tabs below)
+        ui.label('📊 Dashboard').classes('block px-4 py-2 text-sm mb-1')
+        ui.label('📝 Review Audio Transcript').classes('block px-4 py-2 text-sm mb-1')
+        ui.label('⬆️ Upload Data').classes('block px-4 py-2 text-sm mb-1')
+        ui.label('🎛️ Audio Refinement').classes('block px-4 py-2 text-sm mb-1')
+        ui.label('📥 Download Audios').classes('block px-4 py-2 text-sm mb-1')
         
         ui.separator().classes('my-4')
         
@@ -427,16 +408,40 @@ def create_navigation():
         
         ui.separator().classes('my-4')
         ui.label('v2.0 - NiceGUI').classes('text-xs text-gray-400 px-4')
+    
+    # Tab-based navigation (working pattern, no URL routing)
+    with ui.tabs().classes('w-full') as tabs:
+        ui.tab('dashboard', label='📊 Dashboard', icon='dashboard')
+        ui.tab('review', label='📝 Review', icon='edit')
+        ui.tab('upload', label='⬆️ Upload', icon='upload')
+        ui.tab('refinement', label='🎛️ Refinement', icon='tune')
+        ui.tab('download', label='📥 Download', icon='download')
+    
+    # Tab panels with content
+    with ui.tab_panels(tabs, value='dashboard').classes('w-full'):
+        with ui.tab_panel('dashboard'):
+            dashboard_content()
+        
+        with ui.tab_panel('review'):
+            # Note: URL params won't work with tabs, but UI is functional
+            review_content_sync()
+        
+        with ui.tab_panel('upload'):
+            upload_content()
+        
+        with ui.tab_panel('refinement'):
+            refinement_content()
+        
+        with ui.tab_panel('download'):
+            download_content()
 
 
 # =============================================================================
-# DASHBOARD PAGE (Multi-page routing)
+# DASHBOARD CONTENT
 # =============================================================================
 
-@ui.page('/')
-def dashboard_page():
+def dashboard_content():
     """Dashboard with overview statistics and channel progress."""
-    create_navigation()
     
     with ui.column().classes('w-full p-8'):
         ui.label('📊 Dashboard').classes('text-3xl font-bold mb-6')
@@ -520,26 +525,12 @@ def dashboard_page():
 
 
 # =============================================================================
-# REVIEW PAGE (Multi-page routing)
+# REVIEW CONTENT
 # =============================================================================
 
-@ui.page('/review')
-async def review_page():
-    """Video review page with deep linking support.
-    
-    URL params:
-        - video: Video ID to auto-select
-        - chunk: Chunk ID to auto-select
-        - page: Page number for pagination
-    """
-    create_navigation()
-    
-    # Parse URL parameters
-    from nicegui import context
-    client = context.get_client()
-    url_video_id = client.request.args.get('video')
-    url_chunk_id = client.request.args.get('chunk')
-    url_page = int(client.request.args.get('page', 1))
+def review_content_sync():
+    """Video review page (tab-based, no URL params)."""
+    # No URL params support in tab mode
     
     with ui.column().classes('w-full p-8'):
         ui.label('📝 Review Videos').classes('text-3xl font-bold mb-6')
@@ -1288,13 +1279,11 @@ def render_segment_card(
 
 
 # =============================================================================
-# UPLOAD PAGE (Multi-page routing)
+# UPLOAD CONTENT
 # =============================================================================
 
-@ui.page('/upload')
-def upload_page():
+def upload_content():
     """Data upload page for audio files and JSON transcripts."""
-    create_navigation()
     
     with ui.column().classes('w-full p-8'):
         ui.label('⬆️ Upload Data').classes('text-3xl font-bold mb-6')
@@ -1589,13 +1578,11 @@ def upload_page():
 
 
 # =============================================================================
-# AUDIO REFINEMENT PAGE (Multi-page routing)
+# AUDIO REFINEMENT CONTENT
 # =============================================================================
 
-@ui.page('/refinement')
-def refinement_page():
+def refinement_content():
     """Audio refinement (denoising) page with DeepFilterNet integration."""
-    create_navigation()
     
     with ui.column().classes('w-full p-8'):
         ui.label('🎛️ Audio Refinement').classes('text-3xl font-bold mb-6')
@@ -1820,13 +1807,11 @@ def refinement_page():
 
 
 # =============================================================================
-# DOWNLOAD AUDIOS PAGE (Multi-page routing)
+# DOWNLOAD AUDIOS CONTENT
 # =============================================================================
 
-@ui.page('/download')
-def download_page():
+def download_content():
     """YouTube ingestion page with playlist support."""
-    create_navigation()
     
     with ui.column().classes('w-full p-8'):
         ui.label('📥 Download Audios').classes('text-3xl font-bold mb-6')
@@ -1960,7 +1945,7 @@ def download_page():
 # =============================================================================
 
 def main():
-    """Main application entry point - Multi-page routing version."""
+    """Main application entry point - SPA with client-side routing."""
     # Serve audio files statically (critical for audio player)
     app.add_static_files('/data', str(DATA_ROOT))
     
@@ -1975,8 +1960,8 @@ def main():
     else:
         ensure_schema_upgrades()
     
-    # Pages are defined via @ui.page decorators above
-    # No need for build_spa_ui() - routing handled automatically
+    # Build UI (this runs in script mode, no @ui.page decorators)
+    main_page()
     
     # Start NiceGUI server
     ui.run(
