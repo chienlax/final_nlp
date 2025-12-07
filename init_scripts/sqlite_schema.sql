@@ -96,6 +96,8 @@ CREATE TABLE IF NOT EXISTS segments (
     -- Review status
     is_reviewed BOOLEAN NOT NULL DEFAULT 0,
     is_rejected BOOLEAN NOT NULL DEFAULT 0,
+    review_state TEXT DEFAULT 'pending'
+        CHECK (review_state IN ('pending', 'reviewed', 'approved', 'rejected')),
     reviewer_notes TEXT,                            -- Optional notes from reviewer
     
     -- Timestamps
@@ -113,6 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_segments_video ON segments(video_id);
 CREATE INDEX IF NOT EXISTS idx_segments_chunk ON segments(chunk_id);
 CREATE INDEX IF NOT EXISTS idx_segments_reviewed ON segments(is_reviewed);
 CREATE INDEX IF NOT EXISTS idx_segments_rejected ON segments(is_rejected);
+CREATE INDEX IF NOT EXISTS idx_segments_review_state ON segments(review_state);
 
 
 -- =============================================================================

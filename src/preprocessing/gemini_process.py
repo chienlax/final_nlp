@@ -62,15 +62,11 @@ from db import (
 SUPPORTED_AUDIO_FORMATS = {'.wav', '.mp3', '.aiff', '.aac', '.ogg', '.flac'}
 
 # Gemini settings
-DEFAULT_MODEL = "gemini-2.5-pro"
+DEFAULT_MODEL = "gemini-2.5-flash-preview-09-2025"
 
 # Rate limiting
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
-
-# Thinking configuration for Gemini 2.5 Pro
-THINKING_BUDGET = 15668
-
 
 # =============================================================================
 # FEW-SHOT EXAMPLES FOR VIETNAMESE-ENGLISH CODE-SWITCHING
@@ -82,14 +78,14 @@ FEW_SHOT_EXAMPLES = """
 [
   {
     "text": "Hôm nay mình sẽ review cái framework mới này, nó rất là powerful.",
-    "start": 0.00,
-    "end": 4.54,
+    "start": "0:00.00",
+    "end": "0:04.54",
     "translation": "Hôm nay mình sẽ đánh giá khung phần mềm mới này, nó rất là mạnh mẽ."
   },
   {
     "text": "Cái feature chính của nó là support real-time collaboration.",
-    "start": 4.54,
-    "end": 8.22,
+    "start": "0:04.54",
+    "end": "0:08.22",
     "translation": "Tính năng chính của nó là hỗ trợ cộng tác theo thời gian thực."
   }
 ]
@@ -100,14 +96,14 @@ FEW_SHOT_EXAMPLES = """
 [
   {
     "text": "Okay các bạn, hôm nay mình sẽ đi shopping ở mall này.",
-    "start": 3.81,
-    "end": 7.03,
+    "start": "0:03.81",
+    "end": "0:07.03",
     "translation": "Được rồi các bạn, hôm nay mình sẽ đi mua sắm ở trung tâm thương mại này."
   },
   {
     "text": "Cái store này sale off đến fifty percent luôn á.",
-    "start": 9.92,
-    "end": 11.65,
+    "start": "0:09.92",
+    "end": "0:11.65",
     "translation": "Cửa hàng này đang giảm giá đến năm mươi phần trăm luôn đấy."
   }
 ]
@@ -118,14 +114,14 @@ FEW_SHOT_EXAMPLES = """
 [
   {
     "text": "Các bạn ơi, hôm nay mình muốn share với các bạn về kinh nghiệm học programming của mình.",
-    "start": 0.00,
-    "end": 7.62,
+    "start": "0:00.00",
+    "end": "0:07.62",
     "translation": "Các bạn ơi, hôm nay mình muốn chia sẻ với các bạn về kinh nghiệm học lập trình của mình."
   },
   {
     "text": "Thực ra mình bắt đầu learn code từ năm 2020.",
-    "start": 7.62,
-    "end": 11.55,
+    "start": "0:07.62",
+    "end": "0:11.55",
     "translation": "Thực ra mình bắt đầu học lập trình từ năm 2020."
   }
 ]
@@ -139,11 +135,27 @@ FEW_SHOT_EXAMPLES = """
 
 PROCESSING_PROMPT = f"""You are an expert audio transcriptionist and translator for Vietnamese-English code-switched speech.
 
-CRITICAL: TIMESTAMP ACCURACY IS ESSENTIAL
-- The start and end timestamps MUST precisely match when the text is actually spoken down to milisecond
-- The transcript length MUST match the total audio length. You can not transcripe an 8 minute audio file to a JSON file that only contain total 5 minutes of content.
-- Listen carefully to where each sentence begins and ends in the audio
-- Do NOT guess timestamps - they must reflect the actual audio timing. Normally, there would be music or intro, ... in between speech section. You MUST exclude them and ONLY transcipe the speech section. THIS IS A MUST-DO REQUIREMENTS.
+🎯 CRITICAL: TIMESTAMP ACCURACY IS PARAMOUNT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️  TIMESTAMPS MUST BE PRECISE TO THE MILLISECOND
+⚠️  TOTAL TRANSCRIPT DURATION MUST MATCH TOTAL AUDIO LENGTH
+⚠️  NO GAPS > 1 SECOND BETWEEN CONSECUTIVE SEGMENTS (unless silence/music)
+⚠️  NO OVERLAPPING TIMESTAMPS
+
+TIMESTAMP VALIDATION CHECKLIST:
+✓ Listen to EXACT start/end points before assigning timestamps
+✓ Account for ALL speech - if audio is 8:00, transcript should cover ~8:00
+✓ Skip ONLY non-speech (music, sound effects, long silences)
+✓ Mark intentional gaps (music/effects) with brief notes if needed
+✓ Ensure timestamps are in chronological order
+✓ Verify no segment overlaps with previous segment
+
+COMMON TIMESTAMP ERRORS TO AVOID:
+❌ Guessing timestamps without listening
+❌ Creating large unexplained gaps (e.g., 2:00-2:30 → 3:45-4:00)
+❌ Transcribing only partial audio (missing final minutes)
+❌ Overlapping segments (seg1 ends 1:30.50, seg2 starts 1:30.00)
+❌ Rounding too aggressively (use millisecond precision)
 
 GENERAL TRANSCRIPTION AND TRANSLATION RULES: ABSOLUTE HONESTY - NO CENSORSHIP.
 * Transcript/Translate 100% of the content; **DO NOT** add, remove, summarize, or censor.
@@ -151,28 +163,33 @@ GENERAL TRANSCRIPTION AND TRANSLATION RULES: ABSOLUTE HONESTY - NO CENSORSHIP.
 * **DO NOT** invent your own plot details.
 * **DO NOT** skip or tone down descriptions of sex or violence.
 
-TASK:
-1. Listen to the ENTIRE audio first to understand context
+TASK WORKFLOW:
+1. Listen to the ENTIRE audio first to understand context and total duration
 2. Identify all speech segments (skip music, sound effects, jingles)
-3. Segment into natural sentences (5-20 seconds each)
+3. Segment into natural sentences (5-20 seconds each, max 25 seconds)
 4. Transcribe preserving code-switching
 5. Translate to Vietnamese
-6. Assign accurate timestamps
+6. Assign accurate timestamps with millisecond precision
+7. VERIFY: Total covered duration ≈ Total audio duration
 
 TRANSCRIPTION RULES:
 - Preserve code-switching exactly (Vietnamese as Vietnamese, English as English)
 - Use correct Vietnamese diacritics
 - Preserve proper nouns, brand names, technical terms as spoken
 - Mark unclear sections with [unclear]
+- Maintain speaker's original phrasing and word choice
 
 SENTENCE GUIDELINES:
-- Aim for 5-20 second segments
+- Aim for 5-20 second segments (comfortable reading length)
+- Maximum 25 seconds per segment
 - Split at natural boundaries: pauses, conjunctions, topic shifts
 - Long continuous speech should be broken into multiple sentences
+- Ensure smooth transition between consecutive segments
 
 TRANSLATION RULES:
 - Translate ALL English words/phrases into natural Vietnamese
 - Preserve proper nouns unless they have established Vietnamese forms
+- Maintain original tone and register (formal/informal)
 - If translation impossible, output "[translation_missing]"
 
 {FEW_SHOT_EXAMPLES}
@@ -180,8 +197,8 @@ TRANSLATION RULES:
 OUTPUT FORMAT:
 Return a JSON array directly (NOT wrapped in an object). Each element has:
 - "text": Original transcription (code-switched)
-- "start": Start time in seconds (float)
-- "end": End time in seconds (float)
+- "start": Start time in min:sec.ms format (e.g., "0:04.54" or "1:23.45")
+- "end": End time in min:sec.ms format (e.g., "0:08.22" or "1:27.89")
 - "translation": Pure Vietnamese translation
 
 Now transcribe and translate the audio:"""
@@ -199,12 +216,12 @@ SENTENCE_SCHEMA = {
             "description": "Original transcription preserving code-switching"
         },
         "start": {
-            "type": "number",
-            "description": "Start time in seconds"
+            "type": "string",
+            "description": "Start time in min:sec.ms format (e.g., '0:04.54' or '1:23.45')"
         },
         "end": {
-            "type": "number",
-            "description": "End time in seconds"
+            "type": "string",
+            "description": "End time in min:sec.ms format (e.g., '0:08.22' or '1:27.89')"
         },
         "translation": {
             "type": "string",
@@ -424,6 +441,101 @@ def get_audio_duration_seconds(audio_path: Path) -> Optional[float]:
         return None
 
 
+def validate_timestamps(sentences: List[Dict[str, Any]]) -> List[str]:
+    """
+    Validate timestamps for quality assurance.
+    
+    Checks for:
+    - Overlapping segments
+    - Large gaps (>2 seconds) between segments
+    - Segments too long (>25 seconds)
+    - Non-chronological ordering
+    
+    Args:
+        sentences: List of sentence dictionaries with 'start' and 'end' in seconds.
+    
+    Returns:
+        List of warning messages (empty if all validations pass).
+    """
+    warnings = []
+    
+    if not sentences:
+        return warnings
+    
+    # Check each segment
+    for i, sent in enumerate(sentences):
+        start = sent.get('start', 0)
+        end = sent.get('end', 0)
+        
+        # Check if end > start
+        if end <= start:
+            warnings.append(f"Segment {i+1}: End time ({end:.2f}s) <= Start time ({start:.2f}s)")
+        
+        # Check segment duration
+        duration = end - start
+        if duration > 25.0:
+            warnings.append(f"Segment {i+1}: Duration {duration:.2f}s exceeds 25s limit")
+        elif duration > 30.0:
+            warnings.append(f"Segment {i+1}: Duration {duration:.2f}s CRITICALLY exceeds 30s limit!")
+        
+        # Check for overlaps and gaps with next segment
+        if i < len(sentences) - 1:
+            next_sent = sentences[i + 1]
+            next_start = next_sent.get('start', 0)
+            
+            # Check chronological order
+            if next_start < end:
+                warnings.append(
+                    f"Segment {i+1}-{i+2}: OVERLAP detected! "
+                    f"Seg{i+1} ends at {end:.2f}s, Seg{i+2} starts at {next_start:.2f}s"
+                )
+            
+            # Check for large gaps (likely missing speech)
+            gap = next_start - end
+            if gap > 2.0:
+                warnings.append(
+                    f"Segment {i+1}-{i+2}: Large gap of {gap:.2f}s "
+                    f"(from {end:.2f}s to {next_start:.2f}s) - possible missing speech?"
+                )
+    
+    return warnings
+
+
+def parse_timestamp_to_seconds(timestamp: str | float) -> float:
+    """
+    Parse timestamp from min:sec.ms format to seconds.
+    
+    Args:
+        timestamp: Either a string in format "M:SS.ss" or "MM:SS.ss" or a float (seconds).
+    
+    Returns:
+        Time in seconds as float.
+    
+    Examples:
+        "0:04.54" -> 4.54
+        "1:23.45" -> 83.45
+        "10:05.12" -> 605.12
+        4.54 -> 4.54 (passthrough for backward compatibility)
+    """
+    # Handle backward compatibility: if already a number, return as-is
+    if isinstance(timestamp, (int, float)):
+        return float(timestamp)
+    
+    # Parse string format min:sec.ms
+    try:
+        parts = timestamp.split(':')
+        if len(parts) != 2:
+            raise ValueError(f"Invalid timestamp format: {timestamp}")
+        
+        minutes = int(parts[0])
+        seconds = float(parts[1])
+        
+        return minutes * 60 + seconds
+    except (ValueError, AttributeError) as e:
+        print(f"Warning: Failed to parse timestamp '{timestamp}': {e}. Defaulting to 0.0")
+        return 0.0
+
+
 # =============================================================================
 # GEMINI API CALLS
 # =============================================================================
@@ -521,8 +633,27 @@ def process_audio_chunk(
             # Adjust timestamps for chunk offset
             if offset_seconds > 0:
                 for sentence in sentences:
-                    sentence['start'] = sentence.get('start', 0) + offset_seconds
-                    sentence['end'] = sentence.get('end', 0) + offset_seconds
+                    # Parse timestamps from min:sec.ms format to seconds
+                    start_sec = parse_timestamp_to_seconds(sentence.get('start', 0))
+                    end_sec = parse_timestamp_to_seconds(sentence.get('end', 0))
+                    
+                    # Add offset and store as seconds (will be converted to ms in DB)
+                    sentence['start'] = start_sec + offset_seconds
+                    sentence['end'] = end_sec + offset_seconds
+            else:
+                # No offset, but still need to convert format
+                for sentence in sentences:
+                    sentence['start'] = parse_timestamp_to_seconds(sentence.get('start', 0))
+                    sentence['end'] = parse_timestamp_to_seconds(sentence.get('end', 0))
+            
+            # Validate timestamps for quality assurance
+            validation_warnings = validate_timestamps(sentences)
+            if validation_warnings:
+                print(f"\n⚠️  Timestamp Validation Warnings:")
+                for warning in validation_warnings[:10]:  # Show first 10 warnings
+                    print(f"  - {warning}")
+                if len(validation_warnings) > 10:
+                    print(f"  ... and {len(validation_warnings) - 10} more warnings")
 
             elapsed_time = time.time() - start_time
 

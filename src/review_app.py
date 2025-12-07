@@ -74,6 +74,9 @@ AUDIO_ROOT = DATA_ROOT / "raw" / "audio"
 WARNING_DURATION_MS = 25000  # 25 seconds - show warning
 MAX_DURATION_MS = 30000  # 30 seconds - hard limit suggestion
 
+# Pagination settings
+SEGMENTS_PER_PAGE = 25  # Show 25 segments per page for better performance
+
 # Page configuration
 st.set_page_config(
     page_title="NLP Review Tool",
@@ -84,18 +87,78 @@ st.set_page_config(
 
 
 # =============================================================================
+# PERFORMANCE OPTIMIZATION - CACHED WRAPPERS
+# =============================================================================
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_get_videos_by_state(state: str) -> List[Dict[str, Any]]:
+    """Cached wrapper for get_videos_by_state with 30s TTL."""
+    return get_videos_by_state(state)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def cached_get_database_stats() -> Dict[str, Any]:
+    """Cached wrapper for get_database_stats with 60s TTL."""
+    return get_database_stats()
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def cached_get_segments(
+    video_id: str,
+    chunk_id: Optional[int] = None,
+    include_rejected: bool = False
+) -> List[Dict[str, Any]]:
+    """Cached wrapper for get_segments with 10s TTL."""
+    return get_segments(video_id, chunk_id=chunk_id, include_rejected=include_rejected)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def cached_get_chunks_by_video(video_id: str) -> List[Dict[str, Any]]:
+    """Cached wrapper for get_chunks_by_video with 30s TTL."""
+    return get_chunks_by_video(video_id)
+
+
+# =============================================================================
 # CUSTOM CSS
 # =============================================================================
 
 def apply_custom_css() -> None:
-    """Apply custom CSS styling."""
+    """Apply custom CSS styling with both dark and light mode support."""
     st.markdown("""
     <style>
+    /* CSS Variables for theme adaptation */
     :root {
-        --nav-bg: #0f172a;
         --nav-accent: #22c55e;
-        --card-bg: #0b1221;
-        --border-soft: #1f2937;
+    }
+    
+    /* Dark Mode (default) */
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --nav-bg: #0f172a;
+            --card-bg: #0b1221;
+            --border-soft: #1f2937;
+            --text-primary: #e5e7eb;
+            --text-secondary: #9ca3af;
+            --segment-bg: #1e293b;
+            --segment-rejected-bg: #4d1f1f;
+            --segment-reviewed-bg: #1f4d1f;
+            --state-badge-bg: #2d2d2d;
+        }
+    }
+    
+    /* Light Mode */
+    @media (prefers-color-scheme: light) {
+        :root {
+            --nav-bg: #f8fafc;
+            --card-bg: #ffffff;
+            --border-soft: #e2e8f0;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --segment-bg: #f1f5f9;
+            --segment-rejected-bg: #fee2e2;
+            --segment-reviewed-bg: #d1fae5;
+            --state-badge-bg: #e2e8f0;
+        }
     }
 
     /* Navigation rail */
@@ -103,19 +166,32 @@ def apply_custom_css() -> None:
         background: var(--nav-bg);
         padding: 18px 14px;
         border-radius: 14px;
-        color: #e5e7eb;
-        border: 1px solid #1e293b;
+        color: var(--text-primary);
+        border: 1px solid var(--border-soft);
         height: 100%;
     }
-    .nav-rail h3 { margin-top: 0; margin-bottom: 12px; }
+    .nav-rail h3 { 
+        margin-top: 0; 
+        margin-bottom: 12px; 
+        color: var(--text-primary);
+    }
     .nav-rail .stRadio > div { gap: 10px; }
-    .nav-rail label { color: #e5e7eb !important; font-weight: 600; }
-    .nav-rail .stRadio [data-baseweb="radio"] { background: #111827; border-radius: 10px; padding: 6px 8px; }
-    .nav-rail .stRadio [data-baseweb="radio"]:hover { border-color: var(--nav-accent); }
+    .nav-rail label { 
+        color: var(--text-primary) !important; 
+        font-weight: 600; 
+    }
+    .nav-rail .stRadio [data-baseweb="radio"] { 
+        background: var(--segment-bg); 
+        border-radius: 10px; 
+        padding: 6px 8px; 
+    }
+    .nav-rail .stRadio [data-baseweb="radio"]:hover { 
+        border-color: var(--nav-accent); 
+    }
 
     /* Cards */
     .surface-card {
-        background: #0b1221;
+        background: var(--card-bg);
         border: 1px solid var(--border-soft);
         border-radius: 12px;
         padding: 16px;
@@ -123,14 +199,14 @@ def apply_custom_css() -> None:
 
     /* Duration badges */
     .duration-warning {
-        background-color: #ff6b6b;
+        background-color: #ef4444;
         color: white;
         padding: 2px 8px;
         border-radius: 4px;
         font-weight: bold;
     }
     .duration-ok {
-        background-color: #51cf66;
+        background-color: #10b981;
         color: white;
         padding: 2px 8px;
         border-radius: 4px;
@@ -138,19 +214,19 @@ def apply_custom_css() -> None:
     
     /* Segment cards */
     .segment-card {
-        border: 1px solid #ddd;
+        border: 1px solid var(--border-soft);
         border-radius: 8px;
         padding: 16px;
         margin-bottom: 12px;
-        background-color: #fafafa;
+        background-color: var(--segment-bg);
     }
     .segment-card.rejected {
-        background-color: #ffe3e3;
-        border-color: #ff6b6b;
+        background-color: var(--segment-rejected-bg);
+        border-color: #ef4444;
     }
     .segment-card.reviewed {
-        background-color: #e6fcf5;
-        border-color: #51cf66;
+        background-color: var(--segment-reviewed-bg);
+        border-color: #10b981;
     }
     
     /* Stats cards */
@@ -171,6 +247,32 @@ def apply_custom_css() -> None:
     /* Text area styling */
     .stTextArea textarea {
         font-size: 14px;
+    }
+    
+    /* State badge - theme adaptive */
+    .state-badge {
+        text-align: center;
+        padding: 8px;
+        background-color: var(--state-badge-bg);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-weight: bold;
+    }
+    
+    /* Duration display - theme adaptive */
+    .duration-display {
+        padding: 12px;
+        border-radius: 6px;
+        text-align: center;
+        font-weight: bold;
+    }
+    .duration-display.warning {
+        background-color: var(--segment-rejected-bg);
+        color: var(--text-primary);
+    }
+    .duration-display.ok {
+        background-color: var(--segment-reviewed-bg);
+        color: var(--text-primary);
     }
     </style>
     """, unsafe_allow_html=True)
@@ -236,9 +338,23 @@ def request_playback(start_ms: int, end_ms: Optional[int]) -> None:
     st.session_state["play_request"] = (start_ms, end_ms)
 
 
+@st.cache_data(show_spinner=False)
+def load_audio_file(audio_path_str: str) -> bytes:
+    """Load audio file and cache it to prevent MediaFileHandler errors."""
+    with open(audio_path_str, 'rb') as f:
+        return f.read()
+
+
 def render_audio_player_with_jump(audio_path: Path) -> None:
     """Render audio player and honor pending jump requests with auto-pause."""
-    st.audio(str(audio_path))
+    # Load audio with caching to prevent MediaFileHandler errors
+    try:
+        audio_bytes = load_audio_file(str(audio_path))
+        st.audio(audio_bytes, format='audio/wav')
+    except Exception as e:
+        st.error(f"Error loading audio: {e}")
+        return
+    
     play_request = st.session_state.pop("play_request", None)
     if play_request is not None:
         start_ms, end_ms = play_request
@@ -308,7 +424,7 @@ def render_navigation_column() -> str:
 
     st.markdown("---")
     try:
-        stats = get_database_stats()
+        stats = cached_get_database_stats()
         st.markdown("#### 📈 Quick Stats")
         col1, col2 = st.columns(2)
         with col1:
@@ -347,7 +463,7 @@ def render_dashboard() -> None:
     st.title("📊 Dashboard")
     
     try:
-        stats = get_database_stats()
+        stats = cached_get_database_stats()
     except Exception as e:
         st.error(f"Failed to load stats: {e}")
         if st.button("🔧 Initialize Database"):
@@ -448,9 +564,9 @@ def render_review_page() -> None:
     inject_keyboard_shortcuts()
 
     # Get all videos
-    transcribed = get_videos_by_state('transcribed')
-    pending = get_videos_by_state('pending')
-    reviewed = get_videos_by_state('reviewed')
+    transcribed = cached_get_videos_by_state('transcribed')
+    pending = cached_get_videos_by_state('pending')
+    reviewed = cached_get_videos_by_state('reviewed')
     all_videos = transcribed + reviewed + pending
 
     if not all_videos:
@@ -479,6 +595,72 @@ def render_review_page() -> None:
         v for v in all_videos if (v.get('channel_name') or "Unknown") == selected_channel
     ]
 
+    # Bulk reviewer assignment (collapsible section)
+    with st.expander("📋 Bulk Assign Reviewer by Channel", expanded=False):
+        st.markdown("Assign a reviewer to all videos from a specific channel.")
+        
+        col_bulk1, col_bulk2, col_bulk3 = st.columns([2, 2, 1])
+        
+        with col_bulk1:
+            bulk_channel = st.selectbox(
+                "Select Channel",
+                options=channel_names,
+                key="bulk_channel_select"
+            )
+        
+        with col_bulk2:
+            # Get existing reviewers
+            all_reviewers_query = """
+                SELECT DISTINCT reviewer FROM videos 
+                WHERE reviewer IS NOT NULL AND reviewer != ''
+                ORDER BY reviewer
+            """
+            with get_db() as db:
+                existing_reviewers = [row[0] for row in db.execute(all_reviewers_query).fetchall()]
+            
+            bulk_reviewer_options = existing_reviewers + ["+ New reviewer"]
+            bulk_reviewer = st.selectbox(
+                "Assign to Reviewer",
+                options=bulk_reviewer_options,
+                key="bulk_reviewer_select"
+            )
+            
+            # If new reviewer, show text input
+            if bulk_reviewer == "+ New reviewer":
+                bulk_new_reviewer = st.text_input(
+                    "New reviewer name",
+                    key="bulk_new_reviewer_input"
+                )
+        
+        with col_bulk3:
+            st.write("")  # Spacing
+            st.write("")  # Spacing
+            if st.button("✅ Assign All", use_container_width=True):
+                try:
+                    # Determine final reviewer
+                    if bulk_reviewer == "+ New reviewer":
+                        final_bulk_reviewer = bulk_new_reviewer if 'bulk_new_reviewer' in locals() and bulk_new_reviewer else None
+                    else:
+                        final_bulk_reviewer = bulk_reviewer
+                    
+                    if not final_bulk_reviewer:
+                        st.error("Please enter a reviewer name")
+                    else:
+                        # Get all videos for this channel
+                        channel_videos = [v for v in all_videos if (v.get('channel_name') or "Unknown") == bulk_channel]
+                        
+                        # Update each video
+                        for vid in channel_videos:
+                            update_video_reviewer(vid['video_id'], final_bulk_reviewer)
+                        
+                        st.success(f"✅ Assigned {len(channel_videos)} videos from '{bulk_channel}' to '{final_bulk_reviewer}'")
+                        time.sleep(1)
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    
+    st.markdown("---")
+
     # Video selector
     video_options = {
         f"[{v.get('channel_name') or 'Unknown'}] {v['title'][:50]} ({v['processing_state']})": v['video_id']
@@ -502,7 +684,7 @@ def render_review_page() -> None:
 
     # Video header
     st.markdown("---")
-    col_title, col_channel, col_progress, col_state = st.columns([3, 2, 1, 1])
+    col_title, col_channel, col_reviewer, col_progress, col_state = st.columns([3, 2, 2, 1, 1])
     
     with col_title:
         st.subheader(video['title'])
@@ -537,6 +719,72 @@ def render_review_page() -> None:
                 except Exception as e:
                     st.error(f"Error: {e}")
     
+    with col_reviewer:
+        st.caption("Reviewer:")
+        # Get list of all unique reviewers from database
+        all_reviewers_query = """
+            SELECT DISTINCT reviewer FROM videos 
+            WHERE reviewer IS NOT NULL AND reviewer != ''
+            ORDER BY reviewer
+        """
+        with get_db() as db:
+            existing_reviewers = [row[0] for row in db.execute(all_reviewers_query).fetchall()]
+        
+        current_reviewer = video.get('reviewer') or ''
+        
+        with st.form(key=f"reviewer_form_{selected_video_id}"):
+            # Dropdown with existing reviewers + option to add new
+            reviewer_options = ["(Unassigned)"] + existing_reviewers + ["+ Add new reviewer"]
+            
+            # Determine default selection
+            if current_reviewer and current_reviewer in existing_reviewers:
+                default_idx = existing_reviewers.index(current_reviewer) + 1  # +1 for "(Unassigned)"
+            elif current_reviewer:
+                # Reviewer exists but not in list (shouldn't happen, but handle it)
+                reviewer_options.insert(-1, current_reviewer)  # Add before "+ Add new"
+                default_idx = len(reviewer_options) - 2
+            else:
+                default_idx = 0  # "(Unassigned)"
+            
+            selected_reviewer = st.selectbox(
+                "Reviewer",
+                options=reviewer_options,
+                index=default_idx,
+                label_visibility="collapsed",
+                key=f"reviewer_select_{selected_video_id}"
+            )
+            
+            # If "Add new reviewer" selected, show text input
+            new_reviewer_name = None
+            if selected_reviewer == "+ Add new reviewer":
+                new_reviewer_name = st.text_input(
+                    "New reviewer name",
+                    key=f"new_reviewer_input_{selected_video_id}"
+                )
+            
+            reviewer_submitted = st.form_submit_button("💾 Assign", use_container_width=True)
+            
+            if reviewer_submitted:
+                try:
+                    # Determine final reviewer value
+                    if selected_reviewer == "+ Add new reviewer":
+                        final_reviewer = new_reviewer_name if new_reviewer_name else None
+                    elif selected_reviewer == "(Unassigned)":
+                        final_reviewer = None
+                    else:
+                        final_reviewer = selected_reviewer
+                    
+                    # Update database
+                    update_video_reviewer(selected_video_id, final_reviewer)
+                    if final_reviewer:
+                        st.success(f"Assigned to: {final_reviewer}")
+                    else:
+                        st.success("Unassigned reviewer")
+                    time.sleep(0.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    
     with col_progress:
         progress = get_video_progress(selected_video_id)
         reviewed_pct = progress.get('review_percent', 0) or 0
@@ -550,7 +798,7 @@ def render_review_page() -> None:
     st.markdown("---")
 
     # Get chunks for this video
-    chunks = get_chunks_by_video(selected_video_id)
+    chunks = cached_get_chunks_by_video(selected_video_id)
     
     if not chunks:
         st.info("No chunks found. Process this video with chunk_audio.py first.")
@@ -609,7 +857,7 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
         st.warning(f"⚠️ Audio file not found: {audio_path_str}")
     
     # Get segments for this chunk
-    segments = get_segments(video_id, chunk_id=chunk_id, include_rejected=True)
+    segments = cached_get_segments(video_id, chunk_id=chunk_id, include_rejected=True)
     
     if not segments:
         st.info(f"No segments for Chunk {chunk_index}. Process with gemini_process.py first.")
@@ -659,8 +907,38 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
     
     st.markdown("---")
     
+    # Pagination for better performance with large segment lists
+    total_segments = len(filtered_segments)
+    
+    if total_segments > SEGMENTS_PER_PAGE:
+        # Add pagination controls
+        col_page1, col_page2, col_page3 = st.columns([2, 1, 2])
+        
+        with col_page2:
+            # Page selector
+            total_pages = (total_segments + SEGMENTS_PER_PAGE - 1) // SEGMENTS_PER_PAGE
+            current_page = st.number_input(
+                "Page",
+                min_value=1,
+                max_value=total_pages,
+                value=st.session_state.get(f'page_{chunk_id}', 1),
+                step=1,
+                key=f'page_input_{chunk_id}'
+            )
+            st.session_state[f'page_{chunk_id}'] = current_page
+            st.caption(f"Page {current_page} of {total_pages}")
+        
+        # Calculate pagination range
+        start_idx = (current_page - 1) * SEGMENTS_PER_PAGE
+        end_idx = min(start_idx + SEGMENTS_PER_PAGE, total_segments)
+        paginated_segments = filtered_segments[start_idx:end_idx]
+        
+        st.info(f"Showing segments {start_idx + 1}-{end_idx} of {total_segments}")
+    else:
+        paginated_segments = filtered_segments
+    
     # Render each segment as a spacious card
-    for seg_idx, seg in enumerate(filtered_segments):
+    for seg_idx, seg in enumerate(paginated_segments):
         segment_id = seg['segment_id']
         start_ms = seg['start_ms']
         end_ms = seg['end_ms']
@@ -695,7 +973,7 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
                     'rejected': '🔴'
                 }
                 st.markdown(
-                    f"<div style='text-align: center; padding: 8px; background-color: #2d2d2d; border-radius: 6px;'>"
+                    f"<div class='state-badge'>"
                     f"{state_colors.get(review_state, '⚪')} <b>{review_state.upper()}</b></div>",
                     unsafe_allow_html=True
                 )
@@ -709,9 +987,9 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
                     "Start (ms)",
                     value=start_ms,
                     min_value=0,
-                    step=1,
+                    step=10,
                     key=f"start_ms_{segment_id}",
-                    help="Use arrow keys or click up/down to adjust by 1ms"
+                    help="Use arrow keys or click up/down to adjust by 10ms"
                 )
             
             with col_time2:
@@ -719,22 +997,22 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
                     "End (ms)",
                     value=end_ms,
                     min_value=new_start_ms + 10,
-                    step=1,
+                    step=10,
                     key=f"end_ms_{segment_id}",
-                    help="Use arrow keys or click up/down to adjust by 1ms"
+                    help="Use arrow keys or click up/down to adjust by 10ms"
                 )
             
             with col_time3:
                 new_duration_sec = (new_end_ms - new_start_ms) / 1000.0
                 if new_duration_sec > 25.0:
                     st.markdown(
-                        f"<div style='padding: 12px; background-color: #4d1f1f; border-radius: 6px; text-align: center;'>"
+                        f"<div class='duration-display warning'>"
                         f"⚠️ <b>Duration: {new_duration_sec:.2f}s</b> (Too long!)</div>",
                         unsafe_allow_html=True
                     )
                 else:
                     st.markdown(
-                        f"<div style='padding: 12px; background-color: #1f4d1f; border-radius: 6px; text-align: center;'>"
+                        f"<div class='duration-display ok'>"
                         f"✓ <b>Duration: {new_duration_sec:.2f}s</b></div>",
                         unsafe_allow_html=True
                     )
@@ -977,7 +1255,7 @@ def render_segment_editor(
                 "Start (ms)",
                 value=start_ms,
                 min_value=0,
-                step=100,
+                step=10,
                 key=f"start_{segment_id}"
             )
         
@@ -985,8 +1263,8 @@ def render_segment_editor(
             new_end_ms = st.number_input(
                 "End (ms)",
                 value=end_ms,
-                min_value=new_start_ms + 100,
-                step=100,
+                min_value=new_start_ms + 10,
+                step=10,
                 key=f"end_{segment_id}"
             )
         
@@ -1348,24 +1626,139 @@ def render_json_import() -> None:
 # =============================================================================
 
 def render_audio_refinement() -> None:
-    """Render DeepFilterNet refinement tab."""
+    """Render DeepFilterNet refinement tab with actual denoising functionality."""
     st.title("🎛️ Audio Refinement")
-    st.markdown("Run DeepFilterNet on ingested audio and track outputs.")
+    st.markdown("Run DeepFilterNet denoising on ingested audio files.")
 
-    ingested = get_videos_by_state('ingested')
-    if not ingested:
-        st.info("No ingested audio pending denoise.")
+    # Get videos that can be denoised (pending or transcribed without denoised_audio_path)
+    all_videos = cached_get_videos_by_state('pending') + cached_get_videos_by_state('transcribed')
+    
+    # Filter to only videos without denoised audio
+    denoise_candidates = [
+        v for v in all_videos 
+        if not v.get('denoised_audio_path') or v.get('denoised_audio_path') == ''
+    ]
+    
+    if not denoise_candidates:
+        st.info("No videos pending denoising. All audio files have been processed!")
+        
+        # Show already denoised videos
+        denoised = [v for v in all_videos if v.get('denoised_audio_path')]
+        if denoised:
+            st.markdown("### ✅ Already Denoised")
+            for v in denoised[:10]:
+                st.write(f"- {v['title'][:60]} ({v['video_id']})")
         return
 
-    options = {f"{v['title'][:60]} ({v['video_id']})": v['video_id'] for v in ingested}
-    selection = st.multiselect("Select audio to denoise", list(options.keys()))
-    st.caption("This triggers DeepFilterNet via the denoise script; ensure the environment has deepfilternet installed.")
+    st.markdown(f"**{len(denoise_candidates)} videos** available for denoising")
+    st.caption("⚠️ Denoising is CPU/GPU intensive and may take several minutes per video.")
 
-    if st.button("🚀 Run DeepFilterNet", type="primary", disabled=not selection, key="run_denoise"):
-        st.warning("Please run `python src/preprocessing/denoise_audio.py --video-id <id>` for each selected item in a terminal. Automation hook not wired here to avoid blocking the UI.")
-        st.write("Selected IDs:")
-        for label in selection:
-            st.code(options[label])
+    # Selection interface
+    options = {f"{v['title'][:60]} ({v['video_id']})": v['video_id'] for v in denoise_candidates}
+    selection = st.multiselect(
+        "Select videos to denoise",
+        list(options.keys()),
+        help="Select one or more videos to process with DeepFilterNet"
+    )
+    
+    selected_ids = [options[label] for label in selection]
+
+    # Denoising controls
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        if st.button(
+            f"🚀 Start Denoising ({len(selected_ids)} videos)" if selected_ids else "🚀 Start Denoising",
+            type="primary",
+            disabled=not selected_ids,
+            key="run_denoise"
+        ):
+            # Run denoising in subprocess
+            import subprocess
+            from pathlib import Path
+            
+            PROJECT_ROOT = Path(__file__).parent.parent
+            denoise_script = PROJECT_ROOT / "src" / "preprocessing" / "denoise_audio.py"
+            
+            # Create progress container
+            progress_container = st.container()
+            
+            with progress_container:
+                st.markdown("### 🔄 Processing...")
+                
+                # Progress bar
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                total_videos = len(selected_ids)
+                
+                for idx, video_id in enumerate(selected_ids):
+                    status_text.markdown(f"**Processing {idx + 1}/{total_videos}**: `{video_id}`")
+                    
+                    # Get Python executable
+                    try:
+                        python_exe = sys.executable  # Use current Python interpreter
+                        
+                        # Run denoise script
+                        result = subprocess.run(
+                            [python_exe, str(denoise_script), "--video-id", video_id],
+                            capture_output=True,
+                            text=True,
+                            timeout=600  # 10 minute timeout per video
+                        )
+                        
+                        if result.returncode == 0:
+                            st.success(f"✅ Denoised: {video_id}")
+                        else:
+                            st.error(f"❌ Failed: {video_id}")
+                            with st.expander("Error details"):
+                                st.code(result.stderr)
+                    
+                    except subprocess.TimeoutExpired:
+                        st.error(f"⏱️ Timeout: {video_id} (exceeded 10 minutes)")
+                    except Exception as e:
+                        st.error(f"❌ Error processing {video_id}: {e}")
+                    
+                    # Update progress
+                    progress_bar.progress((idx + 1) / total_videos)
+                
+                status_text.markdown("**✅ All done!**")
+                st.balloons()
+                
+                # Refresh button
+                if st.button("🔄 Refresh Page"):
+                    st.rerun()
+    
+    with col2:
+        st.markdown("#### Options")
+        show_help = st.checkbox("Show Help", value=False)
+    
+    if show_help:
+        st.markdown("---")
+        st.markdown("""
+        ### 📖 About DeepFilterNet
+        
+        DeepFilterNet is a state-of-the-art deep learning model for audio denoising.
+        
+        **What it does:**
+        - Removes background noise, hiss, and room reverb
+        - Preserves speech quality
+        - Outputs 16kHz mono WAV files
+        
+        **What it doesn't do:**
+        - Does NOT enhance or upscale audio
+        - Does NOT remove music or other speech
+        
+        **Processing time:**
+        - Approximately 1-2x realtime on CPU
+        - Much faster with GPU acceleration
+        
+        **Manual command:**
+        ```bash
+        python src/preprocessing/denoise_audio.py --video-id <id>
+        python src/preprocessing/denoise_audio.py --all
+        ```
+        """)
 
 
 def render_ingest_page() -> None:

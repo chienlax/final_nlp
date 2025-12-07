@@ -1,104 +1,130 @@
 # Vietnamese-English Code-Switching Speech Translation
 
-End-to-End Speech Translation pipeline for Vietnamese-English Code-Switching data. Ingests audio from **YouTube videos**, processes with **Gemini 2.5 Pro** for transcription + translation, and includes human-in-the-loop review via **Streamlit**.
-
-## Features
-
-- **YouTube Audio Pipeline**: Download and process YouTube videos as 16kHz mono WAV
-- **DeepFilterNet Denoising**: Background noise removal for cleaner audio
-- **Gemini 2.5 Pro Processing**: Intelligent chunking with 10-min segments, 10s overlap
-- **Streamlit Review App**: Web-based review with waveform visualization, segment editing
-- **SQLite Database**: Lightweight, portable data storage with WAL mode
-- **Tailscale Remote Access**: Secure remote access to review app
-- **DVC Integration**: Google Drive remote for data versioning
+End-to-End Speech Translation pipeline for Vietnamese-English Code-Switching data. Downloads audio from **YouTube**, processes with **Gemini 2.5 Flash** for transcription + translation, and includes human-in-the-loop review via **Streamlit**.
 
 ---
 
-## Quick Start
+## Features
 
-### 1. Setup Environment
+- ✅ **YouTube Audio Ingestion**: Download and chunk videos as 16kHz mono WAV
+- ✅ **DeepFilterNet Denoising**: Optional background noise removal
+- ✅ **Gemini 2.5 Flash Processing**: Multimodal transcription + translation with min:sec.ms timestamps
+- ✅ **Streamlit Review App**: Web UI with pagination, caching, light/dark mode, reviewer assignment
+- ✅ **SQLite Database**: Lightweight storage with `review_state` workflow tracking
+- ✅ **Tailscale Remote Access**: Secure remote access to review interface
+- ✅ **DVC Integration**: Google Drive versioning for data artifacts
+
+---
+
+## Quick Start (5 Minutes)
+
+### 1. Setup
 
 ```powershell
-# Clone and setup
+# Clone repository
 git clone <repo-url>
 cd final_nlp
 
 # Run setup script (creates venv, installs deps, initializes DB)
 .\setup.ps1
-```
 
-### 2. Ingest YouTube Video
-
-```powershell
-# Activate virtual environment
+# Activate environment
 .\.venv\Scripts\Activate.ps1
-
-# Download and ingest a video
-python src/ingest_youtube.py "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
-### 3. Process Audio
+**Prerequisites:** Python 3.10+, FFmpeg, Gemini API key in `.env`
+
+### 2. Process a YouTube Video
 
 ```powershell
-# Denoise audio (optional but recommended)
+# Download audio
+python src/ingest_youtube.py "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Chunk into 6-minute segments
+python src/preprocessing/chunk_audio.py --video-id VIDEO_ID
+
+# Optional: Denoise with DeepFilterNet
 python src/preprocessing/denoise_audio.py --all
 
-# Transcribe and translate with Gemini
-python src/preprocessing/gemini_process.py --all
+# Transcribe and translate
+python src/preprocessing/gemini_process.py --video-id VIDEO_ID
 ```
 
-### 4. Review Segments
+### 3. Review in Streamlit
 
 ```powershell
-# Start the Streamlit review app
+# Start web interface
 streamlit run src/review_app.py
 
 # Access at http://localhost:8501
+# Features: audio playback, timestamp editing, reviewer assignment, bulk operations
 ```
 
-### 5. Export Dataset
+### 4. Export Dataset
 
 ```powershell
 # Export approved segments to HuggingFace format
 python src/export_final.py
+# Output: data/export/<timestamp>/ with WAV files + manifest.tsv
 ```
-
-📖 **Full setup guide**: [docs/01_getting_started.md](docs/01_getting_started.md)
 
 ---
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [01_getting_started.md](docs/01_getting_started.md) | Setup guide, credentials, quick start |
-| [02_architecture.md](docs/02_architecture.md) | Pipeline workflow, database schema |
-| [03_command_reference.md](docs/03_command_reference.md) | All commands and options |
-| [04_troubleshooting.md](docs/04_troubleshooting.md) | Common issues and solutions |
-| [05_api_reference.md](docs/05_api_reference.md) | Developer API documentation |
-| [06_known_caveats.md](docs/06_known_caveats.md) | Known issues and limitations |
-| [07_todo-list.md](docs/07_todo-list.md) | Active tasks and completed items |
-| [08_complete_workflow.md](docs/08_complete_workflow.md) | **Detailed workflow examples** |
-| [09_database_sync.md](docs/09_database_sync.md) | **Database sync for team collaboration** |
-| [CHANGELOG.md](CHANGELOG.md) | Project history and updates |
+| File | Purpose |
+|------|---------|
+| **[WORKFLOW.md](docs/WORKFLOW.md)** | Complete workflow guide, commands, troubleshooting |
+| **[DEVELOPER.md](docs/DEVELOPER.md)** | Architecture, API reference, database schema, limitations |
+| [CHANGELOG.md](CHANGELOG.md) | Project updates and migration notes |
 
 ---
 
-## Pipeline Overview
+## Project Structure
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                           PIPELINE FLOW                                   │
-│                                                                           │
-│  YouTube ──► Gemini Process ──► Streamlit ──► Export Dataset │
-│  Ingest      (Transcribe+    Review      (2-25s WAV +    │
-│              Translate)                  manifest.tsv)   │
-│      │                                                                   │
-│      └───► Denoise (Optional - DeepFilterNet)                       │
-│                                                                           │
-│  pending ───► transcribed ───► reviewed ───► exported     │
-└──────────────────────────────────────────────────────────────────────────┘
+final_nlp/
+├── src/
+│   ├── ingest_youtube.py         # Download YouTube audio
+│   ├── preprocessing/
+│   │   ├── chunk_audio.py        # Split audio into 6-min chunks
+│   │   ├── denoise_audio.py      # DeepFilterNet noise removal
+│   │   └── gemini_process.py     # Gemini transcription/translation
+│   ├── review_app.py             # Streamlit review interface
+│   ├── export_final.py           # Export final dataset
+│   └── db.py                     # SQLite utilities
+├── data/
+│   ├── lab_data.db               # SQLite database (WAL mode)
+│   ├── raw/audio/                # Downloaded YouTube audio
+│   ├── raw/chunks/               # Chunked audio segments
+│   └── export/                   # Exported datasets
+├── docs/                         # Documentation
+├── init_scripts/                 # SQL schema + migrations
+└── setup.ps1                     # Automated setup script
 ```
+
+---
+
+## Tech Stack
+
+- **Audio Processing**: FFmpeg, pydub, DeepFilterNet
+- **AI**: Google Gemini 2.5 Flash (multimodal API)
+- **Database**: SQLite with WAL mode
+- **UI**: Streamlit with custom CSS (light/dark mode)
+- **Data Versioning**: DVC + Google Drive remote
+- **Networking**: Tailscale for remote access
+
+---
+
+## Current Status
+
+**Model**: `gemini-2.5-flash-preview-09-2025`  
+**Timestamp Format**: `min:sec.ms` (e.g., `0:04.54`, `1:23.45`)  
+**Database Schema**: Migrated with `review_state` column (`pending`/`reviewed`/`approved`/`rejected`)  
+**Performance**: Cached queries (10-60s TTL), pagination (25 segments/page)  
+**UI**: Light/dark mode support, reviewer assignment, audio refinement tab
+
+See [CHANGELOG.md](CHANGELOG.md) for recent updates.
 
 **Note:** Denoising is optional and keeps state as `pending`. See [Complete Workflow Guide](docs/08_complete_workflow.md) for details.
 
