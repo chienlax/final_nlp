@@ -26,7 +26,7 @@ python src/ingest_youtube.py <URL>                       # Download audio
 python src/preprocessing/chunk_audio.py --video-id <ID>  # Chunk into 6-min segments
 python src/preprocessing/denoise_audio.py --all          # Optional: denoise
 python src/preprocessing/gemini_process.py --video-id <ID> # Transcribe + translate
-streamlit run src/review_app.py                          # Review in web UI
+python src/gui_app.py                                   # Review in web UI (NiceGUI)
 python src/export_final.py                               # Export dataset
 
 # 🛠️ Utilities
@@ -110,8 +110,8 @@ python src/preprocessing/gemini_process.py --video-id gBhbKX0pT_0
 # Creates segments with timestamps (min:sec.ms format)
 # Updates state to 'transcribed'
 
-# Step 5: Review in Streamlit
-streamlit run src/review_app.py
+# Step 5: Review in NiceGUI
+python src/gui_app.py
 # Access at http://localhost:8501
 # - Edit transcripts/translations/timestamps
 # - Assign reviewers
@@ -142,8 +142,8 @@ python src/preprocessing/denoise_audio.py --all
 # Process all pending chunks
 python src/preprocessing/gemini_process.py --all
 
-# Review in Streamlit
-streamlit run src/review_app.py
+# Review in NiceGUI
+python src/gui_app.py
 ```
 
 ### Workflow: Process Playlist
@@ -265,16 +265,16 @@ python src/preprocessing/gemini_process.py --video-id gBhbKX0pT_0 --force
 
 ---
 
-### review_app.py
+### gui_app.py
 
-**Purpose:** Streamlit web interface for reviewing transcriptions.
+**Purpose:** NiceGUI web interface for reviewing transcriptions (event-driven SPA).
 
 ```powershell
 # Start app
-streamlit run src/review_app.py
+python src/gui_app.py
 
-# Custom port
-streamlit run src/review_app.py --server.port 8502
+# Custom port (edit gui_app.py main() function)
+# ui.run(port=8502, ...)
 ```
 
 **Access:** http://localhost:8501
@@ -449,17 +449,17 @@ GEMINI_API_KEY_2=AIzaSy...
 
 **Solution:**
 ```powershell
-# Stop Streamlit before running batch scripts
-# Ctrl+C in Streamlit terminal
+# Stop GUI app before running batch scripts
+# Ctrl+C in GUI terminal
 
 # Run batch operation
 python src/preprocessing/gemini_process.py --all
 
-# Restart Streamlit
-streamlit run src/review_app.py
+# Restart NiceGUI
+python src/gui_app.py
 ```
 
-**Explanation:** SQLite allows only one writer at a time. Streamlit holds database connections.
+**Explanation:** SQLite allows only one writer at a time. GUI app holds database connections.
 
 #### Missing review_state Column
 
@@ -475,7 +475,7 @@ python migrate_add_review_state.py
 
 ---
 
-### Streamlit Issues
+### GUI App Issues
 
 #### Port Already in Use
 
@@ -483,11 +483,12 @@ python migrate_add_review_state.py
 
 **Solution:**
 ```powershell
-# Kill existing Streamlit process
-Get-Process python | Stop-Process -Force
+# Kill existing Python process
+Get-Process python | Where-Object {$_.Path -like "*gui_app*"} | Stop-Process -Force
 
-# Or use different port
-streamlit run src/review_app.py --server.port 8502
+# Or modify port in gui_app.py
+# ui.run(port=8502, ...)
+python src/gui_app.py
 ```
 
 #### MediaFileHandler Error
@@ -532,7 +533,7 @@ nvidia-smi
 
 **Symptom:** `Large gap of 5.23s (from 62.83s to 68.06s)`
 
-**Explanation:** Gemini detected potential missing speech. Review the segment in Streamlit to verify accuracy.
+**Explanation:** Gemini detected potential missing speech. Review the segment in the GUI to verify accuracy.
 
 ---
 
@@ -547,15 +548,15 @@ nvidia-smi
 # Check for approved segments
 python check_db_state.py
 
-# If 0 approved segments, review and approve in Streamlit first
-streamlit run src/review_app.py
+# If 0 approved segments, review and approve in GUI first
+python src/gui_app.py
 ```
 
 #### Audio Export Quality
 
 **Symptom:** Exported audio has clicks/pops
 
-**Explanation:** Likely due to abrupt cuts at timestamps. The export script applies fade in/out (50ms) to minimize this. If persistent, adjust timestamps in Streamlit review.
+**Explanation:** Likely due to abrupt cuts at timestamps. The export script applies fade in/out (50ms) to minimize this. If persistent, adjust timestamps in GUI review.
 
 ---
 
@@ -593,7 +594,7 @@ Get-ScheduledTask -TaskName "NLP_DB_Backup"
 
 #### Tailscale Not Connecting
 
-**Symptom:** Cannot access Streamlit from remote machine
+**Symptom:** Cannot access NiceGUI from remote machine
 
 **Solution:**
 ```powershell
@@ -605,7 +606,7 @@ net stop Tailscale
 net start Tailscale
 
 # Verify firewall allows port 8501
-New-NetFirewallRule -DisplayName "Streamlit" -Direction Inbound -LocalPort 8501 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "NiceGUI" -Direction Inbound -LocalPort 8501 -Protocol TCP -Action Allow
 ```
 
 ---

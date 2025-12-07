@@ -59,7 +59,6 @@ from db import (
     init_database,
     insert_segments,
     insert_video,
-    insert_chunk,
     parse_transcript_json,
     reject_segment,
     split_segment,
@@ -318,7 +317,7 @@ class AudioPlayer:
                     <source src="{self.audio_url}" type="audio/wav">
                     Your browser does not support the audio element.
                 </audio>
-            ''', sanitize=False)
+            ''')
             
     def play_segment(self, start_ms: int, end_ms: int):
         """
@@ -427,8 +426,11 @@ def create_navigation():
 # DASHBOARD PAGE
 # =============================================================================
 
-def dashboard_page_content():
-    """Dashboard with overview statistics - Content only (no header/nav)."""
+def dashboard_page():
+    """Dashboard with overview statistics."""
+    create_header()
+    create_navigation()
+    
     with ui.column().classes('w-full p-8'):
         ui.label('📊 Dashboard').classes('text-3xl font-bold mb-6')
         
@@ -514,8 +516,11 @@ def dashboard_page_content():
 # REVIEW PAGE
 # =============================================================================
 
-def review_page_content():
-    """Chunk-focused video review page with inline editing - Content only."""
+def review_page():
+    """Chunk-focused video review page with inline editing."""
+    create_header()
+    create_navigation()
+    
     with ui.column().classes('w-full p-8'):
         ui.label('📝 Review Videos').classes('text-3xl font-bold mb-6')
         
@@ -699,7 +704,7 @@ def review_page_content():
                         with ui.tabs().classes('w-full') as tabs:
                             for c in chunks:
                                 chunk_label = f"Chunk {c['chunk_index']} ({format_timestamp(c['start_ms'])}-{format_timestamp(c['end_ms'])}) - {c['processing_state']}"
-                                ui.tab(str(c['chunk_id']), label=chunk_label)
+                                ui.tab(chunk_label, name=str(c['chunk_id']))
                         
                         with ui.tab_panels(tabs, value=str(chunks[0]['chunk_id'])).classes('w-full'):
                             for c in chunks:
@@ -1112,8 +1117,11 @@ def render_segment_card(
 # UPLOAD PAGE
 # =============================================================================
 
-def upload_page_content():
-    """Data upload page - Content only."""
+def upload_page():
+    """Data upload page."""
+    create_header()
+    create_navigation()
+    
     with ui.column().classes('w-full p-8'):
         ui.label('⬆️ Upload Data').classes('text-3xl font-bold mb-6')
         
@@ -1410,8 +1418,11 @@ def upload_page_content():
 # AUDIO REFINEMENT PAGE
 # =============================================================================
 
-def refinement_page_content():
-    """Audio refinement (denoising) page - Content only."""
+def refinement_page():
+    """Audio refinement (denoising) page."""
+    create_header()
+    create_navigation()
+    
     with ui.column().classes('w-full p-8'):
         ui.label('🎛️ Audio Refinement').classes('text-3xl font-bold mb-6')
         
@@ -1638,8 +1649,11 @@ def refinement_page_content():
 # DOWNLOAD AUDIOS PAGE
 # =============================================================================
 
-def download_page_content():
-    """YouTube ingestion page - Content only."""
+def download_page():
+    """YouTube ingestion page."""
+    create_header()
+    create_navigation()
+    
     with ui.column().classes('w-full p-8'):
         ui.label('📥 Download Audios').classes('text-3xl font-bold mb-6')
         
@@ -1772,7 +1786,7 @@ def download_page_content():
 # =============================================================================
 
 def main():
-    """Main application entry point - SPA version."""
+    """Main application entry point."""
     # Serve audio files statically (critical for audio player)
     app.add_static_files('/data', str(DATA_ROOT))
     
@@ -1787,8 +1801,12 @@ def main():
     else:
         ensure_schema_upgrades()
     
-    # Build SPA with tabs (NO page routing - NiceGUI limitation in script mode)
-    build_spa_ui()
+    # Register pages programmatically (must be inside main to avoid global scope error)
+    ui.page('/')(dashboard_page)
+    ui.page('/review')(review_page)
+    ui.page('/upload')(upload_page)
+    ui.page('/refinement')(refinement_page)
+    ui.page('/download')(download_page)
     
     # Start NiceGUI server
     ui.run(
@@ -1799,48 +1817,6 @@ def main():
         reload=False,
         show=False  # Don't auto-open browser
     )
-
-
-def build_spa_ui():
-    """Build single-page application with tab navigation."""
-    # Header
-    with ui.header().classes('bg-slate-900 text-white items-center'):
-        ui.label('🎧 Code-Switch Review Tool').classes('text-xl font-bold')
-        ui.space()
-        
-        # Quick stats
-        try:
-            stats = cached_get_database_stats()
-            videos = stats.get('total_videos', 0)
-            segments = stats.get('total_segments', 0)
-            ui.label(f"Videos: {videos} | Segments: {segments}").classes('text-sm opacity-75')
-        except Exception:
-            pass
-    
-    # Tab navigation
-    with ui.tabs().classes('w-full bg-slate-100') as tabs:
-        ui.tab('dashboard', label='📊 Dashboard', icon='dashboard')
-        ui.tab('review', label='📝 Review', icon='edit')
-        ui.tab('upload', label='⬆️ Upload', icon='upload')
-        ui.tab('refinement', label='🎛️ Refinement', icon='tune')
-        ui.tab('download', label='📥 Download', icon='download')
-    
-    # Tab panels with content
-    with ui.tab_panels(tabs, value='dashboard').classes('w-full'):
-        with ui.tab_panel('dashboard'):
-            dashboard_page_content()
-        
-        with ui.tab_panel('review'):
-            review_page_content()
-        
-        with ui.tab_panel('upload'):
-            upload_page_content()
-        
-        with ui.tab_panel('refinement'):
-            refinement_page_content()
-        
-        with ui.tab_panel('download'):
-            download_page_content()
 
 
 if __name__ == '__main__':

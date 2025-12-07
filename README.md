@@ -1,6 +1,6 @@
 # Vietnamese-English Code-Switching Speech Translation
 
-End-to-End Speech Translation pipeline for Vietnamese-English Code-Switching data. Downloads audio from **YouTube**, processes with **Gemini 2.5 Flash** for transcription + translation, and includes human-in-the-loop review via **Streamlit**.
+End-to-End Speech Translation pipeline for Vietnamese-English Code-Switching data. Downloads audio from **YouTube**, processes with **Gemini 2.5 Flash** for transcription + translation, and includes human-in-the-loop review via **NiceGUI**.
 
 ---
 
@@ -9,7 +9,7 @@ End-to-End Speech Translation pipeline for Vietnamese-English Code-Switching dat
 - ✅ **YouTube Audio Ingestion**: Download and chunk videos as 16kHz mono WAV
 - ✅ **DeepFilterNet Denoising**: Optional background noise removal
 - ✅ **Gemini 2.5 Flash Processing**: Multimodal transcription + translation with min:sec.ms timestamps
-- ✅ **Streamlit Review App**: Web UI with pagination, caching, light/dark mode, reviewer assignment
+- ✅ **NiceGUI Review App**: Event-driven web UI with keyboard shortcuts, audio player, inline editing
 - ✅ **SQLite Database**: Lightweight storage with `review_state` workflow tracking
 - ✅ **Tailscale Remote Access**: Secure remote access to review interface
 - ✅ **DVC Integration**: Google Drive versioning for data artifacts
@@ -50,14 +50,19 @@ python src/preprocessing/denoise_audio.py --all
 python src/preprocessing/gemini_process.py --video-id VIDEO_ID
 ```
 
-### 3. Review in Streamlit
+### 3. Review in NiceGUI
 
 ```powershell
 # Start web interface
-streamlit run src/review_app.py
+python src/gui_app.py
 
 # Access at http://localhost:8501
-# Features: audio playback, timestamp editing, reviewer assignment, bulk operations
+# Features: 
+# - Keyboard shortcuts (Ctrl+S save, Ctrl+Enter approve, Ctrl+R reject, Ctrl+Space play)
+# - Tab-based navigation (Dashboard, Review, Upload, Refinement, Download)
+# - Audio player with timestamp control
+# - Inline editing for transcripts/translations
+# - Bulk operations (approve all, reset all)
 ```
 
 ### 4. Export Dataset
@@ -90,7 +95,7 @@ final_nlp/
 │   │   ├── chunk_audio.py        # Split audio into 6-min chunks
 │   │   ├── denoise_audio.py      # DeepFilterNet noise removal
 │   │   └── gemini_process.py     # Gemini transcription/translation
-│   ├── review_app.py             # Streamlit review interface
+│   ├── gui_app.py                # NiceGUI review interface (SPA)
 │   ├── export_final.py           # Export final dataset
 │   └── db.py                     # SQLite utilities
 ├── data/
@@ -99,6 +104,9 @@ final_nlp/
 │   ├── raw/chunks/               # Chunked audio segments
 │   └── export/                   # Exported datasets
 ├── docs/                         # Documentation
+├── archive/                      # Archived implementations
+│   ├── streamlit/                # Original Streamlit implementation
+│   └── nicegui/                  # Experimental NiceGUI versions
 ├── init_scripts/                 # SQL schema + migrations
 └── setup.ps1                     # Automated setup script
 ```
@@ -110,7 +118,7 @@ final_nlp/
 - **Audio Processing**: FFmpeg, pydub, DeepFilterNet
 - **AI**: Google Gemini 2.5 Flash (multimodal API)
 - **Database**: SQLite with WAL mode
-- **UI**: Streamlit with custom CSS (light/dark mode)
+- **UI**: NiceGUI (event-driven SPA)
 - **Data Versioning**: DVC + Google Drive remote
 - **Networking**: Tailscale for remote access
 
@@ -121,8 +129,8 @@ final_nlp/
 **Model**: `gemini-2.5-flash-preview-09-2025`  
 **Timestamp Format**: `min:sec.ms` (e.g., `0:04.54`, `1:23.45`)  
 **Database Schema**: Migrated with `review_state` column (`pending`/`reviewed`/`approved`/`rejected`)  
-**Performance**: Cached queries (10-60s TTL), pagination (25 segments/page)  
-**UI**: Light/dark mode support, reviewer assignment, audio refinement tab
+**Performance**: Cached queries (10-60s TTL), pagination (25 segments/page), event-driven UI  
+**UI**: NiceGUI SPA with keyboard shortcuts, tab navigation, inline editing
 
 See [CHANGELOG.md](CHANGELOG.md) for recent updates.
 
@@ -144,12 +152,15 @@ final_nlp/
 ├── src/
 │   ├── db.py                   # SQLite utilities
 │   ├── ingest_youtube.py       # YouTube ingestion
-│   ├── review_app.py           # Streamlit review app
+│   ├── gui_app.py              # NiceGUI review app (SPA)
 │   ├── export_final.py         # Dataset export
 │   └── preprocessing/
 │       ├── chunk_audio.py      # Audio chunking for long videos
 │       ├── gemini_process.py   # Transcription + translation
 │       └── denoise_audio.py    # DeepFilterNet denoising
+├── archive/
+│   ├── streamlit/              # Deprecated Streamlit implementation
+│   └── nicegui/                # Experimental NiceGUI versions
 ├── init_scripts/
 │   └── sqlite_schema.sql       # Database schema
 ├── docs/                       # Documentation
@@ -177,7 +188,7 @@ final_nlp/
 
 | Service | Port | URL |
 |---------|------|-----|
-| Streamlit | 8501 | http://localhost:8501 |
+| NiceGUI Review App | 8501 | http://localhost:8501 |
 
 ---
 
@@ -202,7 +213,7 @@ git push
 ### Workflow Summary
 
 1. **Dev Machine**: Ingest/process videos → commit → push via DVC
-2. **Lab Machine**: Pull via DVC → run Streamlit for annotation → push updates back
+2. **Lab Machine**: Pull via DVC → run NiceGUI for annotation → push updates back
 3. **Automated Backups**: Hourly snapshots to `data/db_sync/backups/`
 
 📖 **Full sync guide**: [docs/09_database_sync.md](docs/09_database_sync.md)
