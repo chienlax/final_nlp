@@ -301,6 +301,28 @@ def format_timestamp(ms: int) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def ms_to_min_sec_ms(ms: int) -> str:
+    """Convert milliseconds to min:sec.ms format (e.g., 83450 -> '1:23.45')."""
+    total_seconds = ms / 1000.0
+    minutes = int(total_seconds // 60)
+    seconds = total_seconds % 60
+    return f"{minutes}:{seconds:05.2f}"
+
+
+def min_sec_ms_to_ms(time_str: str) -> int:
+    """Convert min:sec.ms format to milliseconds (e.g., '1:23.45' -> 83450)."""
+    try:
+        parts = time_str.split(':')
+        if len(parts) != 2:
+            raise ValueError(f"Invalid format: {time_str}")
+        minutes = int(parts[0])
+        seconds = float(parts[1])
+        return int((minutes * 60 + seconds) * 1000)
+    except Exception as e:
+        st.error(f"Invalid timestamp format '{time_str}': {e}")
+        return 0
+
+
 def get_audio_path(video: Dict[str, Any]) -> Optional[Path]:
     """Resolve audio file path for a video."""
     audio_path_str = video.get('denoised_audio_path') or video.get('audio_path', '')
@@ -345,8 +367,13 @@ def load_audio_file(audio_path_str: str) -> bytes:
         return f.read()
 
 
-def render_audio_player_with_jump(audio_path: Path) -> None:
-    """Render audio player and honor pending jump requests with auto-pause."""
+def render_audio_player_with_jump(audio_path: Path, chunk_start_ms: int = 0) -> None:
+    """Render audio player and honor pending jump requests with auto-pause.
+    
+    Args:
+        audio_path: Path to audio file (chunk-specific).
+        chunk_start_ms: Start time of this chunk in the original video (for offset calculation).
+    """
     # Load audio with caching to prevent MediaFileHandler errors
     try:
         audio_bytes = load_audio_file(str(audio_path))
@@ -357,14 +384,26 @@ def render_audio_player_with_jump(audio_path: Path) -> None:
     
     play_request = st.session_state.pop("play_request", None)
     if play_request is not None:
+        # Extract absolute timestamps from play request
         start_ms, end_ms = play_request
-        stop_time = end_ms / 1000 if end_ms is not None else None
+        
+        # Calculate chunk-relative offsets
+        # Segment timestamps are absolute (relative to full video)
+        # Chunk audio starts at chunk_start_ms in the original video
+        # So we need to subtract chunk offset to get position in chunk audio
+        relative_start_ms = start_ms - chunk_start_ms
+        relative_end_ms = end_ms - chunk_start_ms if end_ms is not None else None
+        
+        # Ensure non-negative
+        relative_start_ms = max(0, relative_start_ms)
+        
+        stop_time = relative_end_ms / 1000 if relative_end_ms is not None else None
         components.html(
             f"""
             <script>
             const audioEl = window.parent.document.querySelector('audio');
             if (audioEl) {{
-                audioEl.currentTime = {start_ms/1000:.3f};
+                audioEl.currentTime = {relative_start_ms/1000:.3f};
                 audioEl.play();
                 {'const stopAt = ' + str(stop_time) + '; audioEl.ontimeupdate = () => { if (audioEl.currentTime >= stopAt) { audioEl.pause(); audioEl.ontimeupdate = null; } };' if stop_time else ''}
             }}
@@ -849,9 +888,12 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
     else:
         audio_path = DATA_ROOT / audio_path_str
     
+    # Get chunk start time for audio offset calculation
+    chunk_start_ms = chunk.get('start_ms', 0)
+    
     if audio_path.exists():
         st.markdown("### 🎵 Audio Player")
-        render_audio_player_with_jump(audio_path)
+        render_audio_player_with_jump(audio_path, chunk_start_ms)
         st.markdown("---")
     else:
         st.warning(f"⚠️ Audio file not found: {audio_path_str}")
@@ -909,35 +951,55 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
     
     # Pagination for better performance with large segment lists
     total_segments = len(filtered_segments)
+    total_pages = (total_segments + SEGMENTS_PER_PAGE - 1) // SEGMENTS_PER_PAGE if total_segments > 0 else 1
+    current_page = st.session_state.get(f'page_{chunk_id}', 1)
     
-    if total_segments > SEGMENTS_PER_PAGE:
-        # Add pagination controls
-        col_page1, col_page2, col_page3 = st.columns([2, 1, 2])
+    # Pagination helper function
+    def render_pagination(position: str):
+        if total_segments <= SEGMENTS_PER_PAGE:
+            return
         
-        with col_page2:
-            # Page selector
-            total_pages = (total_segments + SEGMENTS_PER_PAGE - 1) // SEGMENTS_PER_PAGE
-            current_page = st.number_input(
+        col_prev, col_page, col_next = st.columns([1, 2, 1])
+        
+        with col_prev:
+            if st.button("← Previous", key=f"prev_{position}_{chunk_id}", disabled=current_page <= 1, use_container_width=True):
+                st.session_state[f'page_{chunk_id}'] = current_page - 1
+                st.rerun()
+        
+        with col_page:
+            new_page = st.number_input(
                 "Page",
                 min_value=1,
                 max_value=total_pages,
-                value=st.session_state.get(f'page_{chunk_id}', 1),
+                value=current_page,
                 step=1,
-                key=f'page_input_{chunk_id}'
+                key=f'page_{position}_{chunk_id}',
+                label_visibility="collapsed"
             )
-            st.session_state[f'page_{chunk_id}'] = current_page
-            st.caption(f"Page {current_page} of {total_pages}")
+            if new_page != current_page:
+                st.session_state[f'page_{chunk_id}'] = new_page
+                st.rerun()
+            st.caption(f"Page {current_page} of {total_pages} ({total_segments} segments)")
         
-        # Calculate pagination range
+        with col_next:
+            if st.button("Next →", key=f"next_{position}_{chunk_id}", disabled=current_page >= total_pages, use_container_width=True):
+                st.session_state[f'page_{chunk_id}'] = current_page + 1
+                st.rerun()
+    
+    # Top pagination
+    render_pagination("top")
+    
+    # Calculate pagination range
+    if total_segments > SEGMENTS_PER_PAGE:
         start_idx = (current_page - 1) * SEGMENTS_PER_PAGE
         end_idx = min(start_idx + SEGMENTS_PER_PAGE, total_segments)
         paginated_segments = filtered_segments[start_idx:end_idx]
-        
-        st.info(f"Showing segments {start_idx + 1}-{end_idx} of {total_segments}")
     else:
         paginated_segments = filtered_segments
+        start_idx = 0
+        end_idx = total_segments
     
-    # Render each segment as a spacious card
+    # Render each segment in condensed card layout
     for seg_idx, seg in enumerate(paginated_segments):
         segment_id = seg['segment_id']
         start_ms = seg['start_ms']
@@ -949,272 +1011,177 @@ def render_chunk_review(video_id: str, chunk: Dict[str, Any], video: Dict[str, A
         
         # Segment card container
         with st.container():
-            # Header row: timestamp, play button, state badge
-            col_header1, col_header2, col_header3 = st.columns([3, 2, 2])
+            # Compact header: Segment # | Duration | State | Play
+            col_h1, col_h2, col_h3, col_h4 = st.columns([2, 2, 2, 3])
             
-            with col_header1:
-                st.markdown(f"#### Segment {seg_idx + 1}")
+            with col_h1:
+                st.markdown(f"**Segment {start_idx + seg_idx + 1}**")
             
-            with col_header2:
-                # Play button
+            with col_h2:
+                duration_color = "orange" if duration_sec > 25.0 else "inherit"
+                st.markdown(f"<span style='color: {duration_color};'>Duration: {duration_sec:.2f}s</span>", unsafe_allow_html=True)
+            
+            with col_h3:
+                state_colors = {'pending': '🟡', 'reviewed': '🟢', 'approved': '✅', 'rejected': '🔴'}
+                st.markdown(f"{state_colors.get(review_state, '⚪')} {review_state.capitalize()}")
+            
+            with col_h4:
                 if st.button(
-                    f"▶️ Play ({format_timestamp(start_ms)} - {format_timestamp(end_ms)})",
-                    key=f"play_seg_{segment_id}",
+                    f"▶ Play ({ms_to_min_sec_ms(start_ms)} - {ms_to_min_sec_ms(end_ms)})",
+                    key=f"play_{segment_id}",
                     use_container_width=True
                 ):
                     request_playback(start_ms, end_ms)
             
-            with col_header3:
-                # State badge
-                state_colors = {
-                    'pending': '🟡',
-                    'reviewed': '🟢',
-                    'approved': '✅',
-                    'rejected': '🔴'
-                }
-                st.markdown(
-                    f"<div class='state-badge'>"
-                    f"{state_colors.get(review_state, '⚪')} <b>{review_state.upper()}</b></div>",
-                    unsafe_allow_html=True
+            # Timestamp editors inline (min:sec.ms format)
+            col_t1, col_t2 = st.columns([1, 1])
+            
+            with col_t1:
+                start_str = st.text_input(
+                    "Start (min:sec.ms)",
+                    value=ms_to_min_sec_ms(start_ms),
+                    key=f"start_{segment_id}",
+                    help="Format: min:sec.ms (e.g., 1:23.45). Edit directly for 10ms precision."
                 )
+                new_start_ms = min_sec_ms_to_ms(start_str)
             
-            # Timestamp editors (millisecond precision with step controls)
-            st.markdown("**⏱️ Timestamps** (millisecond precision)")
-            col_time1, col_time2, col_time3 = st.columns([3, 3, 3])
-            
-            with col_time1:
-                new_start_ms = st.number_input(
-                    "Start (ms)",
-                    value=start_ms,
-                    min_value=0,
-                    step=10,
-                    key=f"start_ms_{segment_id}",
-                    help="Use arrow keys or click up/down to adjust by 10ms"
+            with col_t2:
+                end_str = st.text_input(
+                    "End (min:sec.ms)",
+                    value=ms_to_min_sec_ms(end_ms),
+                    key=f"end_{segment_id}",
+                    help="Format: min:sec.ms (e.g., 1:28.90). Edit directly for 10ms precision."
                 )
+                new_end_ms = min_sec_ms_to_ms(end_str)
             
-            with col_time2:
-                new_end_ms = st.number_input(
-                    "End (ms)",
-                    value=end_ms,
-                    min_value=new_start_ms + 10,
-                    step=10,
-                    key=f"end_ms_{segment_id}",
-                    help="Use arrow keys or click up/down to adjust by 10ms"
-                )
-            
-            with col_time3:
-                new_duration_sec = (new_end_ms - new_start_ms) / 1000.0
-                if new_duration_sec > 25.0:
-                    st.markdown(
-                        f"<div class='duration-display warning'>"
-                        f"⚠️ <b>Duration: {new_duration_sec:.2f}s</b> (Too long!)</div>",
-                        unsafe_allow_html=True
-                    )
-                else:
-                    st.markdown(
-                        f"<div class='duration-display ok'>"
-                        f"✓ <b>Duration: {new_duration_sec:.2f}s</b></div>",
-                        unsafe_allow_html=True
-                    )
-            
-            # Transcript and Translation (large inline text areas)
-            st.markdown("**📝 Transcript** (code-switched)")
+            # Transcript and Translation (reduced height)
             new_transcript = st.text_area(
                 "Transcript",
                 value=transcript,
-                height=100,
-                key=f"transcript_{segment_id}",
-                label_visibility="collapsed"
+                height=60,
+                key=f"transcript_{segment_id}"
             )
             
-            st.markdown("**🌏 Translation** (Vietnamese)")
             new_translation = st.text_area(
                 "Translation",
                 value=translation,
-                height=100,
-                key=f"translation_{segment_id}",
-                label_visibility="collapsed"
+                height=60,
+                key=f"translation_{segment_id}"
             )
             
-            # Action buttons row
-            col_action1, col_action2, col_action3, col_action4 = st.columns(4)
+            # Simplified action buttons: Save + Dropdown
+            col_a1, col_a2, col_a3 = st.columns([2, 2, 5])
             
-            with col_action1:
+            with col_a1:
                 if st.button(
-                    "💾 Save Changes",
+                    "Save",
                     key=f"save_{segment_id}",
-                    use_container_width=True,
-                    type="secondary"
-                ):
-                    try:
-                        with get_db() as db:
-                            db.execute(
-                                """
-                                UPDATE segments 
-                                SET transcript = ?, translation = ?, start_ms = ?, end_ms = ?
-                                WHERE segment_id = ?
-                                """,
-                                (new_transcript, new_translation, new_start_ms, new_end_ms, segment_id)
-                            )
-                        st.success("✅ Saved!")
-                        time.sleep(0.3)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed: {e}")
-            
-            with col_action2:
-                if st.button(
-                    "✅ Approve",
-                    key=f"approve_{segment_id}",
-                    use_container_width=True,
-                    type="primary"
-                ):
-                    try:
-                        with get_db() as db:
-                            db.execute(
-                                """
-                                UPDATE segments 
-                                SET transcript = ?, translation = ?, start_ms = ?, end_ms = ?, review_state = 'approved'
-                                WHERE segment_id = ?
-                                """,
-                                (new_transcript, new_translation, new_start_ms, new_end_ms, segment_id)
-                            )
-                        st.success("✅ Approved!")
-                        time.sleep(0.3)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed: {e}")
-            
-            with col_action3:
-                if st.button(
-                    "📝 Mark Reviewed",
-                    key=f"mark_reviewed_{segment_id}",
                     use_container_width=True
                 ):
                     try:
                         with get_db() as db:
                             db.execute(
-                                """
-                                UPDATE segments 
-                                SET transcript = ?, translation = ?, start_ms = ?, end_ms = ?, review_state = 'reviewed'
-                                WHERE segment_id = ?
-                                """,
+                                "UPDATE segments SET transcript = ?, translation = ?, start_ms = ?, end_ms = ? WHERE segment_id = ?",
                                 (new_transcript, new_translation, new_start_ms, new_end_ms, segment_id)
                             )
-                        st.success("📝 Marked as reviewed!")
-                        time.sleep(0.3)
+                        st.success("Saved!")
+                        time.sleep(0.2)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Failed: {e}")
+                        st.error(f"Error: {e}")
             
-            with col_action4:
-                if st.button(
-                    "❌ Reject",
-                    key=f"reject_{segment_id}",
-                    use_container_width=True
-                ):
+            with col_a2:
+                action = st.selectbox(
+                    "Action",
+                    ["--", "Approve", "Reviewed", "Reject"],
+                    key=f"action_{segment_id}",
+                    label_visibility="collapsed"
+                )
+                if action != "--":
                     try:
+                        state_map = {"Approve": "approved", "Reviewed": "reviewed", "Reject": "rejected"}
+                        new_state = state_map[action]
                         with get_db() as db:
                             db.execute(
-                                "UPDATE segments SET review_state = 'rejected' WHERE segment_id = ?",
-                                (segment_id,)
+                                "UPDATE segments SET transcript = ?, translation = ?, start_ms = ?, end_ms = ?, review_state = ? WHERE segment_id = ?",
+                                (new_transcript, new_translation, new_start_ms, new_end_ms, new_state, segment_id)
                             )
-                        st.warning("❌ Rejected!")
-                        time.sleep(0.3)
+                        st.success(f"{action}d!")
+                        time.sleep(0.2)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Failed: {e}")
+                        st.error(f"Error: {e}")
             
-            # Separator between segments
-            st.markdown("<div style='margin: 30px 0; border-top: 1px solid #333;'></div>", unsafe_allow_html=True)
+            # Reduced separator spacing
+            st.markdown("<div style='margin: 12px 0; border-top: 1px solid #444;'></div>", unsafe_allow_html=True)
     
-    # Bulk actions at bottom
+    # Bottom pagination
     st.markdown("---")
-    st.markdown("### 🔧 Bulk Actions")
-    st.caption(f"Apply actions to all {len(filtered_segments)} visible segments in Chunk {chunk_index}")
+    render_pagination("bottom")
     
-    col_bulk1, col_bulk2, col_bulk3, col_bulk4 = st.columns(4)
-    
-    with col_bulk1:
-        if st.button(
-            f"✅ Approve All ({len(filtered_segments)})",
-            key=f"approve_all_chunk_{chunk_id}",
-            use_container_width=True,
-            type="primary"
-        ):
-            try:
-                with get_db() as db:
-                    db.execute(
-                        "UPDATE segments SET review_state = 'approved' WHERE chunk_id = ?",
-                        (chunk_id,)
-                    )
-                st.success(f"✅ Approved all segments in Chunk {chunk_index}")
-                time.sleep(0.5)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Failed: {e}")
-    
-    with col_bulk2:
-        if st.button(
-            f"📝 Mark All Reviewed ({len(filtered_segments)})",
-            key=f"review_all_chunk_{chunk_id}",
-            use_container_width=True
-        ):
-            try:
-                with get_db() as db:
-                    db.execute(
-                        "UPDATE segments SET review_state = 'reviewed' WHERE chunk_id = ?",
-                        (chunk_id,)
-                    )
-                
-                # Update chunk state
-                update_chunk_state(chunk_id, 'reviewed')
-                
-                # Check if all chunks are reviewed to update video state
-                agg_state = aggregate_chunk_state(video_id)
-                update_video_state(video_id, agg_state)
-                
-                st.success(f"📝 Marked Chunk {chunk_index} as reviewed")
-                time.sleep(0.5)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Failed: {e}")
-    
-    with col_bulk3:
-        if st.button(
-            f"⏸️ Mark All Pending ({len(filtered_segments)})",
-            key=f"pending_all_chunk_{chunk_id}",
-            use_container_width=True
-        ):
-            try:
-                with get_db() as db:
-                    db.execute(
-                        "UPDATE segments SET review_state = 'pending' WHERE chunk_id = ?",
-                        (chunk_id,)
-                    )
-                st.info(f"⏸️ Marked all segments as pending in Chunk {chunk_index}")
-                time.sleep(0.5)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Failed: {e}")
-    
-    with col_bulk4:
-        if st.button(
-            f"❌ Reject All ({len(filtered_segments)})",
-            key=f"reject_all_chunk_{chunk_id}",
-            use_container_width=True
-        ):
-            try:
-                with get_db() as db:
-                    db.execute(
-                        "UPDATE segments SET review_state = 'rejected' WHERE chunk_id = ?",
-                        (chunk_id,)
-                    )
-                st.warning(f"❌ Rejected all segments in Chunk {chunk_index}")
-                time.sleep(0.5)
-                st.rerun()
-            except Exception as e:
-                st.error(f"Failed: {e}")
+    # Bulk actions in collapsible section
+    with st.expander(f"🔧 Bulk Actions ({len(filtered_segments)} segments in Chunk {chunk_index})", expanded=False):
+        st.caption("Apply actions to all visible segments in this chunk")
+        
+        col_bulk1, col_bulk2, col_bulk3 = st.columns(3)
+        
+        with col_bulk1:
+            if st.button(
+                f"Approve All",
+                key=f"approve_all_{chunk_id}",
+                use_container_width=True,
+                type="primary"
+            ):
+                try:
+                    with get_db() as db:
+                        db.execute(
+                            "UPDATE segments SET review_state = 'approved' WHERE chunk_id = ?",
+                            (chunk_id,)
+                        )
+                    st.success(f"Approved all segments in Chunk {chunk_index}")
+                    time.sleep(0.3)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        with col_bulk2:
+            if st.button(
+                f"Mark All Reviewed",
+                key=f"review_all_{chunk_id}",
+                use_container_width=True
+            ):
+                try:
+                    with get_db() as db:
+                        db.execute(
+                            "UPDATE segments SET review_state = 'reviewed' WHERE chunk_id = ?",
+                            (chunk_id,)
+                        )
+                    update_chunk_state(chunk_id, 'reviewed')
+                    agg_state = aggregate_chunk_state(video_id)
+                    update_video_state(video_id, agg_state)
+                    st.success(f"Marked Chunk {chunk_index} as reviewed")
+                    time.sleep(0.3)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        with col_bulk3:
+            if st.button(
+                f"Reset to Pending",
+                key=f"pending_all_{chunk_id}",
+                use_container_width=True
+            ):
+                try:
+                    with get_db() as db:
+                        db.execute(
+                            "UPDATE segments SET review_state = 'pending' WHERE chunk_id = ?",
+                            (chunk_id,)
+                        )
+                    st.info(f"Reset all segments to pending in Chunk {chunk_index}")
+                    time.sleep(0.3)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
 
 def render_segment_editor(

@@ -45,7 +45,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $VENV_DIR = Join-Path $ScriptDir ".venv"
 $DATA_DIR = Join-Path $ScriptDir "data"
 $DB_PATH = Join-Path $DATA_DIR "lab_data.db"
-$STREAMLIT_PORT = 8501
+$NICEGUI_PORT = 8501
 $BACKUP_SCRIPT_NAME = "backup_db.ps1"
 $BACKUP_SCRIPT_PATH = Join-Path $ScriptDir $BACKUP_SCRIPT_NAME
 $TASK_NAME = "NLP_DB_Hourly_Backup"
@@ -546,7 +546,7 @@ function Show-Summary {
     Write-Host "     python src/preprocessing/gemini_process.py --all" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  5. Start review app:" -ForegroundColor White
-    Write-Host "     streamlit run src/review_app.py" -ForegroundColor Gray
+    Write-Host "     python src/gui_app.py" -ForegroundColor Gray
     Write-Host ""
     Write-Host "  6. Export dataset:" -ForegroundColor White
     Write-Host "     python src/export_final.py" -ForegroundColor Gray
@@ -561,7 +561,7 @@ function Show-Summary {
     
     if (-not $SkipTailscale) {
         Write-Host "Remote Access:" -ForegroundColor Yellow
-        Write-Host "  Your Streamlit app is accessible via Tailscale" -ForegroundColor Gray
+        Write-Host "  Your NiceGUI app is accessible via Tailscale" -ForegroundColor Gray
         Write-Host "  Check your Tailscale dashboard for the URL" -ForegroundColor Gray
         Write-Host ""
     }

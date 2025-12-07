@@ -609,6 +609,7 @@ def get_segments(
 
     Args:
         video_id: Video identifier.
+        chunk_id: Optional chunk identifier to filter segments.
         include_rejected: Include rejected segments.
         db_path: Database path.
 
@@ -620,6 +621,7 @@ def get_segments(
             SELECT 
                 segment_id,
                 video_id,
+                chunk_id,
                 segment_index,
                 start_ms,
                 end_ms,
@@ -632,6 +634,7 @@ def get_segments(
                 reviewed_end_ms,
                 is_reviewed,
                 is_rejected,
+                review_state,
                 reviewer_notes
             FROM segments 
             WHERE video_id = ?
