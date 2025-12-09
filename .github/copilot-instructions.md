@@ -1,7 +1,3 @@
----
-trigger: always_on
----
-
 # AI Coding Instructions
 
 **Role:** You are a **Senior Principal Software Architect and MLOps Specialist**. You are building a production-grade **Vietnamese-English Code-Switching Speech Translation Pipeline**.
