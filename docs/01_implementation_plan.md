@@ -736,9 +736,9 @@ To reiterate the critical design decision:
 
 The frontend is a Single Page Application (SPA) built with **React (Vite)**. It communicates with the FastAPI backend via REST.
 
-*   **Core Library:** `wavesurfer.js` (Audio Visualization) + `wavesurfer.js-regions` (Segment manipulation).
-*   **UI Framework:** Material UI (MUI) or Ant Design (for dense data tables).
-*   **State Management:** React Query (TanStack Query) for handling API server state and caching.
+*   **Core Library:** `wavesurfer.js` with Regions Plugin for audio visualization and segment manipulation.
+*   **UI Framework:** Material UI (MUI) exclusively for consistent dark theme.
+*   **State Management:** React Query (TanStack Query) for server state and caching.
 
 **The "Relative Time" Visual Contract:**
 The Frontend never calculates absolute time.
@@ -747,37 +747,50 @@ The Frontend never calculates absolute time.
 *   **Display:** The timeline starts at 00:00 and ends at 05:05.
 *   **Data:** A timestamp of 10.5 means "10.5 seconds from the start of this file."
 
-### 5.2 Layout Specifications
+### 5.2 Application Structure
 
-The Workbench is divided into three vertical zones to optimize vertical screen real estate.
+```
+frontend/src/
+├── main.tsx              # Entry point, dark theme, React Query
+├── App.tsx               # Tab navigation, user selector, global state
+├── pages/
+│   ├── DashboardPage.tsx     # System stats, channel list view
+│   ├── ChannelPage.tsx       # Video accordion with chunk details
+│   ├── WorkbenchPage.tsx     # Annotation interface (3-zone layout)
+│   ├── ProcessingPage.tsx    # Chunking & Gemini processing
+│   ├── ExportPage.tsx        # Dataset export controls
+│   └── SettingsPage.tsx      # Users, system info, shortcuts
+├── components/
+│   ├── WaveformViewer.tsx    # Wavesurfer.js integration
+│   └── SegmentTable.tsx      # Custom editable table
+└── styles/
+    └── workbench.css         # CSS variables, compact layout
+```
 
-#### Zone A: The Control Header (Fixed Top)
-Contains global actions for the specific chunk.
+### 5.3 Layout Specifications
 
-*   **Left:** Breadcrumbs (Dashboard > Channel Name > Video 01 > Chunk #5).
-*   **Center:**
-    *   **Denoise Toggle:** A generic button `[ 🔊 Flag as Noisy ]`.
-        *   *Active State (Orange):* Audio is noisy.
-        *   *Inactive State (Gray):* Audio is clean.
-    *   **Lock Status:** "🔒 Locked by You" (Green) or "🔒 Locked by Dat" (Red).
-*   **Right:** `[ Save Changes ]` (Primary Button), `[ Mark as Finished ]`.
+The Workbench (WorkbenchPage) uses a **3-zone vertical layout** optimized for annotation efficiency.
 
-#### Zone B: The Visualizer (Top 30%)
-A large, zoomable waveform.
+#### Zone A: The Control Header (Fixed, 56px)
 
-*   **Library:** `wavesurfer.js`.
-*   **Regions:** Semi-transparent colored boxes overlaid on the waveform representing segments.
-*   **Interaction:**
-    *   **Drag Region:** Moves `start_time` and `end_time` together.
-    *   **Resize Region Edge:** Adjusts just start or end.
-    *   **Click Region:** Loops that specific segment.
+*   **Left:** Video title, chunk info (e.g., "Video XYZ | Chunk 5/20")
+*   **Center:** Statistics (total/verified/pending segment counts)
+*   **Right:** `[ Save Changes ]` (Primary), `[ Finish Review ]` (Success)
 
-#### Zone C: The Editor Table (Bottom 70% - Scrollable)
-A dense list of segments synced to the waveform regions.
+#### Zone B: The Waveform Viewer (140px min-height)
 
-| Check | Play | Start | End | Transcript (Code-Switch) | Translation (Vietnamese) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `[x]` | `[▶]` | 00:05.1 | 00:09.2 | [Input Text] | [Input Text] |
+*   **Visual:** Audio waveform with colored segment regions
+*   **Region Colors:**
+    *   Green: Verified segment
+    *   Blue: Unverified segment
+    *   Selected: Highlighted border
+*   **Controls:** Play/Pause button, timeline, volume slider
+
+#### Zone C: The Segment Table (Flexible, fills remaining space)
+
+| ☑ | ▶ | Index | Start | End | Transcript | Translation |
+|---|---|-------|-------|-----|------------|-------------|
+| ☑ | ▶ | 1 | 00:05.1 | 00:09.2 | [Editable] | [Editable] |
 
 ### 5.3 Waveform Logic & Implementation
 
@@ -828,50 +841,32 @@ ws.plugins.regions.on('region-updated', (region) => {
 });
 ```
 
-### 5.4 Key Feature Implementation
-
-#### A. The "Flag for Denoise" Toggle
-
-*   **Visual:** A toggle button.
-*   **Action:**
-    1.  User clicks Toggle.
-    2.  Frontend sends: `POST /api/chunks/{id}/flag-noise`.
-    3.  **Optimistic UI:** Button turns Orange immediately.
-    4.  **Background:** Backend updates `denoise_status = 'flagged'`.
-
-#### B. The "Verify Segment" Checkbox
-
-*   **Visual:** A checkbox at the start of every table row.
-*   **Logic:**
-    *   **Default:** Unchecked (False) when loaded from Gemini.
-    *   **User Action:** Annotator listens, corrects text, clicks Checkbox.
-    *   **Data:** Updates local React state `segment.is_verified = true`.
-    *   **Validation:** The "Mark Chunk as Finished" button is **Disabled** until 100% of segments are verified.
-
-#### C. Keyboard Shortcuts (Productivity)
-
-We hijack the browser's standard events to speed up workflow.
+### 5.4 Keyboard Shortcuts
 
 | Shortcut | Scope | Action |
 | :--- | :--- | :--- |
-| `Ctrl + Space` | Global | Play/Pause current segment loop. |
-| `Ctrl + Enter` | Text Input | Save current row and move focus to next row. |
-| `Ctrl + ArrowRight` | Global | Skip forward 5 seconds. |
-| `Ctrl + D` | Global | Toggle "Denoise" flag. |
+| `Ctrl+Space` | Global | Play/Pause audio |
+| `Ctrl+←` | Global | Seek backward 5 seconds |
+| `Ctrl+→` | Global | Seek forward 5 seconds |
+| `Ctrl+D` | Global | Toggle denoise flag |
+| `Ctrl+S` | Global | Save all changes |
 
 ### 5.5 Data Synchronization Strategy
 
-To prevent data loss:
+**Manual Save (Current Implementation):**
 
-1.  **Auto-Save (Debounced):**
-    *   When a user stops typing for 2 seconds, trigger `PUT /api/segments/{id}`.
-2.  **Explicit Save:**
-    *   The "Save Changes" button sends the entire state of the chunk (all segments) to `PUT /api/chunks/{id}/sync`.
-3.  **Locking Lifecycle:**
-    *   **Mount:** `POST /chunks/{id}/lock` -> Returns `200 OK` (Editable) or `409 Conflict` (Read-Only Mode).
-    *   **Unmount:** `POST /chunks/{id}/unlock`.
+1.  **No Auto-Save:** Changes are held in React state until explicitly saved.
+2.  **Unsaved Indicator:** UI shows warning when there are pending changes.
+3.  **Save Action:** Click "Save Changes" button or `Ctrl+S` to persist.
+4.  **Navigation Guard:** Prompt appears if leaving page with unsaved changes.
 
-**Critique:** This design minimizes complex math on the client. By mapping the database ID directly to the Wavesurfer Region ID, we create a robust 1:1 link. If the user drags a box, the table updates. If the user edits the timestamp numbers in the table, the box moves.
+**Locking Lifecycle:**
+
+*   User clicks chunk in ChannelPage → Lock acquired automatically
+*   User can unlock their own chunks without approving
+*   Chunks locked by others show orange warning chip
+
+**Critique:** Manual save prevents data loss from accidental changes. The navigation guard ensures users consciously decide whether to save or discard changes.
 
 ### 5.6 Frontend Navigation Architecture
 

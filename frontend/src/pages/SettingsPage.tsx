@@ -153,35 +153,21 @@ export function SettingsPage({ userId }: SettingsPageProps) {
                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="body2">Play / Pause</Typography>
-                                    <Chip label="Space" size="small" sx={{ fontFamily: 'monospace' }} />
+                                    <Chip label="Ctrl + Space" size="small" sx={{ fontFamily: 'monospace' }} />
                                 </Box>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="body2">Seek Backward 5s</Typography>
-                                    <Chip label="←" size="small" sx={{ fontFamily: 'monospace' }} />
+                                    <Chip label="Ctrl + ←" size="small" sx={{ fontFamily: 'monospace' }} />
                                 </Box>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="body2">Seek Forward 5s</Typography>
-                                    <Chip label="→" size="small" sx={{ fontFamily: 'monospace' }} />
+                                    <Chip label="Ctrl + →" size="small" sx={{ fontFamily: 'monospace' }} />
                                 </Box>
                                 <Divider />
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant="body2">Verify Selected Segment</Typography>
-                                    <Chip label="Enter" size="small" sx={{ fontFamily: 'monospace' }} />
+                                    <Typography variant="body2">Toggle Denoise Flag</Typography>
+                                    <Chip label="Ctrl + D" size="small" sx={{ fontFamily: 'monospace' }} />
                                 </Box>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant="body2">Reject Selected Segment</Typography>
-                                    <Chip label="Backspace" size="small" sx={{ fontFamily: 'monospace' }} />
-                                </Box>
-                                <Divider />
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant="body2">Navigate Up</Typography>
-                                    <Chip label="↑" size="small" sx={{ fontFamily: 'monospace' }} />
-                                </Box>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant="body2">Navigate Down</Typography>
-                                    <Chip label="↓" size="small" sx={{ fontFamily: 'monospace' }} />
-                                </Box>
-                                <Divider />
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="body2">Save Changes</Typography>
                                     <Chip label="Ctrl + S" size="small" sx={{ fontFamily: 'monospace' }} />

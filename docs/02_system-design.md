@@ -232,6 +232,13 @@ async def get_current_user(
 | `/api/videos/check?url=` | GET | Duplicate detection |
 | `/api/videos/{id}` | GET | Get video by ID |
 | `/api/videos/upload` | POST | Multipart file upload |
+| `/api/channels` | GET | List all channels |
+| `/api/channels/{id}` | GET | Get channel by ID |
+| `/api/channels` | POST | Create channel |
+| `/api/channels/by-url` | GET | Find channel by URL |
+| `/api/channels/stats` | GET | Get statistics for all channels |
+| `/api/channels/{id}/videos` | GET | Get videos for a channel |
+| `/api/stats` | GET | System-wide statistics |
 
 #### Chunks Router (`backend/routers/chunks.py`)
 
@@ -242,8 +249,10 @@ async def get_current_user(
 | `/api/chunks/{id}` | GET | Get chunk with video info |
 | `/api/chunks/{id}/lock` | POST | Acquire 30-min lock |
 | `/api/chunks/{id}/unlock` | POST | Release lock |
+| `/api/chunks/{id}/save` | POST | Batch save all segments |
 | `/api/chunks/{id}/flag-noise` | POST | Mark for denoising |
 | `/api/chunks/{id}/approve` | POST | Approve and release |
+| `/api/videos/{video_id}/chunks` | GET | List chunks for a video |
 
 #### Segments Router (`backend/routers/segments.py`)
 
@@ -315,13 +324,20 @@ Supports both `M:SS.mmm` and `H:MM:SS.mmm` formats.
 
 ```
 frontend/src/
-├── main.tsx          # Entry point, dark theme, React Query
-├── App.tsx           # User selector, routing
+├── main.tsx              # Entry point, dark theme, React Query
+├── App.tsx               # Tab navigation, user selector, state management
 ├── pages/
-│   └── WorkbenchPage.tsx    # Main annotation view
-└── components/
-    ├── WaveformViewer.tsx   # Wavesurfer.js
-    └── SegmentTable.tsx     # MUI DataGrid
+│   ├── DashboardPage.tsx     # System stats, channel list
+│   ├── ChannelPage.tsx       # Video list with accordion chunks
+│   ├── WorkbenchPage.tsx     # Annotation interface (waveform + segments)
+│   ├── ProcessingPage.tsx    # Chunking & Gemini processing controls
+│   ├── ExportPage.tsx        # Dataset export with overlap resolution
+│   └── SettingsPage.tsx      # Users, system info, keyboard shortcuts
+├── components/
+│   ├── WaveformViewer.tsx    # Wavesurfer.js with regions
+│   └── SegmentTable.tsx      # Custom editable table
+└── styles/
+    └── workbench.css         # Global styles, CSS variables
 ```
 
 ### 6.2 Technology Stack
@@ -330,44 +346,59 @@ frontend/src/
 |---------|---------|
 | `@tanstack/react-query` | Server state management, caching |
 | `@mui/material` | UI components, dark theme |
-| `@mui/x-data-grid` | Editable table for segments |
 | `wavesurfer.js` | Audio waveform visualization |
 | `axios` | HTTP client |
 
-### 6.3 WorkbenchPage Flow
+### 6.3 Navigation Flow
 
 ```mermaid
-flowchart TD
-    A[User selects from dropdown] --> B{Has current chunk?}
-    B -->|No| C[Fetch /api/chunks/next]
-    C --> D{Chunk available?}
-    D -->|Yes| E[Show Start Review button]
-    D -->|No| F["Show 'No pending work'"]
-    E --> G[User clicks Start Review]
-    G --> H["POST /api/chunks/{id}/lock"]
-    H --> I[Show Waveform + Segment Table]
-    I --> J[User edits segments]
-    J --> K["PUT /api/segments/{id}"]
-    K --> I
-    I --> L[User clicks Approve]
-    L --> M["POST /api/chunks/{id}/approve"]
-    M --> C
-    B -->|Yes| I
+flowchart LR
+    D[Dashboard] --> C[Channel]
+    C --> |Select Video| V[ChannelPage: Video List]
+    V --> |Click Chunk| W[WorkbenchPage]
+    W --> |Approve| V
+    D --> S[Settings]
+    D --> P[Processing]
+    D --> E[Export]
 ```
 
-### 6.4 WaveformViewer Component
+### 6.4 Page Descriptions
 
-Uses Wavesurfer.js with RegionsPlugin:
-- Displays audio waveform
-- Shows segments as colored regions (green = verified, blue = unverified)
-- Regions are draggable/resizable
-- Exposes `play()`, `pause()`, `seekTo()` via ref
+| Page | Purpose | Key Features |
+|------|---------|-------------|
+| **Dashboard** | Overview | System stats, channel list view with pending counts |
+| **Channel** | Video browser | Accordion expansion showing chunks, lock status, review buttons |
+| **Workbench** | Annotation | 3-zone layout (header, waveform, segment table), manual save |
+| **Processing** | Pipeline control | Chunking, Gemini transcription, queue status |
+| **Export** | Dataset generation | Overlap resolution, manifest.tsv output |
+| **Settings** | Configuration | Users list, system info, keyboard shortcuts reference |
 
-### 6.5 Keyboard Shortcuts
+### 6.5 WorkbenchPage Layout (3-Zone)
+
+```
+┌─────────────────────────────────────────────────────┐
+│ HEADER: Video title, chunk info, lock status, save  │
+├─────────────────────────────────────────────────────┤
+│ WAVEFORM: Audio visualization with segment regions  │
+│ ▶ ⏸ 🔊 timeline controls                            │
+├─────────────────────────────────────────────────────┤
+│ SEGMENT TABLE: Editable transcript/translation      │
+│ Columns: ☑ | ▶ | Start | End | Transcript | Trans  │
+│ [row 1]                                             │
+│ [row 2]                                             │
+│ ...                                                 │
+└─────────────────────────────────────────────────────┘
+```
+
+### 6.6 Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
 | `Ctrl+Space` | Play/Pause audio |
+| `Ctrl+←` | Seek backward 5 seconds |
+| `Ctrl+→` | Seek forward 5 seconds |
+| `Ctrl+D` | Toggle denoise flag |
+| `Ctrl+S` | Save changes |
 
 ---
 

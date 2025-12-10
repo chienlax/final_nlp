@@ -177,12 +177,21 @@ python -m backend.processing.gemini_worker --all 20
 
 ## 4. Annotation Workflow
 
-### 4.1 Starting Review
+### 4.1 Navigation Flow
 
-1. Open http://localhost:5173
-2. Select your user from dropdown
-3. Frontend automatically fetches next available chunk
-4. Click **Start Review** to acquire lock
+```mermaid
+flowchart TD
+    A[Dashboard] --> B[Click Channel Row]
+    B --> C[Channel Page: Video List]
+    C --> D[Expand Video Accordion]
+    D --> E[See Chunk List with Status]
+    E --> F{Chunk Status?}
+    F -->|Ready for Review| G[Click Review Button]
+    F -->|Locked by You| H[Click Review OR Unlock]
+    F -->|Locked by Other| I[Wait or Contact]
+    G --> J[WorkbenchPage Loads]
+    H --> J
+```
 
 ### 4.2 Chunk States
 
@@ -198,32 +207,59 @@ stateDiagram-v2
     APPROVED --> [*]
 ```
 
-### 4.3 Editing Segments
+### 4.3 Chunk Locking
+
+**Lock Ownership Features**:
+- **Locked by you**: Green chip, Review + Unlock buttons available
+- **Locked by others**: Orange chip, Review disabled
+- **Lock expiry**: 30 minutes auto-expire for crashed sessions
+
+**Unlocking**:
+- Click "Unlock" button on ChannelPage to release your lock
+- Useful when switching between chunks without approving
+
+### 4.4 No Chunk Selected
+
+If you navigate to the Annotation tab without selecting a chunk:
+- Warning message: "No video chunk selected"
+- "Back to Dashboard" button to navigate safely
+- Prevents accidental auto-assignment
+
+### 4.5 Editing Segments
 
 **Waveform Controls**:
 - Click region to select segment
 - Drag edges to adjust timestamps
-- `Ctrl+Space` to play/pause
+- `Space` to play/pause
+- `←`/`→` to seek 5 seconds
 
 **Table Controls**:
+- Click row to select and play segment
 - Edit transcript/translation inline
-- Click checkbox to verify segment
-- Click save icon to persist changes
+- Checkbox to verify segment
+- `Enter` to verify, `Backspace` to reject
 
-### 4.4 Flagging for Denoise
+### 4.6 Saving Changes
+
+**Manual Save** (no auto-save):
+- `Ctrl+S` or click "Save Changes" button
+- Unsaved indicator shows when changes pending
+- Navigation prompt if leaving with unsaved changes
+
+### 4.7 Flagging for Denoise
 
 If audio is noisy:
-1. Toggle "Flag for Denoise" switch
+1. Toggle "Flag for Denoise" switch in header
 2. Continue editing normally
 3. Night shift will process with DeepFilterNet
 
-### 4.5 Approving Chunk
+### 4.8 Approving Chunk
 
 When satisfied with all segments:
-1. Click **Approve & Next**
-2. Lock is released
-3. Chunk status → `APPROVED`
-4. Next chunk is automatically fetched
+1. Ensure all segments are verified (checkboxes)
+2. Click **Finish Review** button
+3. Lock is released, status → `APPROVED`
+4. Navigate back to Channel page
 
 ---
 
