@@ -252,3 +252,57 @@ def verify_segment(
     session.refresh(segment)
     
     return segment
+
+
+class BulkActionRequest(BaseModel):
+    """Request body for bulk segment operations."""
+    segment_ids: List[int]
+
+
+@router.post("/segments/bulk-verify")
+def bulk_verify_segments(
+    data: BulkActionRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """
+    Mark multiple segments as verified.
+    """
+    count = 0
+    for segment_id in data.segment_ids:
+        segment = session.get(Segment, segment_id)
+        if segment:
+            segment.is_verified = True
+            segment.updated_at = datetime.utcnow()
+            session.add(segment)
+            count += 1
+    
+    session.commit()
+    return {"message": f"Verified {count} segments", "count": count}
+
+
+@router.post("/segments/bulk-reject")
+def bulk_reject_segments(
+    data: BulkActionRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """
+    Mark multiple segments as unverified (rejected for now).
+    
+    Note: This ONLY sets is_verified=False, does NOT modify transcript/translation.
+    The original content is preserved for potential re-verification.
+    """
+    count = 0
+    for segment_id in data.segment_ids:
+        segment = session.get(Segment, segment_id)
+        if segment:
+            segment.is_verified = False
+            # DO NOT modify transcript/translation - preserve original content
+            segment.updated_at = datetime.utcnow()
+            session.add(segment)
+            count += 1
+    
+    session.commit()
+    return {"message": f"Unverified {count} segments", "count": count}
+

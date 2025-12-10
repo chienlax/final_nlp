@@ -11,6 +11,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
     Box,
     Button,
+    ButtonGroup,
     IconButton,
     Chip,
     Typography,
@@ -34,6 +35,7 @@ import {
     ZoomOut,
     Lock,
     SkipNext,
+    Speed,
 } from '@mui/icons-material'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
@@ -72,6 +74,8 @@ const api = axios.create({ baseURL: '/api' })
 interface WorkbenchPageProps {
     userId: number
     username: string
+    preselectedVideoId?: number | null
+    preselectedChunkId?: number | null
 }
 
 export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
@@ -83,6 +87,7 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
     const [currentTime, setCurrentTime] = useState(0)
     const [duration, setDuration] = useState(0)
     const [zoom, setZoom] = useState(1)
+    const [playbackRate, setPlaybackRate] = useState(1)  // Persisted across chunks
     const [activeSegmentId, setActiveSegmentId] = useState<number | null>(null)
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
     const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'info' }>({
@@ -93,6 +98,7 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
 
     // Refs
     const waveformRef = useRef<WaveformViewerRef>(null)
+    const saveAllRef = useRef<(() => void) | null>(null)  // Save function from SegmentTable
 
     // Configure axios with user ID
     useEffect(() => {
@@ -136,14 +142,33 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
         },
     })
 
-    // Flag for denoise mutation
+    // Flag for denoise mutation - TOGGLES based on API response
     const denoiseMutation = useMutation({
         mutationFn: (chunkId: number) => api.post(`/chunks/${chunkId}/flag-noise`),
-        onSuccess: () => {
+        onSuccess: (response) => {
             if (currentChunk) {
-                setCurrentChunk({ ...currentChunk, denoise_status: 'flagged' })
+                // Use actual status from API response
+                setCurrentChunk({ ...currentChunk, denoise_status: response.data.denoise_status })
             }
-            showSnackbar('Flagged for denoising', 'info')
+            showSnackbar(response.data.message, 'info')
+        },
+    })
+
+    // Global bulk verify ALL segments in current chunk
+    const bulkVerifyAllMutation = useMutation({
+        mutationFn: (segmentIds: number[]) => api.post('/segments/bulk-verify', { segment_ids: segmentIds }),
+        onSuccess: (response) => {
+            queryClient.invalidateQueries({ queryKey: ['segments', currentChunk?.id] })
+            showSnackbar(response.data.message, 'success')
+        },
+    })
+
+    // Global bulk reject ALL segments in current chunk  
+    const bulkRejectAllMutation = useMutation({
+        mutationFn: (segmentIds: number[]) => api.post('/segments/bulk-reject', { segment_ids: segmentIds }),
+        onSuccess: (response) => {
+            queryClient.invalidateQueries({ queryKey: ['segments', currentChunk?.id] })
+            showSnackbar(response.data.message, 'info')
         },
     })
 
@@ -314,6 +339,27 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
         )
     }
 
+    // Safety guard: Wait for segments to load before rendering workbench
+    if (currentChunk && loadingSegments) {
+        return (
+            <Box className="workbench-container" sx={{ justifyContent: 'center', alignItems: 'center' }}>
+                <CircularProgress size={60} />
+                <Typography sx={{ mt: 2 }}>Loading segments...</Typography>
+            </Box>
+        )
+    }
+
+    // Safety guard: Ensure audio path exists
+    if (!currentChunk?.audio_path) {
+        return (
+            <Box className="workbench-container" sx={{ justifyContent: 'center', alignItems: 'center' }}>
+                <Alert severity="error">
+                    <Typography>Error: No audio path available for this chunk.</Typography>
+                </Alert>
+            </Box>
+        )
+    }
+
     // Main workbench view
     return (
         <Box className="workbench-container">
@@ -384,12 +430,40 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
                     )}
                 </Box>
 
-                {/* Right: Save + Finish buttons */}
+                {/* Right: Global actions + Save + Finish buttons */}
                 <Box className="zone-header-right">
+                    {/* Global Verify All / Reject All */}
+                    <ButtonGroup size="small" sx={{ mr: 1 }}>
+                        <Button
+                            variant="outlined"
+                            color="success"
+                            onClick={() => bulkVerifyAllMutation.mutate(segments.map(s => s.id))}
+                            disabled={bulkVerifyAllMutation.isPending || segments.length === 0}
+                        >
+                            Verify All
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            color="error"
+                            onClick={() => bulkRejectAllMutation.mutate(segments.map(s => s.id))}
+                            disabled={bulkRejectAllMutation.isPending || segments.length === 0}
+                        >
+                            Reject All
+                        </Button>
+                    </ButtonGroup>
+
                     <Button
                         variant="outlined"
                         startIcon={<Save />}
                         disabled={!hasUnsavedChanges}
+                        onClick={() => {
+                            // Trigger manual save via SegmentTable's saveAllRef
+                            if (saveAllRef.current) {
+                                saveAllRef.current()
+                            }
+                            setHasUnsavedChanges(false)
+                            showSnackbar('Changes saved', 'success')
+                        }}
                     >
                         Save Changes
                     </Button>
@@ -447,6 +521,34 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
                         </IconButton>
                     </Tooltip>
 
+                    {/* Playback Speed Control */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mx: 1 }}>
+                        <Speed fontSize="small" sx={{ color: 'rgba(255,255,255,0.5)' }} />
+                        {[0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                            <Button
+                                key={rate}
+                                size="small"
+                                variant={playbackRate === rate ? 'contained' : 'text'}
+                                onClick={() => {
+                                    setPlaybackRate(rate)
+                                    waveformRef.current?.setPlaybackRate(rate)
+                                }}
+                                sx={{
+                                    minWidth: 40,
+                                    px: 1,
+                                    fontSize: 12,
+                                    bgcolor: playbackRate === rate ? 'primary.main' : 'transparent',
+                                    color: playbackRate === rate ? 'white' : 'rgba(255,255,255,0.6)',
+                                    '&:hover': {
+                                        bgcolor: playbackRate === rate ? 'primary.dark' : 'rgba(255,255,255,0.1)',
+                                    }
+                                }}
+                            >
+                                {rate}x
+                            </Button>
+                        ))}
+                    </Box>
+
                     <Box className="zoom-controls">
                         <IconButton onClick={() => setZoom(z => Math.max(1, z - 0.5))} disabled={zoom <= 1}>
                             <ZoomOut fontSize="small" />
@@ -456,10 +558,6 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
                             <ZoomIn fontSize="small" />
                         </IconButton>
                     </Box>
-
-                    <Typography variant="caption" sx={{ ml: 'auto', color: 'rgba(255,255,255,0.5)' }}>
-                        Ctrl+Space to play/pause
-                    </Typography>
                 </Box>
             </Box>
 
@@ -494,16 +592,10 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
                             onSegmentChange={handleSegmentChange}
                             onSegmentSaved={handleSegmentSaved}
                             onActiveChange={setActiveSegmentId}
+                            saveAllRef={saveAllRef}
                         />
                     )}
                 </Box>
-            </Box>
-
-            {/* Keyboard shortcuts hint */}
-            <Box className="shortcuts-panel">
-                <kbd>Ctrl</kbd>+<kbd>Space</kbd> Play/Pause &nbsp;|&nbsp;
-                <kbd>Ctrl</kbd>+<kbd>D</kbd> Denoise &nbsp;|&nbsp;
-                <kbd>Ctrl</kbd>+<kbd>→</kbd> Skip 5s
             </Box>
 
             {/* Snackbar notifications */}

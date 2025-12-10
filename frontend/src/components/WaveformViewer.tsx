@@ -43,6 +43,7 @@ export interface WaveformViewerRef {
     seekTo: (time: number) => void
     skip: (seconds: number) => void
     playRegion: (start: number, end: number) => void
+    setPlaybackRate: (rate: number) => void
     getRegionsPlugin: () => ReturnType<typeof RegionsPlugin.create> | null
 }
 
@@ -108,6 +109,11 @@ export const WaveformViewer = forwardRef<WaveformViewerRef, WaveformViewerProps>
                         }
                     }
                     wavesurferRef.current.on('audioprocess', checkEnd)
+                }
+            },
+            setPlaybackRate: (rate: number) => {
+                if (wavesurferRef.current) {
+                    wavesurferRef.current.setPlaybackRate(rate)
                 }
             },
             getRegionsPlugin: () => regionsRef.current,
@@ -197,10 +203,18 @@ export const WaveformViewer = forwardRef<WaveformViewerRef, WaveformViewerProps>
             }
         }, [audioUrl])
 
-        // Handle zoom changes
+        // Handle zoom changes - only zoom if audio is loaded
         useEffect(() => {
             if (wavesurferRef.current) {
-                wavesurferRef.current.zoom(zoom * 50)
+                // Check if audio is loaded before zooming
+                try {
+                    if (wavesurferRef.current.getDuration() > 0) {
+                        wavesurferRef.current.zoom(zoom * 50)
+                    }
+                } catch (e) {
+                    // Ignore zoom errors if audio not ready
+                    console.debug('Zoom skipped - audio not ready')
+                }
             }
         }, [zoom])
 
@@ -230,7 +244,7 @@ export const WaveformViewer = forwardRef<WaveformViewerRef, WaveformViewerProps>
                                 : COLORS.unverified,
                         drag: true,
                         resize: true,
-                        content: segment.transcript.substring(0, 30) + (segment.transcript.length > 30 ? '...' : ''),
+                        // No text content - keeps waveform clean
                     })
                 })
             }

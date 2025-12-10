@@ -1,16 +1,15 @@
 /**
- * Enhanced Segment Table Component
+ * Enhanced Segment Table Component - Refactored
  * 
- * Features:
- * - 2-second debounced auto-save
- * - Active row highlighting
- * - Keyboard navigation (Ctrl+Enter to save and next)
- * - Verify checkbox per row
- * - Unsaved changes indicator
- * - Bidirectional sync with waveform
+ * Changes from previous version:
+ * - Replaced renderCell TextFields with proper editable cells
+ * - Fixed checkbox click propagation
+ * - Added bulk operations (verify, reject)
+ * - Removed maxRows to show full text
+ * - Added selection mode
  */
 
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import {
     Box,
     IconButton,
@@ -18,13 +17,16 @@ import {
     TextField,
     Tooltip,
     Typography,
+    Button,
+    ButtonGroup,
 } from '@mui/material'
 import {
     PlayArrow as PlayIcon,
     CheckCircle,
     Circle,
+    Delete,
+    Check,
 } from '@mui/icons-material'
-import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 
@@ -48,6 +50,8 @@ interface SegmentTableProps {
     onSegmentChange?: () => void
     onSegmentSaved?: () => void
     onActiveChange?: (segmentId: number | null) => void
+    onSaveAll?: () => void  // Parent triggers this, we call saveAllChanges
+    saveAllRef?: React.MutableRefObject<(() => void) | null>  // Expose save function to parent
 }
 
 // Format time as M:SS.mmm
@@ -67,18 +71,6 @@ function parseTime(timeStr: string): number | null {
     return null
 }
 
-// Debounce hook
-function useDebounce<T>(value: T, delay: number): T {
-    const [debouncedValue, setDebouncedValue] = useState(value)
-
-    useEffect(() => {
-        const timer = setTimeout(() => setDebouncedValue(value), delay)
-        return () => clearTimeout(timer)
-    }, [value, delay])
-
-    return debouncedValue
-}
-
 export function SegmentTable({
     segments,
     chunkId,
@@ -87,14 +79,12 @@ export function SegmentTable({
     onSegmentChange,
     onSegmentSaved,
     onActiveChange,
+    saveAllRef,
 }: SegmentTableProps) {
     const queryClient = useQueryClient()
     const [editedRows, setEditedRows] = useState<Map<number, Partial<Segment>>>(new Map())
-    const [focusedRowId, setFocusedRowId] = useState<number | null>(null)
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
     const tableRef = useRef<HTMLDivElement>(null)
-
-    // Debounced edited rows for auto-save
-    const debouncedEditedRows = useDebounce(editedRows, 2000)
 
     // Update segment mutation
     const updateMutation = useMutation({
@@ -114,17 +104,42 @@ export function SegmentTable({
         },
     })
 
-    // Auto-save on debounced changes
-    useEffect(() => {
-        if (debouncedEditedRows.size > 0) {
-            debouncedEditedRows.forEach((changes, id) => {
+    // Bulk verify mutation
+    const bulkVerifyMutation = useMutation({
+        mutationFn: (ids: number[]) => api.post('/segments/bulk-verify', { segment_ids: ids }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['segments', chunkId] })
+            setSelectedIds(new Set())
+        },
+    })
+
+    // Bulk reject (mark as rejected) mutation
+    const bulkRejectMutation = useMutation({
+        mutationFn: (ids: number[]) => api.post('/segments/bulk-reject', { segment_ids: ids }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['segments', chunkId] })
+            setSelectedIds(new Set())
+        },
+    })
+
+    // Manual save function - called by parent via ref
+    const saveAllChanges = useCallback(() => {
+        if (editedRows.size > 0) {
+            editedRows.forEach((changes, id) => {
                 if (Object.keys(changes).length > 0) {
                     updateMutation.mutate({ id, ...changes })
                 }
             })
             setEditedRows(new Map())
         }
-    }, [debouncedEditedRows])
+    }, [editedRows, updateMutation])
+
+    // Expose save function to parent via ref
+    useEffect(() => {
+        if (saveAllRef) {
+            saveAllRef.current = saveAllChanges
+        }
+    }, [saveAllRef, saveAllChanges])
 
     // Handle cell edit
     const handleCellEdit = useCallback((id: number, field: string, value: string | number) => {
@@ -136,19 +151,6 @@ export function SegmentTable({
         })
         onSegmentChange?.()
     }, [onSegmentChange])
-
-    // Save specific row immediately
-    const handleSaveRow = useCallback((id: number) => {
-        const edited = editedRows.get(id)
-        if (edited) {
-            updateMutation.mutate({ id, ...edited })
-            setEditedRows(prev => {
-                const newMap = new Map(prev)
-                newMap.delete(id)
-                return newMap
-            })
-        }
-    }, [editedRows, updateMutation])
 
     // Get current value (edited or original)
     const getValue = useCallback((row: Segment, field: keyof Segment) => {
@@ -164,29 +166,33 @@ export function SegmentTable({
         return editedRows.has(id) && Object.keys(editedRows.get(id) || {}).length > 0
     }, [editedRows])
 
-    // Move to next row (Ctrl+Enter)
-    const moveToNextRow = useCallback((currentId: number) => {
-        const currentIndex = segments.findIndex(s => s.id === currentId)
-        if (currentIndex >= 0 && currentIndex < segments.length - 1) {
-            const nextSegment = segments[currentIndex + 1]
-            setFocusedRowId(nextSegment.id)
-            onActiveChange?.(nextSegment.id)
-        }
-    }, [segments, onActiveChange])
-
-    // Keyboard handler for table
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.ctrlKey && e.key === 'Enter' && focusedRowId) {
-                e.preventDefault()
-                handleSaveRow(focusedRowId)
-                moveToNextRow(focusedRowId)
+    // Selection handlers
+    const toggleSelect = useCallback((id: number, e: React.MouseEvent) => {
+        e.stopPropagation()
+        setSelectedIds(prev => {
+            const newSet = new Set(prev)
+            if (newSet.has(id)) {
+                newSet.delete(id)
+            } else {
+                newSet.add(id)
             }
-        }
+            return newSet
+        })
+    }, [])
 
-        tableRef.current?.addEventListener('keydown', handleKeyDown)
-        return () => tableRef.current?.removeEventListener('keydown', handleKeyDown)
-    }, [focusedRowId, handleSaveRow, moveToNextRow])
+    const selectAll = useCallback(() => {
+        if (selectedIds.size === segments.length) {
+            setSelectedIds(new Set())
+        } else {
+            setSelectedIds(new Set(segments.map(s => s.id)))
+        }
+    }, [segments, selectedIds.size])
+
+    // Handle verify checkbox click
+    const handleVerifyClick = useCallback((id: number, e: React.MouseEvent) => {
+        e.stopPropagation()
+        verifyMutation.mutate(id)
+    }, [verifyMutation])
 
     // Scroll active row into view
     useEffect(() => {
@@ -196,219 +202,240 @@ export function SegmentTable({
         }
     }, [activeSegmentId])
 
-    const columns: GridColDef[] = useMemo(() => [
-        {
-            field: 'is_verified',
-            headerName: '✓',
-            width: 50,
-            renderCell: (params: GridRenderCellParams<Segment>) => (
-                <Tooltip title={params.row.is_verified ? 'Verified' : 'Click to verify'}>
-                    <Checkbox
-                        checked={params.row.is_verified}
-                        onChange={() => verifyMutation.mutate(params.row.id)}
-                        size="small"
-                        icon={<Circle fontSize="small" sx={{ color: 'rgba(255,255,255,0.3)' }} />}
-                        checkedIcon={<CheckCircle fontSize="small" sx={{ color: '#4caf50' }} />}
-                    />
-                </Tooltip>
-            ),
-        },
-        {
-            field: 'play',
-            headerName: '',
-            width: 50,
-            sortable: false,
-            renderCell: (params: GridRenderCellParams<Segment>) => (
-                <IconButton
-                    size="small"
-                    onClick={() => onPlaySegment?.(
-                        params.row.start_time_relative,
-                        params.row.end_time_relative,
-                        params.row.id
-                    )}
-                    sx={{ color: activeSegmentId === params.row.id ? '#ffc107' : 'inherit' }}
-                >
-                    <PlayIcon fontSize="small" />
-                </IconButton>
-            ),
-        },
-        {
-            field: 'start_time_relative',
-            headerName: 'Start',
-            width: 100,
-            renderCell: (params: GridRenderCellParams<Segment>) => (
-                <TextField
-                    size="small"
-                    variant="standard"
-                    value={formatTime(getValue(params.row, 'start_time_relative') as number)}
-                    onChange={(e) => {
-                        const seconds = parseTime(e.target.value)
-                        if (seconds !== null) {
-                            handleCellEdit(params.row.id, 'start_time_relative', seconds)
-                        }
-                    }}
-                    onFocus={() => setFocusedRowId(params.row.id)}
-                    sx={{
-                        width: 90,
-                        '& input': {
-                            fontFamily: 'JetBrains Mono, monospace',
-                            fontSize: 13,
-                        }
-                    }}
-                />
-            ),
-        },
-        {
-            field: 'end_time_relative',
-            headerName: 'End',
-            width: 100,
-            renderCell: (params: GridRenderCellParams<Segment>) => (
-                <TextField
-                    size="small"
-                    variant="standard"
-                    value={formatTime(getValue(params.row, 'end_time_relative') as number)}
-                    onChange={(e) => {
-                        const seconds = parseTime(e.target.value)
-                        if (seconds !== null) {
-                            handleCellEdit(params.row.id, 'end_time_relative', seconds)
-                        }
-                    }}
-                    onFocus={() => setFocusedRowId(params.row.id)}
-                    sx={{
-                        width: 90,
-                        '& input': {
-                            fontFamily: 'JetBrains Mono, monospace',
-                            fontSize: 13,
-                        }
-                    }}
-                />
-            ),
-        },
-        {
-            field: 'transcript',
-            headerName: 'Transcript (VI/EN)',
-            flex: 1,
-            minWidth: 250,
-            renderCell: (params: GridRenderCellParams<Segment>) => (
-                <TextField
-                    size="small"
-                    variant="standard"
-                    fullWidth
-                    multiline
-                    maxRows={3}
-                    value={getValue(params.row, 'transcript') as string}
-                    onChange={(e) => handleCellEdit(params.row.id, 'transcript', e.target.value)}
-                    onFocus={() => setFocusedRowId(params.row.id)}
-                    placeholder="Original speech..."
-                    sx={{
-                        '& input, & textarea': { fontSize: 14 },
-                    }}
-                />
-            ),
-        },
-        {
-            field: 'translation',
-            headerName: 'Translation (EN)',
-            flex: 1,
-            minWidth: 250,
-            renderCell: (params: GridRenderCellParams<Segment>) => (
-                <TextField
-                    size="small"
-                    variant="standard"
-                    fullWidth
-                    multiline
-                    maxRows={3}
-                    value={getValue(params.row, 'translation') as string}
-                    onChange={(e) => handleCellEdit(params.row.id, 'translation', e.target.value)}
-                    onFocus={() => setFocusedRowId(params.row.id)}
-                    placeholder="English translation..."
-                    sx={{
-                        '& input, & textarea': { fontSize: 14 },
-                    }}
-                />
-            ),
-        },
-        {
-            field: 'status',
-            headerName: '',
-            width: 30,
-            sortable: false,
-            renderCell: (params: GridRenderCellParams<Segment>) => (
-                hasChanges(params.row.id) ? (
-                    <Tooltip title="Unsaved changes (auto-saves in 2s)">
-                        <Box
-                            sx={{
-                                width: 8,
-                                height: 8,
-                                borderRadius: '50%',
-                                bgcolor: '#2196f3',
-                                animation: 'pulse 2s infinite',
-                            }}
-                        />
-                    </Tooltip>
-                ) : null
-            ),
-        },
-    ], [activeSegmentId, editedRows, getValue, handleCellEdit, hasChanges, onPlaySegment, verifyMutation])
+    const allSelected = selectedIds.size === segments.length && segments.length > 0
 
     return (
-        <Box ref={tableRef} sx={{ height: '100%', width: '100%' }}>
-            <DataGrid
-                rows={segments}
-                columns={columns}
-                pageSizeOptions={[25, 50, 100]}
-                initialState={{
-                    pagination: { paginationModel: { pageSize: 25 } },
-                }}
-                disableRowSelectionOnClick
-                getRowHeight={() => 'auto'}
-                getRowClassName={(params) => {
-                    const classes = []
-                    if (params.row.id === activeSegmentId) classes.push('active-row')
-                    if (hasChanges(params.row.id)) classes.push('unsaved')
-                    return classes.join(' ')
-                }}
-                onRowClick={(params) => onActiveChange?.(params.row.id)}
-                sx={{
-                    border: 'none',
-                    '& .MuiDataGrid-cell': {
-                        py: 1.5,
-                        borderBottom: '1px solid rgba(255,255,255,0.05)',
-                    },
-                    '& .MuiDataGrid-columnHeaders': {
-                        bgcolor: 'rgba(0,0,0,0.3)',
-                        borderBottom: '1px solid rgba(255,255,255,0.1)',
-                    },
-                    '& .MuiDataGrid-row': {
-                        transition: 'background 0.2s',
-                    },
-                    '& .MuiDataGrid-row:hover': {
-                        bgcolor: 'rgba(255,255,255,0.05)',
-                    },
-                    '& .MuiDataGrid-row.active-row': {
-                        bgcolor: 'rgba(255, 193, 7, 0.1)',
-                        borderLeft: '3px solid #ffc107',
-                    },
-                    '& .MuiDataGrid-row.unsaved': {
-                        bgcolor: 'rgba(33, 150, 243, 0.08)',
-                    },
-                }}
-            />
-
-            {/* Keyboard hint */}
-            {focusedRowId && (
-                <Typography
-                    variant="caption"
-                    sx={{
-                        display: 'block',
-                        textAlign: 'right',
-                        mt: 1,
-                        color: 'rgba(255,255,255,0.4)'
-                    }}
-                >
-                    Ctrl+Enter to save and move to next row
-                </Typography>
+        <Box ref={tableRef} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            {/* Bulk operations toolbar */}
+            {selectedIds.size > 0 && (
+                <Box sx={{
+                    p: 1,
+                    bgcolor: 'rgba(33, 150, 243, 0.1)',
+                    borderBottom: '1px solid rgba(255,255,255,0.1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 2
+                }}>
+                    <Typography variant="body2">
+                        {selectedIds.size} selected
+                    </Typography>
+                    <ButtonGroup size="small">
+                        <Button
+                            startIcon={<Check />}
+                            onClick={() => bulkVerifyMutation.mutate(Array.from(selectedIds))}
+                            disabled={bulkVerifyMutation.isPending}
+                        >
+                            Verify Chosen
+                        </Button>
+                        <Button
+                            startIcon={<Delete />}
+                            onClick={() => bulkRejectMutation.mutate(Array.from(selectedIds))}
+                            disabled={bulkRejectMutation.isPending}
+                            color="error"
+                        >
+                            Reject Chosen
+                        </Button>
+                    </ButtonGroup>
+                </Box>
             )}
+
+            {/* Table header */}
+            <Box sx={{
+                display: 'grid',
+                gridTemplateColumns: '40px 40px 40px 90px 90px 1fr 1fr',
+                bgcolor: 'rgba(0,0,0,0.3)',
+                borderBottom: '1px solid rgba(255,255,255,0.1)',
+                py: 1,
+                px: 1,
+                fontSize: 13,
+                fontWeight: 600,
+                gap: 1,
+            }}>
+                <Box>
+                    <Checkbox
+                        size="small"
+                        checked={allSelected}
+                        indeterminate={selectedIds.size > 0 && !allSelected}
+                        onChange={selectAll}
+                    />
+                </Box>
+                <Box>✓</Box>
+                <Box></Box>
+                <Box>Start</Box>
+                <Box>End</Box>
+                <Box>Transcript (VI/EN)</Box>
+                <Box>Translation (EN)</Box>
+            </Box>
+
+            {/* Table body - scrollable */}
+            <Box sx={{ flex: 1, overflow: 'auto' }}>
+                {segments.map((segment) => {
+                    const isActive = segment.id === activeSegmentId
+                    const isSelected = selectedIds.has(segment.id)
+                    const hasUnsaved = hasChanges(segment.id)
+
+                    return (
+                        <Box
+                            key={segment.id}
+                            data-id={segment.id}
+                            onClick={() => onActiveChange?.(segment.id)}
+                            sx={{
+                                display: 'grid',
+                                gridTemplateColumns: '40px 40px 40px 90px 90px 1fr 1fr',
+                                py: 1.5,
+                                px: 1,
+                                gap: 1,
+                                borderBottom: '1px solid rgba(255,255,255,0.05)',
+                                cursor: 'pointer',
+                                transition: 'background 0.2s',
+                                bgcolor: isActive
+                                    ? 'rgba(255, 193, 7, 0.1)'
+                                    : hasUnsaved
+                                        ? 'rgba(33, 150, 243, 0.08)'
+                                        : 'transparent',
+                                borderLeft: isActive ? '3px solid #ffc107' : '3px solid transparent',
+                                '&:hover': {
+                                    bgcolor: isActive
+                                        ? 'rgba(255, 193, 7, 0.15)'
+                                        : 'rgba(255,255,255,0.05)',
+                                },
+                            }}
+                        >
+                            {/* Selection checkbox */}
+                            <Box onClick={(e) => toggleSelect(segment.id, e)}>
+                                <Checkbox
+                                    size="small"
+                                    checked={isSelected}
+                                />
+                            </Box>
+
+                            {/* Verify checkbox */}
+                            <Box onClick={(e) => handleVerifyClick(segment.id, e)}>
+                                <Tooltip title={segment.is_verified ? 'Verified' : 'Click to verify'}>
+                                    <Checkbox
+                                        checked={segment.is_verified}
+                                        size="small"
+                                        icon={<Circle fontSize="small" sx={{ color: 'rgba(255,255,255,0.3)' }} />}
+                                        checkedIcon={<CheckCircle fontSize="small" sx={{ color: '#4caf50' }} />}
+                                    />
+                                </Tooltip>
+                            </Box>
+
+                            {/* Play button */}
+                            <Box>
+                                <IconButton
+                                    size="small"
+                                    onClick={(e) => {
+                                        e.stopPropagation()
+                                        onPlaySegment?.(
+                                            segment.start_time_relative,
+                                            segment.end_time_relative,
+                                            segment.id
+                                        )
+                                    }}
+                                    sx={{ color: isActive ? '#ffc107' : 'inherit' }}
+                                >
+                                    <PlayIcon fontSize="small" />
+                                </IconButton>
+                            </Box>
+
+                            {/* Start time */}
+                            <Box>
+                                <TextField
+                                    size="small"
+                                    variant="standard"
+                                    value={formatTime(getValue(segment, 'start_time_relative') as number)}
+                                    onChange={(e) => {
+                                        const seconds = parseTime(e.target.value)
+                                        if (seconds !== null) {
+                                            handleCellEdit(segment.id, 'start_time_relative', seconds)
+                                        }
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    sx={{
+                                        width: 80,
+                                        '& input': {
+                                            fontFamily: 'JetBrains Mono, monospace',
+                                            fontSize: 13,
+                                        }
+                                    }}
+                                />
+                            </Box>
+
+                            {/* End time */}
+                            <Box>
+                                <TextField
+                                    size="small"
+                                    variant="standard"
+                                    value={formatTime(getValue(segment, 'end_time_relative') as number)}
+                                    onChange={(e) => {
+                                        const seconds = parseTime(e.target.value)
+                                        if (seconds !== null) {
+                                            handleCellEdit(segment.id, 'end_time_relative', seconds)
+                                        }
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    sx={{
+                                        width: 80,
+                                        '& input': {
+                                            fontFamily: 'JetBrains Mono, monospace',
+                                            fontSize: 13,
+                                        }
+                                    }}
+                                />
+                            </Box>
+
+                            {/* Transcript */}
+                            <Box>
+                                <TextField
+                                    size="small"
+                                    variant="standard"
+                                    fullWidth
+                                    multiline
+                                    value={getValue(segment, 'transcript') as string}
+                                    onChange={(e) => handleCellEdit(segment.id, 'transcript', e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    placeholder="Original speech..."
+                                    sx={{
+                                        '& textarea': { fontSize: 14, lineHeight: 1.5 },
+                                    }}
+                                />
+                            </Box>
+
+                            {/* Translation */}
+                            <Box>
+                                <TextField
+                                    size="small"
+                                    variant="standard"
+                                    fullWidth
+                                    multiline
+                                    value={getValue(segment, 'translation') as string}
+                                    onChange={(e) => handleCellEdit(segment.id, 'translation', e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    placeholder="English translation..."
+                                    sx={{
+                                        '& textarea': { fontSize: 14, lineHeight: 1.5 },
+                                    }}
+                                />
+                            </Box>
+                        </Box>
+                    )
+                })}
+            </Box>
+
+            {/* Footer with count */}
+            <Box sx={{
+                py: 1,
+                px: 2,
+                borderTop: '1px solid rgba(255,255,255,0.1)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: 13,
+                color: 'rgba(255,255,255,0.5)'
+            }}>
+                <span>{segments.length} segments</span>
+                <span>{segments.filter(s => s.is_verified).length} / {segments.length} verified</span>
+            </Box>
         </Box>
     )
 }

@@ -1,15 +1,20 @@
 /**
- * Main App Component
+ * Main App Component - 5-Tab Navigation System
  * 
- * Simplified layout for 3-zone workbench:
- * - No Container wrapper (workbench needs full viewport)
- * - Minimal top bar for user selection only
- * - Full-height workbench below
+ * Tabs:
+ * 1. Dashboard - Channel overview (gemini_ui_1)
+ * 2. Channel - Video list (gemini_ui_2) - Dynamic, appears when channel selected
+ * 3. Annotation - Workbench (gemini_ui_3, gemini_ui_4)
+ * 4. Processing - Denoise queue (gemini_ui_5)
+ * 5. Export - Export wizard (gemini_ui_7)
+ * 6. Settings - User/system config
  */
 
 import { useState, useEffect } from 'react'
 import {
     Box,
+    Tabs,
+    Tab,
     Select,
     MenuItem,
     FormControl,
@@ -19,10 +24,25 @@ import {
     Avatar,
     Chip,
 } from '@mui/material'
-import { Person } from '@mui/icons-material'
+import {
+    Dashboard as DashboardIcon,
+    VideoLibrary as ChannelIcon,
+    Edit as AnnotationIcon,
+    Tune as ProcessingIcon,
+    FileDownload as ExportIcon,
+    Settings as SettingsIcon,
+    Person,
+} from '@mui/icons-material'
 import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
+
+// Page imports
+import { DashboardPage } from './pages/DashboardPage'
+import { ChannelPage } from './pages/ChannelPage'
 import { WorkbenchPage } from './pages/WorkbenchPage'
+import { ProcessingPage } from './pages/ProcessingPage'
+import { ExportPage } from './pages/ExportPage'
+import { SettingsPage } from './pages/SettingsPage'
 
 // Types
 interface User {
@@ -31,6 +51,31 @@ interface User {
     role: string
 }
 
+interface Channel {
+    id: number
+    name: string
+    url: string
+}
+
+// Tab configuration
+type TabId = 'dashboard' | 'channel' | 'annotation' | 'processing' | 'export' | 'settings'
+
+interface TabConfig {
+    id: TabId
+    label: string
+    icon: React.ReactElement
+    dynamic?: boolean  // If true, only shows when condition is met
+}
+
+const TABS: TabConfig[] = [
+    { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
+    { id: 'channel', label: 'Channel', icon: <ChannelIcon />, dynamic: true },
+    { id: 'annotation', label: 'Annotation', icon: <AnnotationIcon /> },
+    { id: 'processing', label: 'Processing', icon: <ProcessingIcon /> },
+    { id: 'export', label: 'Export', icon: <ExportIcon /> },
+    { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
+]
+
 // API base
 const api = axios.create({
     baseURL: '/api',
@@ -38,6 +83,10 @@ const api = axios.create({
 
 function App() {
     const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
+    const [currentTab, setCurrentTab] = useState<TabId>('dashboard')
+    const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null)
+    const [selectedVideoId, setSelectedVideoId] = useState<number | null>(null)
+    const [selectedChunkId, setSelectedChunkId] = useState<number | null>(null)
 
     // Fetch users
     const { data: users, isLoading, error } = useQuery<User[]>({
@@ -61,20 +110,38 @@ function App() {
 
     const selectedUser = users?.find(u => u.id === selectedUserId)
 
+    // Navigation handlers
+    const handleChannelSelect = (channel: Channel) => {
+        setSelectedChannel(channel)
+        setCurrentTab('channel')
+    }
+
+    const handleVideoSelect = (videoId: number, chunkId?: number) => {
+        setSelectedVideoId(videoId)
+        if (chunkId) setSelectedChunkId(chunkId)
+        setCurrentTab('annotation')
+    }
+
+    const handleTabChange = (_: React.SyntheticEvent, newValue: TabId) => {
+        // If switching away from channel tab, clear channel selection
+        if (newValue !== 'channel') {
+            // Keep channel in case user wants to go back
+        }
+        setCurrentTab(newValue)
+    }
+
+    // Get visible tabs (filter out dynamic tabs when not active)
+    const visibleTabs = TABS.filter(tab => {
+        if (tab.dynamic && tab.id === 'channel') {
+            return selectedChannel !== null
+        }
+        return !tab.dynamic
+    })
+
     // Loading state
     if (isLoading) {
         return (
-            <Box
-                sx={{
-                    height: '100vh',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexDirection: 'column',
-                    gap: 2,
-                    background: 'linear-gradient(135deg, #0a1929 0%, #1a2f4a 100%)',
-                }}
-            >
+            <Box className="app-loading">
                 <CircularProgress size={48} />
                 <Typography>Loading application...</Typography>
             </Box>
@@ -84,16 +151,7 @@ function App() {
     // Error state
     if (error) {
         return (
-            <Box
-                sx={{
-                    height: '100vh',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: 'linear-gradient(135deg, #0a1929 0%, #1a2f4a 100%)',
-                    p: 4,
-                }}
-            >
+            <Box className="app-error">
                 <Alert severity="error" sx={{ maxWidth: 500 }}>
                     <Typography variant="h6" gutterBottom>Connection Error</Typography>
                     <Typography>
@@ -105,52 +163,26 @@ function App() {
         )
     }
 
-    // No user selected
+    // No user selected - User Selection Screen (gemini_ui_6)
     if (!selectedUserId) {
         return (
-            <Box
-                sx={{
-                    height: '100vh',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexDirection: 'column',
-                    gap: 3,
-                    background: 'linear-gradient(135deg, #0a1929 0%, #1a2f4a 100%)',
-                }}
-            >
+            <Box className="user-selection-screen">
                 <Typography variant="h4" gutterBottom>
                     🎙️ Speech Translation Workbench
                 </Typography>
-                <Typography color="text.secondary" sx={{ mb: 2 }}>
-                    Select your user profile to begin annotating
+                <Typography color="text.secondary" sx={{ mb: 3 }}>
+                    Select your user profile to begin
                 </Typography>
 
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center' }}>
+                <Box className="user-cards">
                     {users?.map(user => (
                         <Box
                             key={user.id}
+                            className="user-card"
                             onClick={() => setSelectedUserId(user.id)}
-                            sx={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                gap: 1,
-                                p: 3,
-                                borderRadius: 2,
-                                bgcolor: 'rgba(255,255,255,0.05)',
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s',
-                                minWidth: 120,
-                                '&:hover': {
-                                    bgcolor: 'rgba(255,255,255,0.1)',
-                                    transform: 'translateY(-2px)',
-                                }
-                            }}
                         >
-                            <Avatar sx={{ width: 56, height: 56, bgcolor: 'primary.main' }}>
-                                <Person />
+                            <Avatar sx={{ width: 64, height: 64, bgcolor: 'primary.main' }}>
+                                <Person sx={{ fontSize: 32 }} />
                             </Avatar>
                             <Typography fontWeight={600}>{user.username}</Typography>
                             <Chip
@@ -165,27 +197,50 @@ function App() {
         )
     }
 
-    // Main app with workbench
+    // Main app with tab navigation
     return (
-        <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-            {/* Minimal top bar */}
-            <Box
-                sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    px: 2,
-                    py: 1,
-                    bgcolor: 'rgba(0,0,0,0.3)',
-                    borderBottom: '1px solid rgba(255,255,255,0.1)',
-                }}
-            >
-                <Typography variant="h6" sx={{ fontWeight: 600, fontSize: 16 }}>
-                    🎙️ Speech Translation Workbench
-                </Typography>
+        <Box className="app-container">
+            {/* Header with tabs and user selector */}
+            <Box className="app-header">
+                <Box className="header-left">
+                    <Typography variant="h6" className="app-title">
+                        🎙️ Speech Translation
+                    </Typography>
+                </Box>
 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <FormControl size="small" sx={{ minWidth: 140 }}>
+                <Box className="header-tabs">
+                    <Tabs
+                        value={currentTab}
+                        onChange={handleTabChange}
+                        textColor="inherit"
+                        TabIndicatorProps={{
+                            style: { backgroundColor: '#90caf9', height: 3 }
+                        }}
+                    >
+                        {visibleTabs.map(tab => (
+                            <Tab
+                                key={tab.id}
+                                value={tab.id}
+                                icon={tab.icon}
+                                iconPosition="start"
+                                label={tab.id === 'channel' && selectedChannel
+                                    ? selectedChannel.name
+                                    : tab.label
+                                }
+                                sx={{
+                                    minHeight: 56,
+                                    textTransform: 'none',
+                                    fontSize: 14,
+                                    fontWeight: 500,
+                                    gap: 0.5,
+                                }}
+                            />
+                        ))}
+                    </Tabs>
+                </Box>
+
+                <Box className="header-right">
+                    <FormControl size="small" sx={{ minWidth: 120 }}>
                         <Select
                             value={selectedUserId}
                             onChange={(e) => setSelectedUserId(Number(e.target.value))}
@@ -210,12 +265,44 @@ function App() {
                 </Box>
             </Box>
 
-            {/* Full-height workbench */}
-            <Box sx={{ flex: 1, minHeight: 0 }}>
-                <WorkbenchPage
-                    userId={selectedUserId}
-                    username={selectedUser?.username || 'User'}
-                />
+            {/* Tab content area */}
+            <Box className="app-content">
+                {currentTab === 'dashboard' && (
+                    <DashboardPage
+                        userId={selectedUserId}
+                        onChannelSelect={handleChannelSelect}
+                    />
+                )}
+
+                {currentTab === 'channel' && selectedChannel && (
+                    <ChannelPage
+                        userId={selectedUserId}
+                        channel={selectedChannel}
+                        onVideoSelect={handleVideoSelect}
+                        onBack={() => setCurrentTab('dashboard')}
+                    />
+                )}
+
+                {currentTab === 'annotation' && (
+                    <WorkbenchPage
+                        userId={selectedUserId}
+                        username={selectedUser?.username || 'User'}
+                        preselectedVideoId={selectedVideoId}
+                        preselectedChunkId={selectedChunkId}
+                    />
+                )}
+
+                {currentTab === 'processing' && (
+                    <ProcessingPage userId={selectedUserId} />
+                )}
+
+                {currentTab === 'export' && (
+                    <ExportPage userId={selectedUserId} />
+                )}
+
+                {currentTab === 'settings' && (
+                    <SettingsPage userId={selectedUserId} />
+                )}
             </Box>
         </Box>
     )

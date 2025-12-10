@@ -873,6 +873,64 @@ To prevent data loss:
 
 **Critique:** This design minimizes complex math on the client. By mapping the database ID directly to the Wavesurfer Region ID, we create a robust 1:1 link. If the user drags a box, the table updates. If the user edits the timestamp numbers in the table, the box moves.
 
+### 5.6 Frontend Navigation Architecture
+
+The application uses a **5-Tab Navigation System** with horizontal tabs in the header. Each tab corresponds to a distinct functional area.
+
+#### Tab Structure
+
+| Tab | Page Component | Mockup Reference | Description |
+| :--- | :--- | :--- | :--- |
+| **Dashboard** | `DashboardPage.tsx` | gemini_ui_1 | Channel overview with stats, system metrics |
+| **Channel** | `ChannelPage.tsx` | gemini_ui_2 | Video list (dynamic tab, appears when channel selected) |
+| **Annotation** | `WorkbenchPage.tsx` | gemini_ui_3, gemini_ui_4 | Waveform + segment editing workbench |
+| **Processing** | `ProcessingPage.tsx` | gemini_ui_5 | Denoise queue management, batch processing |
+| **Export** | `ExportPage.tsx` | gemini_ui_7 | Dataset export configuration, progress |
+| **Settings** | `SettingsPage.tsx` | - | User management, system info |
+
+#### Navigation Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  User Selection Screen (gemini_ui_6)                             │
+│  → Select user profile to login                                  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Main App with Tab Navigation                                    │
+├─────────────────────────────────────────────────────────────────┤
+│  [Dashboard] [Channel*] [Annotation] [Processing] [Export] [Settings] │
+└─────────────────────────────────────────────────────────────────┘
+        │            │              │            │          │
+        ▼            │              ▼            ▼          ▼
+   Channel Grid      │         Workbench    Queue Table   Export
+   + Stats Panel     │                                    Config
+        │            │
+        ▼ (click)    │
+   ─────────────────►│
+   Opens Channel Tab │◄── Shows video list for selected channel
+                     │
+                     ▼ (click video)
+                  Opens Annotation tab with video preloaded
+```
+
+*The Channel tab is **dynamic** - it only appears when a channel is selected from Dashboard.
+
+#### State Management
+
+The `App.tsx` component manages:
+- `currentTab`: Active tab identifier
+- `selectedChannel`: Currently selected channel for Channel tab
+- `selectedVideoId` / `selectedChunkId`: Preselection for cross-tab navigation
+
+#### Cross-Tab Navigation
+
+The following callbacks enable seamless navigation between tabs:
+
+1. **Dashboard → Channel**: `onChannelSelect(channel)` → Sets channel, switches to Channel tab
+2. **Channel → Annotation**: `onVideoSelect(videoId)` → Sets video, switches to Annotation tab
+
 ---
 
 ## 6. Operations: The "Night Shift" & Export

@@ -148,10 +148,15 @@ def get_next_chunk(
         )
     
     # 2. Find next available chunk
-    # Status is REVIEW_READY, and Lock is NULL (or expired)
+    # Status is REVIEW_READY or IN_REVIEW (for resuming), and Lock is NULL (or expired)
     stmt = (
         select(Chunk)
-        .where(Chunk.status == ProcessingStatus.REVIEW_READY)
+        .where(
+            or_(
+                Chunk.status == ProcessingStatus.REVIEW_READY,
+                Chunk.status == ProcessingStatus.IN_REVIEW
+            )
+        )
         .where(
             or_(
                 Chunk.locked_by_user_id == None,
@@ -280,21 +285,29 @@ def unlock_chunk(
 
 
 @router.post("/chunks/{chunk_id}/flag-noise", response_model=FlagNoiseResponse)
-def flag_chunk_for_denoise(
+def toggle_chunk_denoise(
     chunk_id: int,
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
     """
-    Mark a chunk for denoising by the night shift.
+    Toggle denoise flag on a chunk.
     
-    Sets denoise_status to FLAGGED.
+    If FLAGGED -> NOT_NEEDED
+    If NOT_NEEDED or PROCESSED -> FLAGGED
     """
     chunk = session.get(Chunk, chunk_id)
     if not chunk:
         raise HTTPException(status_code=404, detail="Chunk not found")
     
-    chunk.denoise_status = DenoiseStatus.FLAGGED
+    # Toggle logic
+    if chunk.denoise_status == DenoiseStatus.FLAGGED:
+        chunk.denoise_status = DenoiseStatus.NOT_NEEDED
+        message = "Denoise flag removed"
+    else:
+        chunk.denoise_status = DenoiseStatus.FLAGGED
+        message = "Chunk flagged for denoising"
+    
     session.add(chunk)
     session.commit()
     session.refresh(chunk)
@@ -302,7 +315,7 @@ def flag_chunk_for_denoise(
     return FlagNoiseResponse(
         chunk_id=chunk.id,
         denoise_status=chunk.denoise_status,
-        message="Chunk flagged for denoising"
+        message=message
     )
 
 
