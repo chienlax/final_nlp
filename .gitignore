@@ -57,3 +57,4 @@ data/
 frontend/node_modules/
 frontend/package-lock.json
 docs/*.pdf
+docs/*.html
