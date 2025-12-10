@@ -32,7 +32,7 @@
       * **Global Constants:** Adhere to project standards (16kHz, Mono, `.wav`).
       * **Validation:** Validate all paths and inputs before processing.
       * **Atomic Operations:** When updating the database and file system, ensure operations are ordered to prevent "Ghost Files" (DB says file exists, disk says no).
-
+      * **Terminal Running:** When running the terminal command, always make sure the virtual environment is activated (if it exist in the workspace) so that there will be no error due to missing library.
 -----
 
 ## 2\. Project Architecture & Context

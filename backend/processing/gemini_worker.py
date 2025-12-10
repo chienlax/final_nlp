@@ -24,6 +24,10 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from itertools import cycle
 
+# Load .env file BEFORE importing anything else that uses env vars
+from dotenv import load_dotenv
+load_dotenv()
+
 import google.generativeai as genai
 from sqlmodel import Session, select
 

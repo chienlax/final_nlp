@@ -66,6 +66,23 @@ class FlagNoiseResponse(BaseModel):
     message: str
 
 
+class ChunkListResponse(BaseModel):
+    """Chunk response for video chunk list with lock owner info."""
+    id: int
+    video_id: int
+    chunk_index: int
+    audio_path: str
+    status: ProcessingStatus
+    denoise_status: DenoiseStatus
+    locked_by_user_id: Optional[int]
+    locked_by_username: Optional[str] = None
+    lock_expires_at: Optional[datetime]
+    segment_count: int = 0
+    
+    class Config:
+        from_attributes = True
+
+
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
@@ -111,16 +128,75 @@ def list_chunks(
     return chunks
 
 
+@router.get("/videos/{video_id}/chunks", response_model=List[ChunkListResponse])
+def get_video_chunks(
+    video_id: int,
+    session: Session = Depends(get_session)
+):
+    """
+    List all chunks for a specific video with lock owner info.
+    
+    Used by ChannelPage accordion to show chunk list with status/lock details.
+    """
+    from sqlalchemy import func
+    from backend.db.models import Segment
+    
+    # Check video exists
+    video = session.get(Video, video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    chunks = session.exec(
+        select(Chunk)
+        .where(Chunk.video_id == video_id)
+        .order_by(Chunk.chunk_index)
+    ).all()
+    
+    now = datetime.utcnow()
+    results = []
+    
+    for chunk in chunks:
+        # Get lock owner username if locked and not expired
+        locked_username = None
+        if chunk.locked_by_user_id and chunk.lock_expires_at and chunk.lock_expires_at > now:
+            locker = session.get(User, chunk.locked_by_user_id)
+            locked_username = locker.username if locker else None
+        
+        # Count segments
+        seg_count = session.exec(
+            select(func.count(Segment.id)).where(Segment.chunk_id == chunk.id)
+        ).one()
+        
+        results.append(ChunkListResponse(
+            id=chunk.id,
+            video_id=chunk.video_id,
+            chunk_index=chunk.chunk_index,
+            audio_path=chunk.audio_path,
+            status=chunk.status,
+            denoise_status=chunk.denoise_status,
+            locked_by_user_id=chunk.locked_by_user_id if locked_username else None,
+            locked_by_username=locked_username,
+            lock_expires_at=chunk.lock_expires_at if locked_username else None,
+            segment_count=seg_count
+        ))
+    
+    return results
+
+
 @router.get("/chunks/next", response_model=Optional[ChunkDetailResponse])
 def get_next_chunk(
+    video_id: Optional[int] = Query(None, description="Filter by video ID"),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
     """
     Get the next available chunk for annotation.
     
+    Args:
+        video_id: Optional filter to get chunks only from a specific video.
+    
     Priority:
-    1. Return user's currently locked chunk (resume work)
+    1. Return user's currently locked chunk (resume work) - respects video_id filter
     2. Return first unlocked REVIEW_READY chunk
     
     Ghost Lock: Treats expired locks as NULL.
@@ -128,12 +204,15 @@ def get_next_chunk(
     now = datetime.utcnow()
     
     # 1. Check if user has an existing lock (unfinished work)
-    existing = session.exec(
-        select(Chunk).where(
-            Chunk.locked_by_user_id == current_user.id,
-            Chunk.lock_expires_at > now
-        )
-    ).first()
+    existing_stmt = select(Chunk).where(
+        Chunk.locked_by_user_id == current_user.id,
+        Chunk.lock_expires_at > now
+    )
+    # Filter by video_id if specified
+    if video_id is not None:
+        existing_stmt = existing_stmt.where(Chunk.video_id == video_id)
+    
+    existing = session.exec(existing_stmt).first()
     
     if existing:
         video = session.get(Video, existing.video_id)
@@ -163,8 +242,13 @@ def get_next_chunk(
                 Chunk.lock_expires_at < now
             )
         )
-        .order_by(Chunk.video_id, Chunk.chunk_index)
     )
+    
+    # Filter by video_id if specified
+    if video_id is not None:
+        stmt = stmt.where(Chunk.video_id == video_id)
+    
+    stmt = stmt.order_by(Chunk.video_id, Chunk.chunk_index)
     
     chunk = session.exec(stmt).first()
     

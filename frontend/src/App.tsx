@@ -223,10 +223,7 @@ function App() {
                                 value={tab.id}
                                 icon={tab.icon}
                                 iconPosition="start"
-                                label={tab.id === 'channel' && selectedChannel
-                                    ? selectedChannel.name
-                                    : tab.label
-                                }
+                                label={tab.label}
                                 sx={{
                                     minHeight: 56,
                                     textTransform: 'none',

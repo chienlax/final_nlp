@@ -78,7 +78,7 @@ interface WorkbenchPageProps {
     preselectedChunkId?: number | null
 }
 
-export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
+export function WorkbenchPage({ userId, username, preselectedVideoId, preselectedChunkId }: WorkbenchPageProps) {
     const queryClient = useQueryClient()
 
     // State
@@ -105,12 +105,30 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
         api.defaults.headers.common['X-User-ID'] = userId.toString()
     }, [userId])
 
-    // Fetch next available chunk
-    const { data: nextChunk, isLoading: loadingNext, refetch: refetchNext } = useQuery<Chunk | null>({
-        queryKey: ['chunks', 'next', userId],
-        queryFn: () => api.get('/chunks/next').then(res => res.data),
-        enabled: !currentChunk,
+    // Fetch specific chunk if preselectedChunkId is provided
+    const { data: preselectedChunk, isLoading: loadingPreselected } = useQuery<Chunk | null>({
+        queryKey: ['chunk', preselectedChunkId],
+        queryFn: () => api.get(`/chunks/${preselectedChunkId}`).then(res => res.data),
+        enabled: !!preselectedChunkId && !currentChunk,
     })
+
+    // Fetch next available chunk - only if no preselectedChunkId
+    const { data: nextChunk, isLoading: loadingNext, refetch: refetchNext } = useQuery<Chunk | null>({
+        queryKey: ['chunks', 'next', userId, preselectedVideoId],
+        queryFn: () => {
+            const params = new URLSearchParams()
+            if (preselectedVideoId) {
+                params.append('video_id', preselectedVideoId.toString())
+            }
+            const url = params.toString() ? `/chunks/next?${params}` : '/chunks/next'
+            return api.get(url).then(res => res.data)
+        },
+        enabled: !currentChunk && !preselectedChunkId,
+    })
+
+    // Use preselected chunk or next chunk
+    const effectiveNextChunk = preselectedChunkId ? preselectedChunk : nextChunk
+    const loadingChunk = preselectedChunkId ? loadingPreselected : loadingNext
 
     // Fetch segments for current chunk
     const { data: segments = [], isLoading: loadingSegments, refetch: refetchSegments } = useQuery<Segment[]>({
@@ -283,17 +301,17 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
     // ==========================================================================
 
     // Loading state
-    if (loadingNext && !currentChunk) {
+    if (loadingChunk && !currentChunk) {
         return (
             <Box className="workbench-container" sx={{ justifyContent: 'center', alignItems: 'center' }}>
                 <CircularProgress size={60} />
-                <Typography sx={{ mt: 2 }}>Loading next chunk...</Typography>
+                <Typography sx={{ mt: 2 }}>Loading chunk...</Typography>
             </Box>
         )
     }
 
     // No work available
-    if (!currentChunk && !nextChunk) {
+    if (!currentChunk && !effectiveNextChunk) {
         return (
             <Box className="workbench-container" sx={{ justifyContent: 'center', alignItems: 'center' }}>
                 <Alert severity="success" sx={{ maxWidth: 400 }}>
@@ -305,7 +323,7 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
     }
 
     // Start review prompt
-    if (!currentChunk && nextChunk) {
+    if (!currentChunk && effectiveNextChunk) {
         return (
             <Box className="workbench-container" sx={{ justifyContent: 'center', alignItems: 'center' }}>
                 <Box sx={{
@@ -319,16 +337,16 @@ export function WorkbenchPage({ userId, username }: WorkbenchPageProps) {
                         Ready to Review
                     </Typography>
                     <Typography variant="h6" color="primary" gutterBottom>
-                        {nextChunk.video_title}
+                        {effectiveNextChunk.video_title}
                     </Typography>
                     <Typography color="text.secondary" gutterBottom>
-                        Chunk {nextChunk.chunk_index + 1} of {nextChunk.total_chunks}
+                        Chunk {effectiveNextChunk.chunk_index + 1} of {effectiveNextChunk.total_chunks}
                     </Typography>
                     <Button
                         variant="contained"
                         size="large"
                         startIcon={<PlayArrow />}
-                        onClick={() => startChunk(nextChunk)}
+                        onClick={() => startChunk(effectiveNextChunk)}
                         disabled={lockMutation.isPending}
                         sx={{ mt: 2 }}
                     >

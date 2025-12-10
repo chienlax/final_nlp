@@ -738,17 +738,18 @@ class IngestGUI:
                     if not result or not result.file_path:
                         raise Exception("Download returned no file")
                     
-                    # Get or create channel for this video
+                    # Get or create channel for THIS SPECIFIC VIDEO
+                    # CRITICAL: Always use each video's own channel metadata,
+                    # NOT the cached detected_channel from first video
                     channel_id = None
-                    if self.detected_channel:
-                        channel_id = self.detected_channel["id"]
-                    elif result.channel_url:
+                    if result.channel_url:
                         ch = get_or_create_channel(result.channel_name or "Unknown", result.channel_url)
                         if ch:
                             channel_id = ch["id"]
+                            self._log(f"  → Channel: {ch['name']}")
                     
                     if not channel_id:
-                        raise Exception("Could not determine channel")
+                        raise Exception("Could not determine channel from video metadata")
                     
                     # Upload
                     self.root.after(0, lambda it=item: self.tree.set(it, "status", "⏳ Uploading..."))

@@ -245,11 +245,15 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
     if len(sys.argv) > 1:
-        video_id = int(sys.argv[1])
-        chunk_video(video_id)
+        if sys.argv[1] == "--all":
+            # Process all pending videos
+            total = chunk_all_pending()
+            print(f"Created {total} chunks total")
+        else:
+            # Process specific video by ID
+            video_id = int(sys.argv[1])
+            chunk_video(video_id)
     else:
         print("Usage: python chunker.py <video_id>")
         print("       python chunker.py --all")
-        
-        if "--all" in sys.argv:
-            chunk_all_pending()
+

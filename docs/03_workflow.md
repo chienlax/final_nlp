@@ -161,7 +161,7 @@ After chunking, send to Gemini for transcription:
 python -m backend.processing.gemini_worker 1
 
 # Process up to 10 pending chunks
-python -m backend.processing.gemini_worker --all 10
+python -m backend.processing.gemini_worker --all 20 
 ```
 
 **What happens**:
