@@ -386,7 +386,8 @@ Uses Wavesurfer.js with RegionsPlugin:
 ```python
 {
     'format': 'bestaudio/best',
-    'format_sort': ['lang=vi', 'orig'],  # Vietnamese audio priority
+    # CRITICAL: Use colon (:) syntax, not equals (=)!
+    'format_sort': ['lang:vi', 'acodec:aac', 'abr'],
     'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'm4a'}],
     'writeinfojson': True,
 }

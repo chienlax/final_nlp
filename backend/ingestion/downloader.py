@@ -38,14 +38,17 @@ def get_yt_dlp_config(output_dir: Path, video_id: str) -> Dict[str, Any]:
         
     Returns:
         yt-dlp options dictionary
+        
+    Note:
+        format_sort uses colon syntax for preferences (field:value).
+        See: https://github.com/yt-dlp/yt-dlp#sorting-formats
     """
     return {
         # Format Selection:
-        # Prioritize Vietnamese audio ('lang=vi')
-        # If not found, prioritize 'original' source ('orig')
-        # Fallback to best audio available
+        # Prioritize Vietnamese audio, then best audio codec
+        # format_sort syntax: field:preference (COLON, not equals!)
         'format': 'bestaudio/best',
-        'format_sort': ['lang=vi', 'orig', 'res:128'],
+        'format_sort': ['lang:vi', 'acodec:aac', 'abr'],
         
         # Output Template:
         'outtmpl': str(output_dir / f'{video_id}.%(ext)s'),
