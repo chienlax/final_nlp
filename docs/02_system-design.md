@@ -342,15 +342,15 @@ flowchart TD
     B -->|No| C[Fetch /api/chunks/next]
     C --> D{Chunk available?}
     D -->|Yes| E[Show Start Review button]
-    D -->|No| F[Show 'No pending work']
+    D -->|No| F["Show 'No pending work'"]
     E --> G[User clicks Start Review]
-    G --> H[POST /api/chunks/{id}/lock]
+    G --> H["POST /api/chunks/{id}/lock"]
     H --> I[Show Waveform + Segment Table]
     I --> J[User edits segments]
-    J --> K[PUT /api/segments/{id}]
+    J --> K["PUT /api/segments/{id}"]
     K --> I
     I --> L[User clicks Approve]
-    L --> M[POST /api/chunks/{id}/approve]
+    L --> M["POST /api/chunks/{id}/approve"]
     M --> C
     B -->|Yes| I
 ```
