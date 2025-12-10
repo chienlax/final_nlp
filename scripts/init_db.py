@@ -23,8 +23,8 @@ def seed_users(session: Session) -> None:
     """Create default annotator accounts."""
     default_users = [
         {"username": "Chien", "role": UserRole.ADMIN},
-        {"username": "Dat", "role": UserRole.ANNOTATOR},
-        {"username": "Alice", "role": UserRole.ANNOTATOR},
+        {"username": "May", "role": UserRole.ANNOTATOR},
+        {"username": "VeeAnh", "role": UserRole.ANNOTATOR},
     ]
     
     for user_data in default_users:

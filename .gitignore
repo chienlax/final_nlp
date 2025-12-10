@@ -54,3 +54,6 @@ database_data/
 *.db-shm
 *.db-wal
 data/
+frontend/node_modules/
+frontend/package-lock.json
+docs/*.pdf

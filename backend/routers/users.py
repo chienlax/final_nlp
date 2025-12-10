@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 from pydantic import BaseModel
 
 from backend.db.engine import get_session
-from backend.db.models import User, UserRole
+from backend.db.models import User, UserRole, Channel
 
 
 router = APIRouter()
@@ -24,6 +24,15 @@ class UserResponse(BaseModel):
     id: int
     username: str
     role: UserRole
+    
+    class Config:
+        from_attributes = True
+
+
+class ChannelResponse(BaseModel):
+    """Channel response schema."""
+    id: int
+    name: str
     
     class Config:
         from_attributes = True
@@ -52,3 +61,14 @@ def get_user(user_id: int, session: Session = Depends(get_session)):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+@router.get("/channels", response_model=List[ChannelResponse])
+def list_channels(session: Session = Depends(get_session)):
+    """
+    List all YouTube source channels.
+    
+    Used by ingestion GUI dropdown for channel selection.
+    """
+    channels = session.exec(select(Channel).order_by(Channel.name)).all()
+    return channels

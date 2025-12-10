@@ -34,7 +34,6 @@ from backend.ingestion.downloader import (
     download_audio,
     VideoMetadata
 )
-from backend.db.engine import DATA_ROOT
 
 
 # =============================================================================
@@ -42,6 +41,7 @@ from backend.db.engine import DATA_ROOT
 # =============================================================================
 
 API_BASE = os.getenv("API_BASE", "http://localhost:8000/api")
+DATA_ROOT = Path(os.getenv("DATA_ROOT", "./data"))
 TEMP_DIR = DATA_ROOT / "temp"
 
 
@@ -62,7 +62,10 @@ def get_users() -> List[dict]:
     """Fetch user list from API."""
     try:
         resp = requests.get(f"{API_BASE}/users")
-        return resp.json()
+        resp.raise_for_status()
+        data = resp.json()
+        # Defensive: ensure it's a list
+        return data if isinstance(data, list) else []
     except Exception:
         return []
 
@@ -71,7 +74,12 @@ def get_channels() -> List[dict]:
     """Fetch channel list from API."""
     try:
         resp = requests.get(f"{API_BASE}/channels")
-        return resp.json()
+        resp.raise_for_status()
+        data = resp.json()
+        # Defensive: ensure it's a list
+        if isinstance(data, list) and len(data) > 0:
+            return data
+        return [{"id": 1, "name": "Default"}]
     except Exception:
         return [{"id": 1, "name": "Default"}]
 
