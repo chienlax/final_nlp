@@ -141,6 +141,56 @@ export function SettingsPage({ userId }: SettingsPageProps) {
                     </Card>
                 </Grid>
 
+                {/* Keyboard Shortcuts Panel */}
+                <Grid item xs={12} md={6}>
+                    <Card className="settings-card">
+                        <CardContent>
+                            <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                ⌨️ Keyboard Shortcuts
+                            </Typography>
+                            <Divider sx={{ mb: 2 }} />
+
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="body2">Play / Pause</Typography>
+                                    <Chip label="Space" size="small" sx={{ fontFamily: 'monospace' }} />
+                                </Box>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="body2">Seek Backward 5s</Typography>
+                                    <Chip label="←" size="small" sx={{ fontFamily: 'monospace' }} />
+                                </Box>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="body2">Seek Forward 5s</Typography>
+                                    <Chip label="→" size="small" sx={{ fontFamily: 'monospace' }} />
+                                </Box>
+                                <Divider />
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="body2">Verify Selected Segment</Typography>
+                                    <Chip label="Enter" size="small" sx={{ fontFamily: 'monospace' }} />
+                                </Box>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="body2">Reject Selected Segment</Typography>
+                                    <Chip label="Backspace" size="small" sx={{ fontFamily: 'monospace' }} />
+                                </Box>
+                                <Divider />
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="body2">Navigate Up</Typography>
+                                    <Chip label="↑" size="small" sx={{ fontFamily: 'monospace' }} />
+                                </Box>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="body2">Navigate Down</Typography>
+                                    <Chip label="↓" size="small" sx={{ fontFamily: 'monospace' }} />
+                                </Box>
+                                <Divider />
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <Typography variant="body2">Save Changes</Typography>
+                                    <Chip label="Ctrl + S" size="small" sx={{ fontFamily: 'monospace' }} />
+                                </Box>
+                            </Box>
+                        </CardContent>
+                    </Card>
+                </Grid>
+
                 {/* About Panel */}
                 <Grid item xs={12}>
                     <Card className="settings-card">

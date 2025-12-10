@@ -29,13 +29,14 @@ import {
     ExpandMore,
     ExpandLess,
     Lock,
+    LockOpen,
     CheckCircle,
     HourglassEmpty,
     VolumeOff,
     PlayArrow,
     AccessTime,
 } from '@mui/icons-material'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import '../styles/workbench.css'
 
@@ -88,6 +89,7 @@ interface ChannelPageProps {
 
 export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelPageProps) {
     const [expandedVideoId, setExpandedVideoId] = useState<number | null>(null)
+    const queryClient = useQueryClient()
 
     // Configure API header
     api.defaults.headers.common['X-User-ID'] = userId.toString()
@@ -129,9 +131,30 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
         setExpandedVideoId(prev => prev === videoId ? null : videoId)
     }
 
-    // Get chunk status display
+    // Unlock chunk mutation
+    const unlockMutation = useMutation({
+        mutationFn: (chunkId: number) => api.post(`/chunks/${chunkId}/unlock`),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['video', 'chunks', expandedVideoId] })
+        },
+    })
+
+    // Get chunk status display - now checks if locked by current user
     const getChunkStatusChip = (chunk: ChunkInfo) => {
+        const isLockedByMe = chunk.locked_by_user_id === userId
+
         if (chunk.locked_by_username) {
+            if (isLockedByMe) {
+                return (
+                    <Chip
+                        icon={<Lock fontSize="small" />}
+                        label="Locked by you"
+                        size="small"
+                        color="success"
+                        variant="outlined"
+                    />
+                )
+            }
             return (
                 <Chip
                     icon={<Lock fontSize="small" />}
@@ -234,10 +257,12 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
                                                         variant="body1"
                                                         sx={{
                                                             fontWeight: 500,
-                                                            maxWidth: 400,
+                                                            maxWidth: 700,
                                                             overflow: 'hidden',
-                                                            textOverflow: 'ellipsis',
-                                                            whiteSpace: 'nowrap'
+                                                            display: '-webkit-box',
+                                                            WebkitLineClamp: 2,
+                                                            WebkitBoxOrient: 'vertical',
+                                                            lineHeight: 1.3,
                                                         }}
                                                         title={video.title}
                                                     >
@@ -327,14 +352,39 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
                                                                                     )}
                                                                                 </TableCell>
                                                                                 <TableCell>
-                                                                                    <Button
-                                                                                        size="small"
-                                                                                        variant="contained"
-                                                                                        disabled={!!chunk.locked_by_username || chunk.status === 'pending'}
-                                                                                        onClick={() => onVideoSelect(video.id, chunk.id)}
-                                                                                    >
-                                                                                        {chunk.status === 'approved' ? 'View' : 'Review'}
-                                                                                    </Button>
+                                                                                    {(() => {
+                                                                                        const isLockedByMe = chunk.locked_by_user_id === userId
+                                                                                        const isLockedByOther = chunk.locked_by_username && !isLockedByMe
+                                                                                        const isProcessing = chunk.status === 'pending'
+
+                                                                                        return (
+                                                                                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                                                                                <Button
+                                                                                                    size="small"
+                                                                                                    variant="contained"
+                                                                                                    disabled={isLockedByOther || isProcessing}
+                                                                                                    onClick={() => onVideoSelect(video.id, chunk.id)}
+                                                                                                >
+                                                                                                    {chunk.status === 'approved' ? 'View' : 'Review'}
+                                                                                                </Button>
+                                                                                                {isLockedByMe && (
+                                                                                                    <Button
+                                                                                                        size="small"
+                                                                                                        variant="outlined"
+                                                                                                        color="warning"
+                                                                                                        startIcon={<LockOpen fontSize="small" />}
+                                                                                                        onClick={(e) => {
+                                                                                                            e.stopPropagation()
+                                                                                                            unlockMutation.mutate(chunk.id)
+                                                                                                        }}
+                                                                                                        disabled={unlockMutation.isPending}
+                                                                                                    >
+                                                                                                        Unlock
+                                                                                                    </Button>
+                                                                                                )}
+                                                                                            </Box>
+                                                                                        )
+                                                                                    })()}
                                                                                 </TableCell>
                                                                             </TableRow>
                                                                         ))}

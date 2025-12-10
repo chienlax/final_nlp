@@ -286,6 +286,7 @@ function App() {
                         username={selectedUser?.username || 'User'}
                         preselectedVideoId={selectedVideoId}
                         preselectedChunkId={selectedChunkId}
+                        onBackToDashboard={() => setCurrentTab('dashboard')}
                     />
                 )}
 

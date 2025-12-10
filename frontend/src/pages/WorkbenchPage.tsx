@@ -76,9 +76,10 @@ interface WorkbenchPageProps {
     username: string
     preselectedVideoId?: number | null
     preselectedChunkId?: number | null
+    onBackToDashboard?: () => void
 }
 
-export function WorkbenchPage({ userId, username, preselectedVideoId, preselectedChunkId }: WorkbenchPageProps) {
+export function WorkbenchPage({ userId, username, preselectedVideoId, preselectedChunkId, onBackToDashboard }: WorkbenchPageProps) {
     const queryClient = useQueryClient()
 
     // State
@@ -300,6 +301,35 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
     // RENDER
     // ==========================================================================
 
+    // No chunk selected - prompt user to go to dashboard
+    if (!preselectedChunkId && !preselectedVideoId && !currentChunk) {
+        return (
+            <Box className="workbench-container" sx={{ justifyContent: 'center', alignItems: 'center' }}>
+                <Box sx={{
+                    p: 4,
+                    background: 'var(--glass-bg)',
+                    borderRadius: 3,
+                    textAlign: 'center',
+                    maxWidth: 500
+                }}>
+                    <Alert severity="warning" sx={{ mb: 3 }}>
+                        <Typography variant="h6">No video chunk selected</Typography>
+                        <Typography>Please select a chunk from a video in a channel.</Typography>
+                    </Alert>
+                    {onBackToDashboard && (
+                        <Button
+                            variant="contained"
+                            size="large"
+                            onClick={onBackToDashboard}
+                        >
+                            Back to Dashboard
+                        </Button>
+                    )}
+                </Box>
+            </Box>
+        )
+    }
+
     // Loading state
     if (loadingChunk && !currentChunk) {
         return (
@@ -310,14 +340,23 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
         )
     }
 
-    // No work available
+    // No work available (for selected video)
     if (!currentChunk && !effectiveNextChunk) {
         return (
             <Box className="workbench-container" sx={{ justifyContent: 'center', alignItems: 'center' }}>
                 <Alert severity="success" sx={{ maxWidth: 400 }}>
                     <Typography variant="h6">🎉 All caught up!</Typography>
-                    <Typography>No pending chunks require review.</Typography>
+                    <Typography>No pending chunks require review for this video.</Typography>
                 </Alert>
+                {onBackToDashboard && (
+                    <Button
+                        variant="outlined"
+                        sx={{ mt: 2 }}
+                        onClick={onBackToDashboard}
+                    >
+                        Back to Dashboard
+                    </Button>
+                )}
             </Box>
         )
     }

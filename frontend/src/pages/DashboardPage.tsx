@@ -2,11 +2,25 @@
  * Dashboard Page (gemini_ui_1)
  * 
  * Overview of all channels with statistics and system stats.
- * Click a channel card to navigate to Channel tab.
+ * Click a channel row to navigate to Channel tab.
  */
 
-import { Box, Typography, Card, CardContent, Grid, Chip, Skeleton, Alert } from '@mui/material'
-import { Folder, VideoLibrary, Pending, CheckCircle, AccessTime } from '@mui/icons-material'
+import {
+    Box,
+    Typography,
+    Chip,
+    Skeleton,
+    Alert,
+    Table,
+    TableBody,
+    TableCell,
+    TableContainer,
+    TableHead,
+    TableRow,
+    Paper,
+    Button,
+} from '@mui/material'
+import { Folder, VideoLibrary, Pending, CheckCircle, AccessTime, ChevronRight } from '@mui/icons-material'
 import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
 import '../styles/workbench.css'
@@ -112,71 +126,124 @@ export function DashboardPage({ userId, onChannelSelect }: DashboardPageProps) {
                 </Box>
             </Box>
 
-            {/* Channel Grid */}
+            {/* Channel List */}
             <Box className="channel-section">
                 <Typography variant="h5" className="section-title">
                     📁 Channels
                 </Typography>
 
                 {loadingChannels ? (
-                    <Grid container spacing={3}>
+                    <Box>
                         {[1, 2, 3].map(i => (
-                            <Grid key={i} item xs={12} sm={6} md={4}>
-                                <Skeleton variant="rounded" height={180} />
-                            </Grid>
+                            <Skeleton key={i} variant="rounded" height={56} sx={{ mb: 1 }} />
                         ))}
-                    </Grid>
+                    </Box>
                 ) : channels.length === 0 ? (
                     <Alert severity="info">
                         No channels yet. Use the ingestion tool to add YouTube channels.
                     </Alert>
                 ) : (
-                    <Grid container spacing={3}>
-                        {channels.map(channel => {
-                            const stats = getChannelStats(channel.id)
-                            return (
-                                <Grid key={channel.id} item xs={12} sm={6} md={4} lg={3}>
-                                    <Card
-                                        className="channel-card"
-                                        onClick={() => onChannelSelect(channel)}
-                                    >
-                                        <CardContent>
-                                            <Box className="channel-card-header">
-                                                <Folder sx={{ fontSize: 32, color: '#90caf9' }} />
-                                                <Typography variant="h6" noWrap>
-                                                    {channel.name}
-                                                </Typography>
-                                            </Box>
+                    <TableContainer component={Paper} sx={{ bgcolor: 'rgba(255,255,255,0.02)' }}>
+                        <Table>
+                            <TableHead>
+                                <TableRow>
+                                    <TableCell>Channel Name</TableCell>
+                                    <TableCell width={100}>Videos</TableCell>
+                                    <TableCell width={120}>Pending</TableCell>
+                                    <TableCell width={120}>Approved</TableCell>
+                                    <TableCell width={140}>Status</TableCell>
+                                    <TableCell width={100}>Action</TableCell>
+                                </TableRow>
+                            </TableHead>
+                            <TableBody>
+                                {channels.map(channel => {
+                                    const stats = getChannelStats(channel.id)
+                                    const hasPending = (stats?.pending_chunks || 0) > 0
 
-                                            <Box className="channel-card-stats">
-                                                <Box className="stat-row">
-                                                    <VideoLibrary fontSize="small" />
-                                                    <Typography>{stats?.total_videos || 0} videos</Typography>
+                                    return (
+                                        <TableRow
+                                            key={channel.id}
+                                            hover
+                                            sx={{
+                                                cursor: 'pointer',
+                                                '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' }
+                                            }}
+                                            onClick={() => onChannelSelect(channel)}
+                                        >
+                                            <TableCell>
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                    <Folder sx={{ color: '#90caf9' }} />
+                                                    <Typography fontWeight={500}>
+                                                        {channel.name}
+                                                    </Typography>
                                                 </Box>
-                                                <Box className="stat-row">
-                                                    <Pending fontSize="small" />
-                                                    <Typography>{stats?.pending_chunks || 0} pending</Typography>
-                                                </Box>
-                                                <Box className="stat-row">
-                                                    <CheckCircle fontSize="small" />
-                                                    <Typography>{stats?.approved_chunks || 0} approved</Typography>
-                                                </Box>
-                                            </Box>
-
-                                            {stats && stats.pending_chunks > 0 && (
+                                            </TableCell>
+                                            <TableCell>
                                                 <Chip
-                                                    label={`${stats.pending_chunks} needs review`}
+                                                    icon={<VideoLibrary sx={{ fontSize: 16 }} />}
+                                                    label={stats?.total_videos || 0}
                                                     size="small"
-                                                    color="warning"
-                                                    sx={{ mt: 1 }}
+                                                    variant="outlined"
                                                 />
-                                            )}
-                                        </CardContent>
-                                    </Card>
-                                </Grid>
-                            )
-                        })}
-                    </Grid>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Chip
+                                                    icon={<Pending sx={{ fontSize: 16 }} />}
+                                                    label={stats?.pending_chunks || 0}
+                                                    size="small"
+                                                    color={hasPending ? 'warning' : 'default'}
+                                                    variant={hasPending ? 'filled' : 'outlined'}
+                                                />
+                                            </TableCell>
+                                            <TableCell>
+                                                <Chip
+                                                    icon={<CheckCircle sx={{ fontSize: 16 }} />}
+                                                    label={stats?.approved_chunks || 0}
+                                                    size="small"
+                                                    color={(stats?.approved_chunks || 0) > 0 ? 'success' : 'default'}
+                                                    variant="outlined"
+                                                />
+                                            </TableCell>
+                                            <TableCell>
+                                                {hasPending ? (
+                                                    <Chip
+                                                        label="Needs review"
+                                                        size="small"
+                                                        color="warning"
+                                                    />
+                                                ) : (stats?.approved_chunks || 0) > 0 ? (
+                                                    <Chip
+                                                        label="Up to date"
+                                                        size="small"
+                                                        color="success"
+                                                        variant="outlined"
+                                                    />
+                                                ) : (
+                                                    <Chip
+                                                        label="Empty"
+                                                        size="small"
+                                                        variant="outlined"
+                                                    />
+                                                )}
+                                            </TableCell>
+                                            <TableCell>
+                                                <Button
+                                                    size="small"
+                                                    endIcon={<ChevronRight />}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        onChannelSelect(channel)
+                                                    }}
+                                                >
+                                                    View
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    )
+                                })}
+                            </TableBody>
+                        </Table>
+                    </TableContainer>
                 )}
             </Box>
         </Box>
