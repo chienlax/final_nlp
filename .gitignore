@@ -59,3 +59,4 @@ frontend/package-lock.json
 docs/*.pdf
 docs/*.html
 .hintrc
+frontend/.vite 
