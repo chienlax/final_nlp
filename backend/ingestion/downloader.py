@@ -166,6 +166,11 @@ def fetch_playlist_metadata(url: str) -> List[VideoMetadata]:
         
     Returns:
         List of VideoMetadata objects
+        
+    Note:
+        When using extract_flat mode, individual entries often lack channel info.
+        We extract channel info from the parent playlist/channel metadata and
+        apply it to all entries.
     """
     ydl_opts = {
         'quiet': True,
@@ -183,6 +188,20 @@ def fetch_playlist_metadata(url: str) -> List[VideoMetadata]:
             if not info:
                 return []
             
+            # Extract channel info from the parent playlist/channel metadata
+            # This is reliable even when individual entries lack channel info
+            parent_channel_name = (
+                info.get('channel') or 
+                info.get('uploader') or 
+                info.get('channel_id') or  # Fallback to ID if name missing
+                'Unknown'
+            )
+            parent_channel_url = (
+                info.get('channel_url') or 
+                info.get('uploader_url') or 
+                ''
+            )
+            
             # Single video
             if 'entries' not in info:
                 meta = fetch_metadata(url)
@@ -192,12 +211,16 @@ def fetch_playlist_metadata(url: str) -> List[VideoMetadata]:
                 # Playlist/channel
                 for entry in info.get('entries', []):
                     if entry:
+                        # Prefer entry-level channel info, fallback to parent
+                        entry_channel = entry.get('channel') or entry.get('uploader')
+                        entry_channel_url = entry.get('channel_url') or entry.get('uploader_url')
+                        
                         results.append(VideoMetadata(
                             video_id=entry.get('id', ''),
                             title=entry.get('title', 'Unknown'),
                             duration_seconds=int(entry.get('duration', 0) or 0),
-                            channel_name=entry.get('channel', 'Unknown'),
-                            channel_url=entry.get('channel_url', ''),
+                            channel_name=entry_channel if entry_channel else parent_channel_name,
+                            channel_url=entry_channel_url if entry_channel_url else parent_channel_url,
                             original_url=entry.get('url', entry.get('webpage_url', '')),
                         ))
                         
