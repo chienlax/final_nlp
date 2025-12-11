@@ -2,7 +2,7 @@
  * Annotation Workbench Page
  * 
  * 3-Zone Layout:
- * - Zone A: Control Header (breadcrumbs, denoise toggle, lock status, save/finish)
+ * - Zone A: Control Header (breadcrumbs, lock status, save/finish)
  * - Zone B: Waveform Visualizer (30% viewport)
  * - Zone C: Editor Table (70% viewport, scrollable)
  */
@@ -27,8 +27,6 @@ import {
 import {
     PlayArrow,
     Pause,
-    VolumeUp,
-    VolumeOff,
     CheckCircle,
     Save,
     ZoomIn,
@@ -51,7 +49,6 @@ interface Chunk {
     chunk_index: number
     audio_path: string
     status: string
-    denoise_status: string
     locked_by_user_id: number | null
     lock_expires_at: string | null
     video_title: string
@@ -168,18 +165,6 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
         },
     })
 
-    // Flag for denoise mutation - TOGGLES based on API response
-    const denoiseMutation = useMutation({
-        mutationFn: (chunkId: number) => api.post(`/chunks/${chunkId}/flag-noise`),
-        onSuccess: (response) => {
-            if (currentChunk) {
-                // Use actual status from API response
-                setCurrentChunk({ ...currentChunk, denoise_status: response.data.denoise_status })
-            }
-            showSnackbar(response.data.message, 'info')
-        },
-    })
-
     // Global bulk verify ALL segments in current chunk
     const bulkVerifyAllMutation = useMutation({
         mutationFn: (segmentIds: number[]) => api.post('/segments/bulk-verify', { segment_ids: segmentIds }),
@@ -231,8 +216,6 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
         [segments.length, verifiedCount, rejectedCount]
     )
 
-    const isDenoiseActive = currentChunk?.denoise_status === 'flagged'
-
     // Helpers
     const showSnackbar = (message: string, severity: 'success' | 'error' | 'info') => {
         setSnackbar({ open: true, message, severity })
@@ -276,12 +259,6 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
                             waveformRef.current?.pause()
                         } else {
                             waveformRef.current?.play()
-                        }
-                        break
-                    case 'KeyD':
-                        e.preventDefault()
-                        if (currentChunk) {
-                            denoiseMutation.mutate(currentChunk.id)
                         }
                         break
                     case 'ArrowRight':
@@ -475,26 +452,8 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
                 ZONE A: Control Header
             ================================================================ */}
             <Box className="zone-header">
-                {/* Left: Status badges (Flag, Lock, Unsaved) */}
+                {/* Left: Status badges (Lock, Unsaved) */}
                 <Box className="zone-header-left" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Tooltip title="Ctrl+D to toggle">
-                        <Button
-                            variant={isDenoiseActive ? 'contained' : 'outlined'}
-                            size="small"
-                            startIcon={isDenoiseActive ? <VolumeOff /> : <VolumeUp />}
-                            onClick={() => currentChunk && denoiseMutation.mutate(currentChunk.id)}
-                            sx={{
-                                bgcolor: isDenoiseActive ? 'var(--denoise-active)' : 'transparent',
-                                borderColor: isDenoiseActive ? 'var(--denoise-active)' : 'rgba(255,255,255,0.3)',
-                                '&:hover': {
-                                    bgcolor: isDenoiseActive ? '#f57c00' : 'rgba(255,255,255,0.1)',
-                                }
-                            }}
-                        >
-                            {isDenoiseActive ? 'Flagged Noisy' : 'Flag as Noisy'}
-                        </Button>
-                    </Tooltip>
-
                     <Chip
                         icon={<Lock fontSize="small" />}
                         label={`Locked by ${username}`}

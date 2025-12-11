@@ -33,7 +33,6 @@ import {
     LockOpen,
     CheckCircle,
     HourglassEmpty,
-    VolumeOff,
     PlayArrow,
     AccessTime,
     Build,
@@ -85,7 +84,6 @@ interface ChunkInfo {
     chunk_index: number
     audio_path: string
     status: string
-    denoise_status: string
     locked_by_user_id: number | null
     locked_by_username: string | null
     lock_expires_at: string | null
@@ -564,16 +562,6 @@ export function ChannelPage({
                                                                                 </TableCell>
                                                                                 <TableCell>
                                                                                     {chunk.segment_count} segments
-                                                                                </TableCell>
-                                                                                <TableCell>
-                                                                                    {chunk.denoise_status === 'flagged' && (
-                                                                                        <Chip
-                                                                                            icon={<VolumeOff fontSize="small" />}
-                                                                                            label="Flagged"
-                                                                                            size="small"
-                                                                                            color="warning"
-                                                                                        />
-                                                                                    )}
                                                                                 </TableCell>
                                                                                 <TableCell>
                                                                                     {(() => {

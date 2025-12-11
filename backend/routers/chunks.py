@@ -1,5 +1,5 @@
 """
-Chunks Router - Work queue, locking, and denoise flagging.
+Chunks Router - Work queue and locking.
 """
 
 import os
@@ -11,7 +11,7 @@ from sqlmodel import Session, select, or_
 from pydantic import BaseModel
 
 from backend.db.engine import get_session
-from backend.db.models import Chunk, User, Video, ProcessingStatus, DenoiseStatus
+from backend.db.models import Chunk, User, Video, ProcessingStatus
 from backend.auth.deps import get_current_user
 
 
@@ -36,7 +36,6 @@ class ChunkResponse(BaseModel):
     chunk_index: int
     audio_path: str
     status: ProcessingStatus
-    denoise_status: DenoiseStatus
     locked_by_user_id: Optional[int]
     lock_expires_at: Optional[datetime]
     
@@ -59,13 +58,6 @@ class LockResponse(BaseModel):
     message: str
 
 
-class FlagNoiseResponse(BaseModel):
-    """Denoise flag response."""
-    chunk_id: int
-    denoise_status: DenoiseStatus
-    message: str
-
-
 class ChunkListResponse(BaseModel):
     """Chunk response for video chunk list with lock owner info."""
     id: int
@@ -73,7 +65,6 @@ class ChunkListResponse(BaseModel):
     chunk_index: int
     audio_path: str
     status: ProcessingStatus
-    denoise_status: DenoiseStatus
     locked_by_user_id: Optional[int]
     locked_by_username: Optional[str] = None
     lock_expires_at: Optional[datetime]
@@ -375,41 +366,6 @@ def unlock_chunk(
     session.commit()
     
     return {"message": "Lock released"}
-
-
-@router.post("/chunks/{chunk_id}/flag-noise", response_model=FlagNoiseResponse)
-def toggle_chunk_denoise(
-    chunk_id: int,
-    current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
-):
-    """
-    Toggle denoise flag on a chunk.
-    
-    If FLAGGED -> NOT_NEEDED
-    If NOT_NEEDED or PROCESSED -> FLAGGED
-    """
-    chunk = session.get(Chunk, chunk_id)
-    if not chunk:
-        raise HTTPException(status_code=404, detail="Chunk not found")
-    
-    # Toggle logic
-    if chunk.denoise_status == DenoiseStatus.FLAGGED:
-        chunk.denoise_status = DenoiseStatus.NOT_NEEDED
-        message = "Denoise flag removed"
-    else:
-        chunk.denoise_status = DenoiseStatus.FLAGGED
-        message = "Chunk flagged for denoising"
-    
-    session.add(chunk)
-    session.commit()
-    session.refresh(chunk)
-    
-    return FlagNoiseResponse(
-        chunk_id=chunk.id,
-        denoise_status=chunk.denoise_status,
-        message=message
-    )
 
 
 @router.post("/chunks/{chunk_id}/approve")

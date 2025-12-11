@@ -1,14 +1,13 @@
 /**
- * Main App Component - 7-Tab Navigation System
+ * Main App Component - 6-Tab Navigation System
  * 
  * Tabs:
  * 1. Dashboard - Channel overview
  * 2. Channel - Video list (Dynamic, appears when channel selected)
  * 3. Preprocessing - Gemini queue management
  * 4. Annotation - Workbench
- * 5. Denoising - DeepFilterNet queue
- * 6. Export - Export wizard
- * 7. Settings - User/system config
+ * 5. Export - Export wizard
+ * 6. Settings - User/system config
  */
 
 import { useState, useEffect } from 'react'
@@ -29,7 +28,6 @@ import {
     Dashboard as DashboardIcon,
     VideoLibrary as ChannelIcon,
     Edit as AnnotationIcon,
-    Tune as DenoiseIcon,
     Psychology as PreprocessingIcon,
     FileDownload as ExportIcon,
     Settings as SettingsIcon,
@@ -43,7 +41,6 @@ import { DashboardPage } from './pages/DashboardPage'
 import { ChannelPage } from './pages/ChannelPage'
 import { PreprocessingPage } from './pages/PreprocessingPage'
 import { WorkbenchPage } from './pages/WorkbenchPage'
-import { ProcessingPage } from './pages/ProcessingPage'
 import { ExportPage } from './pages/ExportPage'
 import { SettingsPage } from './pages/SettingsPage'
 
@@ -55,7 +52,7 @@ interface User {
 }
 
 // Tab configuration
-type TabId = 'dashboard' | 'channel' | 'preprocessing' | 'annotation' | 'denoising' | 'export' | 'settings'
+type TabId = 'dashboard' | 'channel' | 'preprocessing' | 'annotation' | 'export' | 'settings'
 
 interface TabConfig {
     id: TabId
@@ -69,7 +66,6 @@ const TABS: TabConfig[] = [
     { id: 'channel', label: 'Channel', icon: <ChannelIcon /> },
     { id: 'preprocessing', label: 'Preprocessing', icon: <PreprocessingIcon /> },
     { id: 'annotation', label: 'Annotation', icon: <AnnotationIcon /> },
-    { id: 'denoising', label: 'Denoising', icon: <DenoiseIcon /> },
     { id: 'export', label: 'Export', icon: <ExportIcon /> },
     { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
 ]
@@ -276,10 +272,6 @@ function App() {
                             setCurrentTab('channel')
                         }}
                     />
-                )}
-
-                {currentTab === 'denoising' && (
-                    <ProcessingPage userId={selectedUserId} />
                 )}
 
                 {currentTab === 'export' && (

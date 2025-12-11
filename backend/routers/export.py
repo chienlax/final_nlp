@@ -154,8 +154,8 @@ def run_export(
         return ExportRunResponse(
             success=True,
             manifest_path=manifest_path,
-            clips_count=results.get("segments", 0),
-            total_hours=results.get("hours", 0.0)
+            clips_count=results.segments_exported,
+            total_hours=results.total_hours
         )
     except Exception as e:
         return ExportRunResponse(

@@ -40,14 +40,6 @@ class ProcessingStatus(str, Enum):
     REJECTED = "rejected"          # Audio unusable
 
 
-class DenoiseStatus(str, Enum):
-    """Audio denoising states."""
-    NOT_NEEDED = "not_needed"  # Default
-    FLAGGED = "flagged"        # User requested cleanup
-    QUEUED = "queued"          # Night shift script picked it up
-    PROCESSED = "processed"    # DeepFilterNet finished
-
-
 class JobStatus(str, Enum):
     """Processing job queue states (for Gemini worker)."""
     QUEUED = "queued"         # Waiting in queue
@@ -155,7 +147,6 @@ class Chunk(SQLModel, table=True):
     
     # State Management
     status: ProcessingStatus = Field(default=ProcessingStatus.PENDING)
-    denoise_status: DenoiseStatus = Field(default=DenoiseStatus.NOT_NEEDED)
     
     # Concurrency Control ("Ghost Lock")
     # If locked_by_user_id is set and lock_expires_at > now(), chunk is locked
