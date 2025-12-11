@@ -164,7 +164,6 @@ def get_video_chunks(
             chunk_index=chunk.chunk_index,
             audio_path=chunk.audio_path,
             status=chunk.status,
-            denoise_status=chunk.denoise_status,
             locked_by_user_id=chunk.locked_by_user_id if locked_username else None,
             locked_by_username=locked_username,
             lock_expires_at=chunk.lock_expires_at if locked_username else None,
