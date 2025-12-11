@@ -1,8 +1,15 @@
 """
 Videos Router - Upload, duplicate check, and list videos.
+
+Upload flow:
+1. Validate URL not duplicate
+2. Save audio file to data/raw/
+3. Create Video record
+4. Auto-chunk into 5-minute segments (non-blocking)
 """
 
 import shutil
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -14,6 +21,9 @@ from pydantic import BaseModel
 from backend.db.engine import get_session, DATA_ROOT
 from backend.db.models import Video, Channel, User
 from backend.auth.deps import get_current_user
+
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
@@ -50,6 +60,7 @@ class VideoUploadResponse(BaseModel):
     video_id: int
     title: str
     file_path: str
+    chunks_created: int = 0  # Number of chunks created (0 if failed)
     message: str
 
 
@@ -190,9 +201,80 @@ async def upload_video(
     session.commit()
     session.refresh(video)
     
+    # Auto-chunk the video (non-blocking - errors don't fail upload)
+    chunks_created = 0
+    try:
+        from backend.processing.chunker import chunk_video
+        chunks_created = chunk_video(video.id, session)
+        logger.info(f"Auto-chunked video {video.id}: {chunks_created} chunks created")
+    except Exception as e:
+        logger.error(f"Auto-chunk failed for video {video.id}: {e}")
+        # Don't fail the upload, just log the error
+    
     return VideoUploadResponse(
         video_id=video.id,
         title=video.title,
         file_path=video.file_path,
-        message="Video uploaded successfully"
+        chunks_created=chunks_created,
+        message=f"Video uploaded successfully. {chunks_created} chunks created."
     )
+
+
+@router.post("/videos/{video_id}/chunk")
+def trigger_manual_chunking(
+    video_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """
+    Manually trigger chunking for a video.
+    
+    Use this when:
+    - Auto-chunking failed during upload
+    - Video was uploaded before auto-chunking was implemented
+    
+    Args:
+        video_id: ID of video to chunk
+        current_user: Authenticated user
+        
+    Returns:
+        Number of chunks created
+        
+    Raises:
+        404: Video not found
+        400: Video already has chunks
+    """
+    video = session.get(Video, video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    # Check if already has chunks
+    from backend.db.models import Chunk
+    existing_chunks = session.exec(
+        select(Chunk).where(Chunk.video_id == video_id)
+    ).all()
+    
+    if len(existing_chunks) > 0:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Video already has {len(existing_chunks)} chunks. Delete them first if you want to re-chunk."
+        )
+    
+    # Run chunking
+    try:
+        from backend.processing.chunker import chunk_video
+        chunks_created = chunk_video(video_id, session)
+        logger.info(f"Manual chunking for video {video_id}: {chunks_created} chunks created")
+    except Exception as e:
+        logger.error(f"Manual chunking failed for video {video_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Chunking failed: {str(e)}"
+        )
+    
+    return {
+        "video_id": video_id,
+        "chunks_created": chunks_created,
+        "message": f"Successfully created {chunks_created} chunks"
+    }
+

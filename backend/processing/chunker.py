@@ -14,6 +14,8 @@ The 5-second overlap is handled during export (stitching algorithm).
 
 import subprocess
 import logging
+import platform
+import shutil
 from pathlib import Path
 from typing import List, Tuple, Optional
 
@@ -35,6 +37,31 @@ OVERLAP = 5           # 5 second overlap
 SAMPLE_RATE = 16000   # 16kHz (standard for ASR)
 CHANNELS = 1          # Mono
 
+# Windows needs full path for executables in subprocess
+IS_WINDOWS = platform.system() == "Windows"
+
+# Find ffmpeg/ffprobe executables
+def _find_executable(name: str) -> str:
+    """Find executable, checking PATH and common locations."""
+    # Try direct PATH lookup
+    path = shutil.which(name)
+    if path:
+        return path
+    
+    # On Windows, check same directory as ffmpeg
+    if IS_WINDOWS:
+        ffmpeg_path = shutil.which("ffmpeg")
+        if ffmpeg_path:
+            ffmpeg_dir = Path(ffmpeg_path).parent
+            candidate = ffmpeg_dir / f"{name}.exe"
+            if candidate.exists():
+                return str(candidate)
+    
+    return name  # Fallback to just the name
+
+FFPROBE = _find_executable("ffprobe")
+FFMPEG = _find_executable("ffmpeg")
+
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -42,7 +69,10 @@ CHANNELS = 1          # Mono
 
 def get_audio_duration(file_path: Path) -> float:
     """
-    Get audio duration using ffprobe.
+    Get audio duration using ffmpeg (fallback from ffprobe).
+    
+    Uses ffmpeg with -i to read metadata and extracts duration from stderr.
+    Works even when ffprobe is not installed.
     
     Args:
         file_path: Path to audio file
@@ -51,22 +81,38 @@ def get_audio_duration(file_path: Path) -> float:
         Duration in seconds
         
     Raises:
-        RuntimeError: If ffprobe fails
+        RuntimeError: If ffmpeg fails or duration can't be parsed
     """
+    import re
+    
     cmd = [
-        "ffprobe",
-        "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        str(file_path)
+        FFMPEG,
+        "-i", str(file_path),
+        "-f", "null",
+        "-"
     ]
     
+    # ffmpeg writes metadata to stderr, so we need to capture it
     result = subprocess.run(cmd, capture_output=True, text=True)
     
-    if result.returncode != 0:
-        raise RuntimeError(f"ffprobe failed: {result.stderr}")
+    # Look for Duration: HH:MM:SS.ms in stderr
+    duration_match = re.search(
+        r'Duration:\s*(\d+):(\d+):(\d+)\.(\d+)',
+        result.stderr
+    )
     
-    return float(result.stdout.strip())
+    if not duration_match:
+        raise RuntimeError(f"Could not parse duration from ffmpeg output: {result.stderr[:200]}")
+    
+    hours, minutes, seconds, ms = duration_match.groups()
+    total_seconds = (
+        int(hours) * 3600 +
+        int(minutes) * 60 +
+        int(seconds) +
+        int(ms) / 100  # Centiseconds to seconds
+    )
+    
+    return total_seconds
 
 
 def calculate_chunk_ranges(total_duration: float) -> List[Tuple[float, float]]:
@@ -167,7 +213,7 @@ def chunk_video(video_id: int, session: Optional[Session] = None) -> int:
             # -ac 1: Mono
             # -ar 16000: 16kHz sample rate
             cmd = [
-                "ffmpeg", "-y",
+                FFMPEG, "-y",
                 "-i", str(input_path),
                 "-ss", str(start_time),
                 "-t", str(chunk_duration),

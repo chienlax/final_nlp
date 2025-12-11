@@ -20,6 +20,7 @@ import re
 import json
 import time
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from itertools import cycle
@@ -32,7 +33,7 @@ import google.generativeai as genai
 from sqlmodel import Session, select
 
 from backend.db.engine import engine, DATA_ROOT
-from backend.db.models import Chunk, Segment, ProcessingStatus
+from backend.db.models import Chunk, Segment, ProcessingStatus, ProcessingJob, JobStatus
 from backend.utils.time_parser import parse_timestamp
 
 
@@ -420,22 +421,148 @@ def process_all_pending(
 
 
 # =============================================================================
+# QUEUE WORKER (Centralized Processing)
+# =============================================================================
+
+def run_queue_worker(
+    poll_interval: float = 2.0,
+    rate_limit_delay: float = 1.0,
+    model_name: str = DEFAULT_MODEL
+):
+    """
+    Run the centralized queue worker.
+    
+    This should be started as a separate process alongside the FastAPI server:
+        python -m backend.processing.gemini_worker --queue
+    
+    Workflow:
+    1. Poll ProcessingJob table for QUEUED jobs
+    2. Claim oldest job (mark as PROCESSING)
+    3. Run Gemini on the chunk
+    4. Update job status (COMPLETED or FAILED)
+    5. Update Chunk status accordingly
+    6. Repeat
+    
+    Args:
+        poll_interval: Seconds to wait when queue is empty
+        rate_limit_delay: Seconds to wait between jobs (API rate limiting)
+        model_name: Gemini model to use
+    """
+    logger.info("="*60)
+    logger.info("Starting Gemini Queue Worker")
+    logger.info(f"  Poll interval: {poll_interval}s")
+    logger.info(f"  Rate limit delay: {rate_limit_delay}s")
+    logger.info(f"  Model: {model_name}")
+    logger.info("="*60)
+    
+    api_pool = ApiKeyPool()
+    
+    while True:
+        try:
+            with Session(engine) as session:
+                # Get oldest QUEUED job with row-level lock
+                job = session.exec(
+                    select(ProcessingJob)
+                    .where(ProcessingJob.status == JobStatus.QUEUED)
+                    .order_by(ProcessingJob.created_at)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)  # PostgreSQL: skip locked rows
+                ).first()
+                
+                if not job:
+                    # No jobs in queue, sleep and retry
+                    logger.debug("Queue empty, waiting...")
+                    time.sleep(poll_interval)
+                    continue
+                
+                # Claim the job
+                job.status = JobStatus.PROCESSING
+                job.started_at = datetime.utcnow()
+                session.add(job)
+                session.commit()
+                
+                job_id = job.id
+                chunk_id = job.chunk_id
+                video_id = job.video_id
+                
+            logger.info(f"Processing job {job_id}: chunk {chunk_id} (video {video_id})")
+            
+            # Process the chunk (outside transaction to avoid long locks)
+            try:
+                segments_created, metadata = process_chunk(chunk_id, api_pool, model_name)
+                
+                # Mark job as completed
+                with Session(engine) as session:
+                    job = session.get(ProcessingJob, job_id)
+                    if job:
+                        job.status = JobStatus.COMPLETED
+                        job.completed_at = datetime.utcnow()
+                        session.add(job)
+                        session.commit()
+                
+                logger.info(
+                    f"✓ Job {job_id} completed: {segments_created} segments created"
+                )
+                
+            except Exception as e:
+                error_msg = str(e)[:1000]  # Truncate to fit in DB
+                logger.error(f"✗ Job {job_id} failed: {error_msg}")
+                
+                # Mark job as failed
+                with Session(engine) as session:
+                    job = session.get(ProcessingJob, job_id)
+                    if job:
+                        job.status = JobStatus.FAILED
+                        job.completed_at = datetime.utcnow()
+                        job.error_message = error_msg
+                        session.add(job)
+                        session.commit()
+            
+            # Rate limiting between jobs
+            time.sleep(rate_limit_delay)
+            
+        except KeyboardInterrupt:
+            logger.info("\nQueue worker stopped by user (Ctrl+C)")
+            break
+        except Exception as e:
+            logger.error(f"Worker error: {e}")
+            time.sleep(poll_interval)
+
+
+# =============================================================================
 # CLI ENTRY POINT
 # =============================================================================
 
 if __name__ == "__main__":
     import sys
+    from datetime import datetime
     
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s"
+    )
     
-    if len(sys.argv) > 1 and sys.argv[1] != "--all":
-        chunk_id = int(sys.argv[1])
-        process_chunk(chunk_id)
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--queue":
+            # Run as queue worker (centralized processing)
+            run_queue_worker()
+        elif sys.argv[1] == "--all":
+            # Process all pending chunks (legacy mode)
+            limit = 10
+            if len(sys.argv) > 2:
+                limit = int(sys.argv[2])
+            print(f"Processing up to {limit} pending chunks...")
+            results = process_all_pending(limit=limit)
+            print(f"Results: {results}")
+        else:
+            # Process specific chunk by ID
+            chunk_id = int(sys.argv[1])
+            process_chunk(chunk_id)
     else:
-        limit = 10
-        if len(sys.argv) > 2:
-            limit = int(sys.argv[2])
-        
-        print(f"Processing up to {limit} pending chunks...")
-        results = process_all_pending(limit=limit)
-        print(f"Results: {results}")
+        print("Gemini Worker - Audio Transcription")
+        print("")
+        print("Usage:")
+        print("  python -m backend.processing.gemini_worker --queue     # Run queue worker")
+        print("  python -m backend.processing.gemini_worker --all [N]   # Process N pending chunks")
+        print("  python -m backend.processing.gemini_worker <chunk_id>  # Process single chunk")
+

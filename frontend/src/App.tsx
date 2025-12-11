@@ -1,13 +1,14 @@
 /**
- * Main App Component - 5-Tab Navigation System
+ * Main App Component - 7-Tab Navigation System
  * 
  * Tabs:
- * 1. Dashboard - Channel overview (gemini_ui_1)
- * 2. Channel - Video list (gemini_ui_2) - Dynamic, appears when channel selected
- * 3. Annotation - Workbench (gemini_ui_3, gemini_ui_4)
- * 4. Processing - Denoise queue (gemini_ui_5)
- * 5. Export - Export wizard (gemini_ui_7)
- * 6. Settings - User/system config
+ * 1. Dashboard - Channel overview
+ * 2. Channel - Video list (Dynamic, appears when channel selected)
+ * 3. Preprocessing - Gemini queue management
+ * 4. Annotation - Workbench
+ * 5. Denoising - DeepFilterNet queue
+ * 6. Export - Export wizard
+ * 7. Settings - User/system config
  */
 
 import { useState, useEffect } from 'react'
@@ -28,7 +29,8 @@ import {
     Dashboard as DashboardIcon,
     VideoLibrary as ChannelIcon,
     Edit as AnnotationIcon,
-    Tune as ProcessingIcon,
+    Tune as DenoiseIcon,
+    Psychology as PreprocessingIcon,
     FileDownload as ExportIcon,
     Settings as SettingsIcon,
     Person,
@@ -39,6 +41,7 @@ import axios from 'axios'
 // Page imports
 import { DashboardPage } from './pages/DashboardPage'
 import { ChannelPage } from './pages/ChannelPage'
+import { PreprocessingPage } from './pages/PreprocessingPage'
 import { WorkbenchPage } from './pages/WorkbenchPage'
 import { ProcessingPage } from './pages/ProcessingPage'
 import { ExportPage } from './pages/ExportPage'
@@ -51,14 +54,8 @@ interface User {
     role: string
 }
 
-interface Channel {
-    id: number
-    name: string
-    url: string
-}
-
 // Tab configuration
-type TabId = 'dashboard' | 'channel' | 'annotation' | 'processing' | 'export' | 'settings'
+type TabId = 'dashboard' | 'channel' | 'preprocessing' | 'annotation' | 'denoising' | 'export' | 'settings'
 
 interface TabConfig {
     id: TabId
@@ -69,9 +66,10 @@ interface TabConfig {
 
 const TABS: TabConfig[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
-    { id: 'channel', label: 'Channel', icon: <ChannelIcon />, dynamic: true },
+    { id: 'channel', label: 'Channel', icon: <ChannelIcon /> },
+    { id: 'preprocessing', label: 'Preprocessing', icon: <PreprocessingIcon /> },
     { id: 'annotation', label: 'Annotation', icon: <AnnotationIcon /> },
-    { id: 'processing', label: 'Processing', icon: <ProcessingIcon /> },
+    { id: 'denoising', label: 'Denoising', icon: <DenoiseIcon /> },
     { id: 'export', label: 'Export', icon: <ExportIcon /> },
     { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
 ]
@@ -84,7 +82,6 @@ const api = axios.create({
 function App() {
     const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
     const [currentTab, setCurrentTab] = useState<TabId>('dashboard')
-    const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null)
     const [selectedVideoId, setSelectedVideoId] = useState<number | null>(null)
     const [selectedChunkId, setSelectedChunkId] = useState<number | null>(null)
 
@@ -111,11 +108,6 @@ function App() {
     const selectedUser = users?.find(u => u.id === selectedUserId)
 
     // Navigation handlers
-    const handleChannelSelect = (channel: Channel) => {
-        setSelectedChannel(channel)
-        setCurrentTab('channel')
-    }
-
     const handleVideoSelect = (videoId: number, chunkId?: number) => {
         setSelectedVideoId(videoId)
         if (chunkId) setSelectedChunkId(chunkId)
@@ -130,13 +122,8 @@ function App() {
         setCurrentTab(newValue)
     }
 
-    // Get visible tabs (filter out dynamic tabs when not active)
-    const visibleTabs = TABS.filter(tab => {
-        if (tab.dynamic && tab.id === 'channel') {
-            return selectedChannel !== null
-        }
-        return !tab.dynamic
-    })
+    // All tabs are visible (no dynamic filtering needed)
+    const visibleTabs = TABS
 
     // Loading state
     if (isLoading) {
@@ -265,19 +252,18 @@ function App() {
             {/* Tab content area */}
             <Box className="app-content">
                 {currentTab === 'dashboard' && (
-                    <DashboardPage
+                    <DashboardPage userId={selectedUserId} />
+                )}
+
+                {currentTab === 'channel' && (
+                    <ChannelPage
                         userId={selectedUserId}
-                        onChannelSelect={handleChannelSelect}
+                        onVideoSelect={handleVideoSelect}
                     />
                 )}
 
-                {currentTab === 'channel' && selectedChannel && (
-                    <ChannelPage
-                        userId={selectedUserId}
-                        channel={selectedChannel}
-                        onVideoSelect={handleVideoSelect}
-                        onBack={() => setCurrentTab('dashboard')}
-                    />
+                {currentTab === 'preprocessing' && (
+                    <PreprocessingPage userId={selectedUserId} />
                 )}
 
                 {currentTab === 'annotation' && (
@@ -290,7 +276,7 @@ function App() {
                     />
                 )}
 
-                {currentTab === 'processing' && (
+                {currentTab === 'denoising' && (
                     <ProcessingPage userId={selectedUserId} />
                 )}
 

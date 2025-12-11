@@ -1,8 +1,8 @@
 /**
- * Dashboard Page (gemini_ui_1)
+ * Dashboard Page
  * 
  * Overview of all channels with statistics and system stats.
- * Click a channel row to navigate to Channel tab.
+ * Stats-only view - navigation to channels is via Channel tab.
  */
 
 import {
@@ -18,9 +18,8 @@ import {
     TableHead,
     TableRow,
     Paper,
-    Button,
 } from '@mui/material'
-import { Folder, VideoLibrary, Pending, CheckCircle, AccessTime, ChevronRight } from '@mui/icons-material'
+import { Folder, VideoLibrary, Pending, CheckCircle, AccessTime } from '@mui/icons-material'
 import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
 import '../styles/workbench.css'
@@ -52,10 +51,9 @@ interface SystemStats {
 
 interface DashboardPageProps {
     userId: number
-    onChannelSelect: (channel: Channel) => void
 }
 
-export function DashboardPage({ userId, onChannelSelect }: DashboardPageProps) {
+export function DashboardPage({ userId }: DashboardPageProps) {
     // Configure API header
     api.defaults.headers.common['X-User-ID'] = userId.toString()
 
@@ -152,7 +150,6 @@ export function DashboardPage({ userId, onChannelSelect }: DashboardPageProps) {
                                     <TableCell width={120}>Pending</TableCell>
                                     <TableCell width={120}>Approved</TableCell>
                                     <TableCell width={140}>Status</TableCell>
-                                    <TableCell width={100}>Action</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -163,12 +160,9 @@ export function DashboardPage({ userId, onChannelSelect }: DashboardPageProps) {
                                     return (
                                         <TableRow
                                             key={channel.id}
-                                            hover
                                             sx={{
-                                                cursor: 'pointer',
-                                                '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' }
+                                                '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }
                                             }}
-                                            onClick={() => onChannelSelect(channel)}
                                         >
                                             <TableCell>
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -225,18 +219,6 @@ export function DashboardPage({ userId, onChannelSelect }: DashboardPageProps) {
                                                         variant="outlined"
                                                     />
                                                 )}
-                                            </TableCell>
-                                            <TableCell>
-                                                <Button
-                                                    size="small"
-                                                    endIcon={<ChevronRight />}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation()
-                                                        onChannelSelect(channel)
-                                                    }}
-                                                >
-                                                    View
-                                                </Button>
                                             </TableCell>
                                         </TableRow>
                                     )

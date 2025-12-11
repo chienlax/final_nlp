@@ -1,0 +1,417 @@
+/**
+ * Audio Preprocessing Page
+ * 
+ * Queue management for Gemini transcription processing.
+ * Shows videos with pending chunks, allows batch selection and processing.
+ * Real-time updates via SSE.
+ */
+
+import { useState, useEffect, useCallback } from 'react'
+import {
+    Box,
+    Typography,
+    Table,
+    TableBody,
+    TableCell,
+    TableContainer,
+    TableHead,
+    TableRow,
+    Paper,
+    Checkbox,
+    Button,
+    Chip,
+    IconButton,
+    Tooltip,
+    CircularProgress,
+    Alert,
+    LinearProgress,
+} from '@mui/material'
+import {
+    PlayArrow as PlayIcon,
+    Refresh as RefreshIcon,
+    Warning as WarningIcon,
+} from '@mui/icons-material'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import axios from 'axios'
+
+// Types
+interface VideoQueueStatus {
+    video_id: number
+    video_title: string
+    channel_name: string
+    duration_seconds: number
+    total_chunks: number
+    pending_chunks: number
+    queued_jobs: number
+    processing_jobs: number
+    completed_jobs: number
+    failed_jobs: number
+}
+
+interface QueueStats {
+    queued: number
+    processing: number
+    completed: number
+    failed: number
+    pending_chunks: number
+}
+
+// API client
+const api = axios.create({ baseURL: '/api' })
+
+// Helper to format duration
+const formatDuration = (seconds: number): string => {
+    const hours = Math.floor(seconds / 3600)
+    const mins = Math.floor((seconds % 3600) / 60)
+    const secs = seconds % 60
+    if (hours > 0) {
+        return `${hours}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+    }
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
+interface PreprocessingPageProps {
+    userId: number
+}
+
+export function PreprocessingPage({ userId }: PreprocessingPageProps) {
+    const [selectedVideos, setSelectedVideos] = useState<Set<number>>(new Set())
+    const [sseConnected, setSseConnected] = useState(false)
+    const queryClient = useQueryClient()
+
+    // Fetch queue summary
+    const { data: videos, isLoading, error, refetch } = useQuery<VideoQueueStatus[]>({
+        queryKey: ['queue-summary'],
+        queryFn: () => api.get('/queue/summary').then(r => r.data),
+        refetchInterval: 10000, // Fallback polling every 10s
+    })
+
+    // Fetch queue stats
+    const { data: stats } = useQuery<QueueStats>({
+        queryKey: ['queue-stats'],
+        queryFn: () => api.get('/queue/stats').then(r => r.data),
+        refetchInterval: 5000,
+    })
+
+    // SSE connection for real-time updates
+    useEffect(() => {
+        const eventSource = new EventSource('/api/queue/status')
+
+        eventSource.onopen = () => {
+            setSseConnected(true)
+        }
+
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data)
+
+                if (data.event === 'job_started' ||
+                    data.event === 'job_completed' ||
+                    data.event === 'job_failed') {
+                    // Refetch data on any job status change
+                    queryClient.invalidateQueries({ queryKey: ['queue-summary'] })
+                    queryClient.invalidateQueries({ queryKey: ['queue-stats'] })
+                }
+            } catch (e) {
+                // Ignore parse errors (heartbeats, etc.)
+            }
+        }
+
+        eventSource.onerror = () => {
+            setSseConnected(false)
+        }
+
+        return () => {
+            eventSource.close()
+        }
+    }, [queryClient])
+
+    // Add to queue mutation
+    const addToQueue = useMutation({
+        mutationFn: (videoIds: number[]) =>
+            api.post('/queue/add-videos', { video_ids: videoIds }, {
+                headers: { 'X-User-ID': userId.toString() }
+            }),
+        onSuccess: (response) => {
+            const data = response.data
+            console.log(`Queued ${data.queued} chunks, skipped ${data.skipped}`)
+            queryClient.invalidateQueries({ queryKey: ['queue-summary'] })
+            queryClient.invalidateQueries({ queryKey: ['queue-stats'] })
+            setSelectedVideos(new Set())
+        }
+    })
+
+    // Retry failed mutation
+    const retryFailed = useMutation({
+        mutationFn: (videoId: number) =>
+            api.post(`/queue/retry-failed/${videoId}`, {}, {
+                headers: { 'X-User-ID': userId.toString() }
+            }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['queue-summary'] })
+            queryClient.invalidateQueries({ queryKey: ['queue-stats'] })
+        }
+    })
+
+    // Selection handlers
+    const toggleVideo = useCallback((videoId: number) => {
+        setSelectedVideos(prev => {
+            const next = new Set(prev)
+            if (next.has(videoId)) {
+                next.delete(videoId)
+            } else {
+                next.add(videoId)
+            }
+            return next
+        })
+    }, [])
+
+    const toggleAll = useCallback(() => {
+        if (!videos) return
+
+        if (selectedVideos.size === videos.length) {
+            setSelectedVideos(new Set())
+        } else {
+            setSelectedVideos(new Set(videos.map(v => v.video_id)))
+        }
+    }, [videos, selectedVideos])
+
+    // Get status chip for a video
+    const getStatusChip = (video: VideoQueueStatus) => {
+        if (video.processing_jobs > 0) {
+            return (
+                <Chip
+                    icon={<CircularProgress size={12} />}
+                    label="Processing..."
+                    color="info"
+                    size="small"
+                />
+            )
+        }
+        if (video.queued_jobs > 0) {
+            return (
+                <Chip
+                    label={`${video.queued_jobs} queued`}
+                    color="warning"
+                    size="small"
+                />
+            )
+        }
+        if (video.failed_jobs > 0) {
+            return (
+                <Chip
+                    icon={<WarningIcon />}
+                    label={`${video.failed_jobs} failed`}
+                    color="error"
+                    size="small"
+                />
+            )
+        }
+        if (video.pending_chunks > 0) {
+            return (
+                <Chip
+                    label={`${video.pending_chunks} pending`}
+                    variant="outlined"
+                    size="small"
+                />
+            )
+        }
+        return (
+            <Chip
+                label="Ready"
+                color="success"
+                size="small"
+            />
+        )
+    }
+
+    // Calculate progress for a video
+    const getProgress = (video: VideoQueueStatus): number => {
+        if (video.total_chunks === 0) return 0
+        const processed = video.completed_jobs
+        return (processed / video.total_chunks) * 100
+    }
+
+    if (isLoading) {
+        return (
+            <Box sx={{ p: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
+                <CircularProgress />
+                <Typography>Loading queue...</Typography>
+            </Box>
+        )
+    }
+
+    if (error) {
+        return (
+            <Box sx={{ p: 3 }}>
+                <Alert severity="error">
+                    Failed to load processing queue. Is the backend running?
+                </Alert>
+            </Box>
+        )
+    }
+
+    return (
+        <Box className="preprocessing-page" sx={{ p: 3 }}>
+            {/* Header */}
+            <Box sx={{ mb: 3 }}>
+                <Typography variant="h5" gutterBottom>
+                    🎤 Audio Preprocessing
+                </Typography>
+                <Typography color="text.secondary">
+                    Queue videos for Gemini transcription. Chunks are processed one at a time by the background worker.
+                </Typography>
+            </Box>
+
+            {/* Status bar */}
+            <Paper sx={{ p: 2, mb: 3, display: 'flex', gap: 3, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box
+                        sx={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            bgcolor: sseConnected ? 'success.main' : 'error.main'
+                        }}
+                    />
+                    <Typography variant="body2" color="text.secondary">
+                        {sseConnected ? 'Connected' : 'Disconnected'}
+                    </Typography>
+                </Box>
+
+                {stats && (
+                    <>
+                        <Chip label={`${stats.pending_chunks} pending`} size="small" variant="outlined" />
+                        <Chip label={`${stats.queued} queued`} size="small" color="warning" />
+                        <Chip label={`${stats.processing} processing`} size="small" color="info" />
+                        <Chip label={`${stats.completed} completed`} size="small" color="success" />
+                        {stats.failed > 0 && (
+                            <Chip label={`${stats.failed} failed`} size="small" color="error" />
+                        )}
+                    </>
+                )}
+
+                <Box sx={{ flexGrow: 1 }} />
+
+                <Button
+                    variant="contained"
+                    startIcon={<PlayIcon />}
+                    onClick={() => addToQueue.mutate(Array.from(selectedVideos))}
+                    disabled={selectedVideos.size === 0 || addToQueue.isPending}
+                >
+                    {addToQueue.isPending ? 'Adding...' : `Process Selected (${selectedVideos.size})`}
+                </Button>
+
+                <Tooltip title="Refresh list">
+                    <IconButton onClick={() => refetch()}>
+                        <RefreshIcon />
+                    </IconButton>
+                </Tooltip>
+            </Paper>
+
+            {/* Instructions */}
+            {(!videos || videos.length === 0) && (
+                <Alert severity="info" sx={{ mb: 3 }}>
+                    No videos need processing. Upload videos using the Ingest GUI to see them here.
+                </Alert>
+            )}
+
+            {/* Video table */}
+            {videos && videos.length > 0 && (
+                <TableContainer component={Paper}>
+                    <Table>
+                        <TableHead>
+                            <TableRow>
+                                <TableCell padding="checkbox">
+                                    <Checkbox
+                                        checked={selectedVideos.size === videos.length && videos.length > 0}
+                                        indeterminate={selectedVideos.size > 0 && selectedVideos.size < videos.length}
+                                        onChange={toggleAll}
+                                    />
+                                </TableCell>
+                                <TableCell>Video</TableCell>
+                                <TableCell>Channel</TableCell>
+                                <TableCell>Duration</TableCell>
+                                <TableCell>Progress</TableCell>
+                                <TableCell>Status</TableCell>
+                                <TableCell>Actions</TableCell>
+                            </TableRow>
+                        </TableHead>
+                        <TableBody>
+                            {videos.map(video => (
+                                <TableRow
+                                    key={video.video_id}
+                                    sx={{
+                                        bgcolor: selectedVideos.has(video.video_id)
+                                            ? 'action.selected'
+                                            : 'inherit'
+                                    }}
+                                >
+                                    <TableCell padding="checkbox">
+                                        <Checkbox
+                                            checked={selectedVideos.has(video.video_id)}
+                                            onChange={() => toggleVideo(video.video_id)}
+                                        />
+                                    </TableCell>
+                                    <TableCell>
+                                        <Typography variant="body2" noWrap sx={{ maxWidth: 300 }}>
+                                            {video.video_title}
+                                        </Typography>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Typography variant="body2" color="text.secondary">
+                                            {video.channel_name}
+                                        </Typography>
+                                    </TableCell>
+                                    <TableCell>
+                                        {formatDuration(video.duration_seconds)}
+                                    </TableCell>
+                                    <TableCell sx={{ minWidth: 150 }}>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <LinearProgress
+                                                variant="determinate"
+                                                value={getProgress(video)}
+                                                sx={{ flexGrow: 1, height: 6, borderRadius: 1 }}
+                                            />
+                                            <Typography variant="caption" color="text.secondary">
+                                                {video.completed_jobs}/{video.total_chunks}
+                                            </Typography>
+                                        </Box>
+                                    </TableCell>
+                                    <TableCell>
+                                        {getStatusChip(video)}
+                                    </TableCell>
+                                    <TableCell>
+                                        {video.failed_jobs > 0 && (
+                                            <Tooltip title={`Retry ${video.failed_jobs} failed chunks`}>
+                                                <IconButton
+                                                    size="small"
+                                                    onClick={() => retryFailed.mutate(video.video_id)}
+                                                    disabled={retryFailed.isPending}
+                                                >
+                                                    <RefreshIcon fontSize="small" />
+                                                </IconButton>
+                                            </Tooltip>
+                                        )}
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </TableContainer>
+            )}
+
+            {/* Instructions */}
+            <Alert severity="info" sx={{ mt: 3 }}>
+                <Typography variant="body2" gutterBottom>
+                    <strong>How it works:</strong>
+                </Typography>
+                <Typography variant="body2">
+                    1. Select videos and click "Process Selected" to add their chunks to the queue.<br />
+                    2. The background worker processes one chunk at a time (run with: <code>python -m backend.processing.gemini_worker --queue</code>).<br />
+                    3. Real-time updates show progress. Failed chunks can be retried using the refresh button.
+                </Typography>
+            </Alert>
+        </Box>
+    )
+}

@@ -1,7 +1,7 @@
 /**
- * Processing Page (gemini_ui_5)
+ * Denoising Page (formerly Processing Page)
  * 
- * Batch noise processing queue management.
+ * Batch noise processing queue management using DeepFilterNet.
  * Lists chunks flagged for denoising and allows triggering batch denoise.
  */
 

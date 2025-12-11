@@ -1,9 +1,10 @@
 /**
- * Channel Page - Video List with Accordion Chunk Expansion
+ * Channel Page - Two-View Navigation
  * 
- * Shows all videos within a selected channel in list view.
- * Click video row to expand/collapse chunk list.
- * Click chunk to navigate to WorkbenchPage.
+ * View 1: Channel List (default) - Shows all channels with stats
+ * View 2: Video List - Shows videos for selected channel
+ * 
+ * Back button returns to channel list (not dashboard).
  */
 
 import { useState } from 'react'
@@ -35,6 +36,11 @@ import {
     VolumeOff,
     PlayArrow,
     AccessTime,
+    Build,
+    Folder,
+    VideoLibrary,
+    Pending,
+    ChevronRight,
 } from '@mui/icons-material'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
@@ -46,6 +52,14 @@ interface Channel {
     id: number
     name: string
     url: string
+}
+
+interface ChannelStats {
+    channel_id: number
+    total_videos: number
+    total_chunks: number
+    pending_chunks: number
+    approved_chunks: number
 }
 
 interface Video {
@@ -82,28 +96,49 @@ interface ChunkInfo {
 
 interface ChannelPageProps {
     userId: number
-    channel: Channel
     onVideoSelect: (videoId: number, chunkId?: number) => void
-    onBack: () => void
 }
 
-export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelPageProps) {
+export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
+    const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null)
     const [expandedVideoId, setExpandedVideoId] = useState<number | null>(null)
     const queryClient = useQueryClient()
 
     // Configure API header
     api.defaults.headers.common['X-User-ID'] = userId.toString()
 
-    // Fetch videos for this channel
-    const { data: videos = [], isLoading, error } = useQuery<Video[]>({
-        queryKey: ['videos', channel.id],
-        queryFn: () => api.get(`/channels/${channel.id}/videos`).then(res => res.data),
+    // ==================== CHANNEL LIST VIEW ====================
+
+    // Fetch all channels
+    const { data: channels = [], isLoading: loadingChannels } = useQuery<Channel[]>({
+        queryKey: ['channels'],
+        queryFn: () => api.get('/channels').then(res => res.data),
+    })
+
+    // Fetch channel stats
+    const { data: channelStats = [] } = useQuery<ChannelStats[]>({
+        queryKey: ['channels', 'stats'],
+        queryFn: () => api.get('/channels/stats').then(res => res.data).catch(() => []),
+    })
+
+    const getChannelStats = (channelId: number): ChannelStats | undefined => {
+        return channelStats.find(s => s.channel_id === channelId)
+    }
+
+    // ==================== VIDEO LIST VIEW ====================
+
+    // Fetch videos for selected channel
+    const { data: videos = [], isLoading: loadingVideos, error: videoError } = useQuery<Video[]>({
+        queryKey: ['videos', selectedChannel?.id],
+        queryFn: () => api.get(`/channels/${selectedChannel!.id}/videos`).then(res => res.data),
+        enabled: !!selectedChannel,
     })
 
     // Fetch video stats
     const { data: videoStats = [] } = useQuery<VideoStats[]>({
-        queryKey: ['videos', 'stats', channel.id],
-        queryFn: () => api.get(`/channels/${channel.id}/videos/stats`).then(res => res.data).catch(() => []),
+        queryKey: ['videos', 'stats', selectedChannel?.id],
+        queryFn: () => api.get(`/channels/${selectedChannel!.id}/videos/stats`).then(res => res.data).catch(() => []),
+        enabled: !!selectedChannel,
     })
 
     // Fetch chunks for expanded video
@@ -113,23 +148,11 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
         enabled: !!expandedVideoId,
     })
 
-    // Get stats for a video
     const getVideoStats = (videoId: number): VideoStats | undefined => {
         return videoStats.find(s => s.video_id === videoId)
     }
 
-    // Format duration
-    const formatDuration = (seconds: number): string => {
-        const hours = Math.floor(seconds / 3600)
-        const mins = Math.floor((seconds % 3600) / 60)
-        if (hours > 0) return `${hours}h ${mins}m`
-        return `${mins}m`
-    }
-
-    // Toggle video expansion
-    const toggleExpand = (videoId: number) => {
-        setExpandedVideoId(prev => prev === videoId ? null : videoId)
-    }
+    // ==================== MUTATIONS ====================
 
     // Unlock chunk mutation
     const unlockMutation = useMutation({
@@ -139,7 +162,28 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
         },
     })
 
-    // Get chunk status display - now checks if locked by current user
+    // Manual chunking mutation
+    const chunkMutation = useMutation({
+        mutationFn: (videoId: number) => api.post(`/videos/${videoId}/chunk`),
+        onSuccess: (_, videoId) => {
+            queryClient.invalidateQueries({ queryKey: ['video', 'chunks', videoId] })
+            queryClient.invalidateQueries({ queryKey: ['videos', 'stats', selectedChannel?.id] })
+        },
+    })
+
+    // ==================== HELPERS ====================
+
+    const formatDuration = (seconds: number): string => {
+        const hours = Math.floor(seconds / 3600)
+        const mins = Math.floor((seconds % 3600) / 60)
+        if (hours > 0) return `${hours}h ${mins}m`
+        return `${mins}m`
+    }
+
+    const toggleExpand = (videoId: number) => {
+        setExpandedVideoId(prev => prev === videoId ? null : videoId)
+    }
+
     const getChunkStatusChip = (chunk: ChunkInfo) => {
         const isLockedByMe = chunk.locked_by_user_id === userId
 
@@ -168,18 +212,139 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
 
         switch (chunk.status) {
             case 'approved':
+            case 'APPROVED':
                 return <Chip icon={<CheckCircle fontSize="small" />} label="Approved" size="small" color="success" />
             case 'review_ready':
+            case 'REVIEW_READY':
             case 'in_review':
+            case 'IN_REVIEW':
                 return <Chip icon={<PlayArrow fontSize="small" />} label="Ready" size="small" color="info" />
             case 'pending':
+            case 'PENDING':
                 return <Chip icon={<HourglassEmpty fontSize="small" />} label="Processing" size="small" color="default" />
             default:
                 return <Chip label={chunk.status} size="small" />
         }
     }
 
-    if (error) {
+    // ==================== CHANNEL LIST RENDER ====================
+
+    if (!selectedChannel) {
+        return (
+            <Box className="channel-page">
+                <Box className="channel-page-header">
+                    <Typography variant="h5">📁 Channels</Typography>
+                </Box>
+
+                <Box className="video-section" sx={{ mt: 2 }}>
+                    {loadingChannels ? (
+                        <Box>
+                            {[1, 2, 3].map(i => (
+                                <Skeleton key={i} variant="rounded" height={56} sx={{ mb: 1 }} />
+                            ))}
+                        </Box>
+                    ) : channels.length === 0 ? (
+                        <Alert severity="info">
+                            No channels yet. Use the ingestion tool to add YouTube channels.
+                        </Alert>
+                    ) : (
+                        <TableContainer component={Paper} sx={{ bgcolor: 'rgba(255,255,255,0.02)' }}>
+                            <Table>
+                                <TableHead>
+                                    <TableRow>
+                                        <TableCell>Channel Name</TableCell>
+                                        <TableCell width={100}>Videos</TableCell>
+                                        <TableCell width={120}>Pending</TableCell>
+                                        <TableCell width={120}>Approved</TableCell>
+                                        <TableCell width={140}>Status</TableCell>
+                                        <TableCell width={100}>Action</TableCell>
+                                    </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                    {channels.map(channel => {
+                                        const stats = getChannelStats(channel.id)
+                                        const hasPending = (stats?.pending_chunks || 0) > 0
+
+                                        return (
+                                            <TableRow
+                                                key={channel.id}
+                                                hover
+                                                sx={{
+                                                    cursor: 'pointer',
+                                                    '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' }
+                                                }}
+                                                onClick={() => setSelectedChannel(channel)}
+                                            >
+                                                <TableCell>
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                        <Folder sx={{ color: '#90caf9' }} />
+                                                        <Typography fontWeight={500}>
+                                                            {channel.name}
+                                                        </Typography>
+                                                    </Box>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Chip
+                                                        icon={<VideoLibrary sx={{ fontSize: 16 }} />}
+                                                        label={stats?.total_videos || 0}
+                                                        size="small"
+                                                        variant="outlined"
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Chip
+                                                        icon={<Pending sx={{ fontSize: 16 }} />}
+                                                        label={stats?.pending_chunks || 0}
+                                                        size="small"
+                                                        color={hasPending ? 'warning' : 'default'}
+                                                        variant={hasPending ? 'filled' : 'outlined'}
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Chip
+                                                        icon={<CheckCircle sx={{ fontSize: 16 }} />}
+                                                        label={stats?.approved_chunks || 0}
+                                                        size="small"
+                                                        color={(stats?.approved_chunks || 0) > 0 ? 'success' : 'default'}
+                                                        variant="outlined"
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    {hasPending ? (
+                                                        <Chip label="Needs review" size="small" color="warning" />
+                                                    ) : (stats?.approved_chunks || 0) > 0 ? (
+                                                        <Chip label="Up to date" size="small" color="success" variant="outlined" />
+                                                    ) : (
+                                                        <Chip label="Empty" size="small" variant="outlined" />
+                                                    )}
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Button
+                                                        size="small"
+                                                        endIcon={<ChevronRight />}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            setSelectedChannel(channel)
+                                                        }}
+                                                    >
+                                                        View
+                                                    </Button>
+                                                </TableCell>
+                                            </TableRow>
+                                        )
+                                    })}
+                                </TableBody>
+                            </Table>
+                        </TableContainer>
+                    )}
+                </Box>
+            </Box>
+        )
+    }
+
+    // ==================== VIDEO LIST RENDER ====================
+
+    if (videoError) {
         return (
             <Box className="channel-page">
                 <Alert severity="error">Failed to load videos for this channel.</Alert>
@@ -189,13 +354,13 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
 
     return (
         <Box className="channel-page">
-            {/* Header */}
+            {/* Header with back button */}
             <Box className="channel-page-header">
-                <IconButton onClick={onBack} sx={{ color: 'white', mr: 2 }}>
+                <IconButton onClick={() => setSelectedChannel(null)} sx={{ color: 'white', mr: 2 }}>
                     <ArrowBack />
                 </IconButton>
                 <Box>
-                    <Typography variant="h5">{channel.name}</Typography>
+                    <Typography variant="h5">{selectedChannel.name}</Typography>
                     <Typography variant="body2" color="text.secondary">
                         {videos.length} videos
                     </Typography>
@@ -204,7 +369,7 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
 
             {/* Video List */}
             <Box className="video-section" sx={{ mt: 2 }}>
-                {isLoading ? (
+                {loadingVideos ? (
                     <Box>
                         {[1, 2, 3].map(i => (
                             <Skeleton key={i} variant="rounded" height={60} sx={{ mb: 1 }} />
@@ -222,8 +387,9 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
                                     <TableCell width={40}></TableCell>
                                     <TableCell>Video Title</TableCell>
                                     <TableCell width={100}>Duration</TableCell>
-                                    <TableCell width={200}>Progress</TableCell>
-                                    <TableCell width={120}>Actions</TableCell>
+                                    <TableCell width={80}>Chunks</TableCell>
+                                    <TableCell width={150}>Progress</TableCell>
+                                    <TableCell width={140}>Actions</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -257,7 +423,7 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
                                                         variant="body1"
                                                         sx={{
                                                             fontWeight: 500,
-                                                            maxWidth: 700,
+                                                            maxWidth: 500,
                                                             overflow: 'hidden',
                                                             display: '-webkit-box',
                                                             WebkitLineClamp: 2,
@@ -278,28 +444,52 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
                                                     />
                                                 </TableCell>
                                                 <TableCell>
+                                                    <Chip
+                                                        label={totalCount}
+                                                        size="small"
+                                                        color={totalCount === 0 ? 'error' : 'default'}
+                                                        variant={totalCount === 0 ? 'filled' : 'outlined'}
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
                                                     <Typography variant="body2" color="text.secondary">
-                                                        {approvedCount}/{totalCount} approved
+                                                        {totalCount > 0 ? `${approvedCount}/${totalCount} approved` : 'No chunks'}
                                                         {readyCount > 0 && ` • ${readyCount} ready`}
                                                     </Typography>
                                                 </TableCell>
                                                 <TableCell>
-                                                    <Button
-                                                        size="small"
-                                                        variant="text"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation()
-                                                            toggleExpand(video.id)
-                                                        }}
-                                                    >
-                                                        {isExpanded ? 'Collapse' : 'Show Chunks'}
-                                                    </Button>
+                                                    {totalCount === 0 ? (
+                                                        <Button
+                                                            size="small"
+                                                            variant="contained"
+                                                            color="warning"
+                                                            startIcon={chunkMutation.isPending ? <HourglassEmpty /> : <Build />}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                chunkMutation.mutate(video.id)
+                                                            }}
+                                                            disabled={chunkMutation.isPending}
+                                                        >
+                                                            {chunkMutation.isPending ? 'Chunking...' : 'Run Chunking'}
+                                                        </Button>
+                                                    ) : (
+                                                        <Button
+                                                            size="small"
+                                                            variant="text"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                toggleExpand(video.id)
+                                                            }}
+                                                        >
+                                                            {isExpanded ? 'Collapse' : 'Show Chunks'}
+                                                        </Button>
+                                                    )}
                                                 </TableCell>
                                             </TableRow>
 
                                             {/* Chunk List (Expanded) */}
                                             <TableRow key={`${video.id}-chunks`}>
-                                                <TableCell colSpan={5} sx={{ p: 0, border: 0 }}>
+                                                <TableCell colSpan={6} sx={{ p: 0, border: 0 }}>
                                                     <Collapse in={isExpanded} timeout="auto" unmountOnExit>
                                                         <Box sx={{
                                                             bgcolor: 'rgba(0,0,0,0.2)',
@@ -309,9 +499,25 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
                                                             {loadingChunks ? (
                                                                 <Skeleton variant="rounded" height={100} />
                                                             ) : chunks.length === 0 ? (
-                                                                <Typography color="text.secondary">
-                                                                    No chunks found for this video.
-                                                                </Typography>
+                                                                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+                                                                    <Typography color="text.secondary">
+                                                                        No chunks found for this video.
+                                                                    </Typography>
+                                                                    <Button
+                                                                        variant="contained"
+                                                                        color="warning"
+                                                                        startIcon={chunkMutation.isPending ? <HourglassEmpty /> : <Build />}
+                                                                        onClick={() => chunkMutation.mutate(video.id)}
+                                                                        disabled={chunkMutation.isPending}
+                                                                    >
+                                                                        {chunkMutation.isPending ? 'Chunking...' : 'Run Chunking'}
+                                                                    </Button>
+                                                                    {chunkMutation.isError && (
+                                                                        <Typography color="error" variant="body2">
+                                                                            Chunking failed. Check server logs.
+                                                                        </Typography>
+                                                                    )}
+                                                                </Box>
                                                             ) : (
                                                                 <Table size="small">
                                                                     <TableHead>
@@ -355,7 +561,7 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
                                                                                     {(() => {
                                                                                         const isLockedByMe = chunk.locked_by_user_id === userId
                                                                                         const isLockedByOther = chunk.locked_by_username && !isLockedByMe
-                                                                                        const isProcessing = chunk.status === 'pending'
+                                                                                        const isProcessing = chunk.status === 'pending' || chunk.status === 'PENDING'
 
                                                                                         return (
                                                                                             <Box sx={{ display: 'flex', gap: 1 }}>
@@ -365,7 +571,7 @@ export function ChannelPage({ userId, channel, onVideoSelect, onBack }: ChannelP
                                                                                                     disabled={isLockedByOther || isProcessing}
                                                                                                     onClick={() => onVideoSelect(video.id, chunk.id)}
                                                                                                 >
-                                                                                                    {chunk.status === 'approved' ? 'View' : 'Review'}
+                                                                                                    {chunk.status === 'approved' || chunk.status === 'APPROVED' ? 'View' : 'Review'}
                                                                                                 </Button>
                                                                                                 {isLockedByMe && (
                                                                                                     <Button

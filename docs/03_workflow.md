@@ -58,11 +58,11 @@ npm run dev
 
 ### Access Points
 
-| Service | URL | Purpose |
-|---------|-----|---------|
-| Frontend | http://localhost:5173 | Annotation workbench |
-| API Docs | http://localhost:8000/docs | Swagger UI |
-| Health Check | http://localhost:8000/health | Server status |
+| Service      | URL                          | Purpose              |
+| ------------ | ---------------------------- | -------------------- |
+| Frontend     | http://localhost:5173        | Annotation workbench |
+| API Docs     | http://localhost:8000/docs   | Swagger UI           |
+| Health Check | http://localhost:8000/health | Server status        |
 
 ---
 
@@ -137,6 +137,7 @@ python -m backend.processing.chunker --all
 ```
 
 **What happens**:
+
 1. Reads video from `data/raw/`
 2. Creates 5-min WAV files in `data/chunks/video_{id}/`
 3. Each chunk has 5-second overlap with the next
@@ -165,6 +166,7 @@ python -m backend.processing.gemini_worker --all 20
 ```
 
 **What happens**:
+
 1. Uploads audio to Gemini API
 2. Receives JSON with timestamps and text
 3. Parses and converts timestamps to floats
@@ -210,17 +212,20 @@ stateDiagram-v2
 ### 4.3 Chunk Locking
 
 **Lock Ownership Features**:
+
 - **Locked by you**: Green chip, Review + Unlock buttons available
 - **Locked by others**: Orange chip, Review disabled
 - **Lock expiry**: 30 minutes auto-expire for crashed sessions
 
 **Unlocking**:
+
 - Click "Unlock" button on ChannelPage to release your lock
 - Useful when switching between chunks without approving
 
 ### 4.4 No Chunk Selected
 
 If you navigate to the Annotation tab without selecting a chunk:
+
 - Warning message: "No video chunk selected"
 - "Back to Dashboard" button to navigate safely
 - Prevents accidental auto-assignment
@@ -228,12 +233,14 @@ If you navigate to the Annotation tab without selecting a chunk:
 ### 4.5 Editing Segments
 
 **Waveform Controls**:
+
 - Click region to select segment
 - Drag edges to adjust timestamps
 - `Space` to play/pause
 - `←`/`→` to seek 5 seconds
 
 **Table Controls**:
+
 - Click row to select and play segment
 - Edit transcript/translation inline
 - Checkbox to verify segment
@@ -242,6 +249,7 @@ If you navigate to the Annotation tab without selecting a chunk:
 ### 4.6 Saving Changes
 
 **Manual Save** (no auto-save):
+
 - `Ctrl+S` or click "Save Changes" button
 - Unsaved indicator shows when changes pending
 - Navigation prompt if leaving with unsaved changes
@@ -249,6 +257,7 @@ If you navigate to the Annotation tab without selecting a chunk:
 ### 4.7 Flagging for Denoise
 
 If audio is noisy:
+
 1. Toggle "Flag for Denoise" switch in header
 2. Continue editing normally
 3. Night shift will process with DeepFilterNet
@@ -256,6 +265,7 @@ If audio is noisy:
 ### 4.8 Approving Chunk
 
 When satisfied with all segments:
+
 1. Ensure all segments are verified (checkboxes)
 2. Click **Finish Review** button
 3. Lock is released, status → `APPROVED`
@@ -278,6 +288,7 @@ python -m backend.operations.denoiser --limit 10
 ```
 
 **Output**:
+
 ```
 Denoise Queue Status:
   not_needed: 45
@@ -294,6 +305,7 @@ Results: {'success': 5, 'failed': 0, 'skipped': 0}
 ### 5.2 Automating Operations
 
 **Windows Task Scheduler**:
+
 ```powershell
 # Create scheduled task to run denoiser every night at 2 AM
 $action = New-ScheduledTaskAction -Execute "python" -Argument "-m backend.operations.denoiser --limit 50"
@@ -338,12 +350,13 @@ After resolution:
 **Manifest TSV** (`data/export/manifest.tsv`):
 
 ```tsv
-id	video_id	audio_path	start	end	duration	transcript	translation
-1	1	chunks/video_1/chunk_000.wav	0.000	5.230	5.230	Hello các bạn	Xin chào các bạn
-2	1	chunks/video_1/chunk_000.wav	5.230	12.450	7.220	Hôm nay chúng ta...	Hôm nay chúng ta...
+id    video_id    audio_path    start    end    duration    transcript    translation
+1    1    chunks/video_1/chunk_000.wav    0.000    5.230    5.230    Hello các bạn    Xin chào các bạn
+2    1    chunks/video_1/chunk_000.wav    5.230    12.450    7.220    Hôm nay chúng ta...    Hôm nay chúng ta...
 ```
 
 **Columns**:
+
 - `id`: Segment ID (unique)
 - `video_id`: Source video
 - `audio_path`: Path to WAV file relative to DATA_ROOT
@@ -363,6 +376,7 @@ Error: could not connect to server
 ```
 
 **Solution**:
+
 1. Check PostgreSQL is running: `pg_isready`
 2. Verify DATABASE_URL in `.env`
 3. Check firewall allows port 5432
@@ -374,6 +388,7 @@ Error: 429 RESOURCE_EXHAUSTED
 ```
 
 **Solution**:
+
 1. Add more API keys to `GEMINI_API_KEYS` in `.env`
 2. Worker automatically rotates keys on failure
 3. Wait for quota reset (daily limit)
@@ -385,6 +400,7 @@ FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg'
 ```
 
 **Solution**:
+
 1. Install FFmpeg: `choco install ffmpeg` or download from https://ffmpeg.org
 2. Add to PATH: `$env:PATH += ";C:\ffmpeg\bin"`
 
@@ -395,6 +411,7 @@ HTTP 409: Chunk is locked by Alice until 2025-12-09 22:30:00
 ```
 
 **Solution**:
+
 - Wait for lock expiry (30 minutes max)
 - Ask Alice to unlock via frontend
 - Admin can manually clear: `UPDATE chunks SET locked_by_user_id = NULL WHERE id = X`
@@ -406,6 +423,7 @@ FileNotFoundError: 'deepfilter' not found
 ```
 
 **Solution**:
+
 ```powershell
 pip install deepfilternet
 # May need CUDA for GPU acceleration
@@ -418,6 +436,7 @@ Failed to load users. Is the backend running on port 8000?
 ```
 
 **Solution**:
+
 1. Check backend is running: `curl http://localhost:8000/health`
 2. Check Vite proxy config in `frontend/vite.config.ts`
 3. Verify CORS origins in `backend/main.py`
@@ -426,15 +445,15 @@ Failed to load users. Is the backend running on port 8000?
 
 ## Appendix: Command Reference
 
-| Command | Description |
-|---------|-------------|
-| `uvicorn backend.main:app --reload` | Start FastAPI backend |
-| `cd frontend && npm run dev` | Start React frontend |
-| `python scripts/init_db.py` | Initialize/seed database |
-| `python ingest_gui.py` | Launch ingestion GUI |
-| `python -m backend.processing.chunker <video_id>` | Chunk a video |
-| `python -m backend.processing.gemini_worker <chunk_id>` | Transcribe a chunk |
-| `python -m backend.operations.denoiser --status` | Check denoise queue |
-| `python -m backend.operations.exporter --all` | Export all approved |
-| `alembic upgrade head` | Run database migrations |
-| `alembic revision --autogenerate -m "message"` | Create migration |
+| Command                                                 | Description              |
+| ------------------------------------------------------- | ------------------------ |
+| `uvicorn backend.main:app --reload`                     | Start FastAPI backend    |
+| `cd frontend && npm run dev`                            | Start React frontend     |
+| `python scripts/init_db.py`                             | Initialize/seed database |
+| `python ingest_gui.py`                                  | Launch ingestion GUI     |
+| `python -m backend.processing.chunker <video_id>`       | Chunk a video            |
+| `python -m backend.processing.gemini_worker <chunk_id>` | Transcribe a chunk       |
+| `python -m backend.operations.denoiser --status`        | Check denoise queue      |
+| `python -m backend.operations.exporter --all`           | Export all approved      |
+| `alembic upgrade head`                                  | Run database migrations  |
+| `alembic revision --autogenerate -m "message"`          | Create migration         |

@@ -11,12 +11,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
     Box,
     Button,
-    ButtonGroup,
     IconButton,
     Chip,
     Typography,
-    Breadcrumbs,
-    Link,
     Tooltip,
     CircularProgress,
     Alert,
@@ -29,8 +26,6 @@ import {
     VolumeOff,
     CheckCircle,
     Save,
-    Home,
-    NavigateNext,
     ZoomIn,
     ZoomOut,
     Lock,
@@ -297,6 +292,14 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
         refetchSegments()
     }, [refetchSegments])
 
+    // Auto-start chunk when selected (skip "Ready to Review" prompt)
+    // MUST be before early returns to comply with React's Rules of Hooks
+    useEffect(() => {
+        if (!currentChunk && effectiveNextChunk && !lockMutation.isPending) {
+            startChunk(effectiveNextChunk)
+        }
+    }, [effectiveNextChunk, currentChunk, lockMutation.isPending])
+
     // ==========================================================================
     // RENDER
     // ==========================================================================
@@ -361,37 +364,14 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
         )
     }
 
-    // Start review prompt
+    // Loading state while auto-starting chunk
     if (!currentChunk && effectiveNextChunk) {
         return (
             <Box className="workbench-container" sx={{ justifyContent: 'center', alignItems: 'center' }}>
-                <Box sx={{
-                    p: 4,
-                    background: 'var(--glass-bg)',
-                    borderRadius: 3,
-                    textAlign: 'center',
-                    maxWidth: 500
-                }}>
-                    <Typography variant="h5" gutterBottom>
-                        Ready to Review
-                    </Typography>
-                    <Typography variant="h6" color="primary" gutterBottom>
-                        {effectiveNextChunk.video_title}
-                    </Typography>
-                    <Typography color="text.secondary" gutterBottom>
-                        Chunk {effectiveNextChunk.chunk_index + 1} of {effectiveNextChunk.total_chunks}
-                    </Typography>
-                    <Button
-                        variant="contained"
-                        size="large"
-                        startIcon={<PlayArrow />}
-                        onClick={() => startChunk(effectiveNextChunk)}
-                        disabled={lockMutation.isPending}
-                        sx={{ mt: 2 }}
-                    >
-                        {lockMutation.isPending ? 'Acquiring Lock...' : 'Start Review'}
-                    </Button>
-                </Box>
+                <CircularProgress size={60} />
+                <Typography sx={{ mt: 2 }}>
+                    {lockMutation.isPending ? 'Acquiring lock...' : 'Loading annotation...'}
+                </Typography>
             </Box>
         )
     }
@@ -424,32 +404,8 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
                 ZONE A: Control Header
             ================================================================ */}
             <Box className="zone-header">
-                {/* Left: Breadcrumbs */}
-                <Box className="zone-header-left">
-                    <Breadcrumbs
-                        separator={<NavigateNext fontSize="small" />}
-                        sx={{ color: 'rgba(255,255,255,0.7)' }}
-                    >
-                        <Link
-                            href="#"
-                            underline="hover"
-                            color="inherit"
-                            sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}
-                        >
-                            <Home fontSize="small" />
-                            Dashboard
-                        </Link>
-                        <Link href="#" underline="hover" color="inherit">
-                            {currentChunk?.video_title?.split(' ')[0] || 'Channel'}
-                        </Link>
-                        <Typography color="text.primary" sx={{ fontWeight: 600 }}>
-                            Chunk #{(currentChunk?.chunk_index || 0) + 1}
-                        </Typography>
-                    </Breadcrumbs>
-                </Box>
-
-                {/* Center: Denoise toggle + Lock status */}
-                <Box className="zone-header-center">
+                {/* Left: Status badges (Flag, Lock, Unsaved) */}
+                <Box className="zone-header-left" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Tooltip title="Ctrl+D to toggle">
                         <Button
                             variant={isDenoiseActive ? 'contained' : 'outlined'}
@@ -487,27 +443,34 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
                     )}
                 </Box>
 
+                {/* Center: Chunk title */}
+                <Box className="zone-header-center">
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'rgba(255,255,255,0.9)' }}>
+                        {currentChunk?.video_title} • Chunk #{(currentChunk?.chunk_index || 0) + 1}
+                    </Typography>
+                </Box>
+
                 {/* Right: Global actions + Save + Finish buttons */}
-                <Box className="zone-header-right">
-                    {/* Global Verify All / Reject All */}
-                    <ButtonGroup size="small" sx={{ mr: 1 }}>
-                        <Button
-                            variant="outlined"
-                            color="success"
-                            onClick={() => bulkVerifyAllMutation.mutate(segments.map(s => s.id))}
-                            disabled={bulkVerifyAllMutation.isPending || segments.length === 0}
-                        >
-                            Verify All
-                        </Button>
-                        <Button
-                            variant="outlined"
-                            color="error"
-                            onClick={() => bulkRejectAllMutation.mutate(segments.map(s => s.id))}
-                            disabled={bulkRejectAllMutation.isPending || segments.length === 0}
-                        >
-                            Reject All
-                        </Button>
-                    </ButtonGroup>
+                <Box className="zone-header-right" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    {/* Global Verify All / Reject All - aligned with same height */}
+                    <Button
+                        variant="outlined"
+                        color="success"
+                        size="small"
+                        onClick={() => bulkVerifyAllMutation.mutate(segments.map(s => s.id))}
+                        disabled={bulkVerifyAllMutation.isPending || segments.length === 0}
+                    >
+                        Verify All
+                    </Button>
+                    <Button
+                        variant="outlined"
+                        color="error"
+                        size="small"
+                        onClick={() => bulkRejectAllMutation.mutate(segments.map(s => s.id))}
+                        disabled={bulkRejectAllMutation.isPending || segments.length === 0}
+                    >
+                        Reject All
+                    </Button>
 
                     <Button
                         variant="outlined"

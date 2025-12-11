@@ -66,7 +66,7 @@ class BatchProgress:
     completed: int = 0
     failed: int = 0
     skipped: int = 0
-    failed_videos: List[Tuple[str, str]] = field(default_factory=list)  # (title, error)
+    failed_videos: List[Tuple[str, str, str]] = field(default_factory=list)  # (title, error, url)
 
 
 # =============================================================================
@@ -414,10 +414,10 @@ class IngestGUI:
     def _build_log_section(self, parent):
         """Build log output section."""
         log_frame = ttk.LabelFrame(parent, text="Log", padding=5)
-        log_frame.pack(fill=tk.X)
+        log_frame.pack(fill=tk.BOTH, expand=True)  # Allow expansion
         
-        self.log = scrolledtext.ScrolledText(log_frame, height=6, state=tk.DISABLED)
-        self.log.pack(fill=tk.X)
+        self.log = scrolledtext.ScrolledText(log_frame, height=12, state=tk.DISABLED)
+        self.log.pack(fill=tk.BOTH, expand=True)
     
     # =========================================================================
     # LOGGING
@@ -783,7 +783,7 @@ class IngestGUI:
                     self._log(f"✗ Failed: {video.title[:50]}... - {error_msg}")
                     self.root.after(0, lambda it=item, err=error_msg[:30]: self.tree.set(it, "status", f"✗ {err}"))
                     self.progress.failed += 1
-                    self.progress.failed_videos.append((video.title, error_msg))
+                    self.progress.failed_videos.append((video.title, error_msg, video.original_url))
                 
                 self._update_progress()
             
@@ -793,8 +793,17 @@ class IngestGUI:
             
             if self.progress.failed_videos:
                 self._log("\nFailed videos:")
-                for title, error in self.progress.failed_videos:
+                for title, error, url in self.progress.failed_videos:
                     self._log(f"  - {title[:40]}...: {error}")
+                
+                # Copy-paste ready URLs section
+                self._log("\n" + "=" * 50)
+                self._log("📋 FAILED URLS (copy-paste ready):")
+                self._log("-" * 40)
+                for title, error, url in self.progress.failed_videos:
+                    self._log(url)
+                self._log("-" * 40)
+                self._log(f"Total failed: {len(self.progress.failed_videos)}")
             
             self.is_downloading = False
             self.root.after(0, lambda: self.download_btn.config(state=tk.NORMAL))

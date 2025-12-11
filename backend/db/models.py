@@ -10,6 +10,7 @@ Tables:
     - Video: Downloaded episodes
     - Chunk: 5-minute audio segments (unit of work)
     - Segment: Individual transcription entries (training data)
+    - ProcessingJob: Centralized queue for Gemini processing
 """
 
 from datetime import datetime
@@ -45,6 +46,14 @@ class DenoiseStatus(str, Enum):
     FLAGGED = "flagged"        # User requested cleanup
     QUEUED = "queued"          # Night shift script picked it up
     PROCESSED = "processed"    # DeepFilterNet finished
+
+
+class JobStatus(str, Enum):
+    """Processing job queue states (for Gemini worker)."""
+    QUEUED = "queued"         # Waiting in queue
+    PROCESSING = "processing" # Currently being processed by worker
+    COMPLETED = "completed"   # Successfully finished
+    FAILED = "failed"         # Error occurred, can retry
 
 
 # =============================================================================
@@ -196,3 +205,40 @@ class Segment(SQLModel, table=True):
     
     # Relationships
     chunk: Chunk = Relationship(back_populates="segments")
+
+
+# =============================================================================
+# PROCESSING JOB TABLE (Queue Layer)
+# =============================================================================
+
+class ProcessingJob(SQLModel, table=True):
+    """
+    Centralized job queue for Gemini processing.
+    
+    One job = one chunk to process.
+    Worker polls this table, processes QUEUED jobs one-by-one.
+    
+    Deduplication: Before inserting, check if chunk already has 
+    a QUEUED or PROCESSING job. If so, skip.
+    """
+    __tablename__ = "processing_jobs"
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    
+    # Links to the chunk being processed
+    chunk_id: int = Field(foreign_key="chunks.id", index=True)
+    video_id: int = Field(foreign_key="videos.id", index=True)  # Denormalized for fast queries
+    
+    # Job state
+    status: JobStatus = Field(default=JobStatus.QUEUED, index=True)
+    
+    # Tracking timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+    
+    # Error tracking (for FAILED jobs)
+    error_message: Optional[str] = Field(default=None, max_length=1000)
+    
+    # Who requested this job
+    requested_by_user_id: int = Field(foreign_key="users.id")

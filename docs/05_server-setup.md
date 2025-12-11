@@ -161,10 +161,10 @@ Share this IP with your team members.
 
 ```powershell
 # Allow FastAPI through firewall
-New-NetFirewallRule -DisplayName "FastAPI" -Direction Inbound -Port 8000 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "FastAPI" -Direction Inbound -LocalPort 8000 -Protocol TCP -Action Allow
 
 # Allow Vite dev server
-New-NetFirewallRule -DisplayName "Vite" -Direction Inbound -Port 5173 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "Vite" -Direction Inbound -LocalPort 5173 -Protocol TCP -Action Allow
 ```
 
 ### 3.4 Team Setup
@@ -180,12 +180,13 @@ Each team member needs:
 
 ### 4.1 Start Backend
 
+Run in terminal in final_nlp folder:
+
 ```powershell
 # Activate venv
 .\.venv\Scripts\Activate.ps1
 
 # Start FastAPI
-cd C:\Projects\final_nlp
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -196,7 +197,7 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 
 ```powershell
 # New terminal window
-cd C:\Projects\final_nlp\frontend
+cd frontend
 npm install
 npm run dev -- --host 0.0.0.0
 ```

@@ -263,8 +263,8 @@ export function SegmentTable({
                 <Box></Box>
                 <Box>Start</Box>
                 <Box>End</Box>
-                <Box>Transcript (VI/EN)</Box>
-                <Box>Translation (EN)</Box>
+                <Box>Transcript</Box>
+                <Box>Translation</Box>
             </Box>
 
             {/* Table body - scrollable */}
