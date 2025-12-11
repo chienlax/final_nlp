@@ -25,6 +25,10 @@ from dataclasses import dataclass, field
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 
+# Load .env file BEFORE reading environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -91,6 +95,26 @@ def get_users() -> List[dict]:
         return data if isinstance(data, list) else []
     except Exception:
         return []
+
+
+def check_server_health() -> Tuple[bool, str]:
+    """
+    Check if server is reachable.
+    
+    Returns:
+        (is_healthy, message)
+    """
+    try:
+        resp = requests.get(f"{API_BASE.replace('/api', '')}/health", timeout=5)
+        if resp.status_code == 200:
+            return True, "Connected"
+        return False, f"Status {resp.status_code}"
+    except requests.exceptions.ConnectionError:
+        return False, "Connection refused"
+    except requests.exceptions.Timeout:
+        return False, "Timeout"
+    except Exception as e:
+        return False, str(e)[:30]
 
 
 def get_channels() -> List[dict]:
@@ -231,7 +255,7 @@ class IngestGUI:
         self._build_log_section(main)
     
     def _build_user_section(self, parent):
-        """Build user selection dropdown."""
+        """Build user selection dropdown and server status."""
         frame = ttk.Frame(parent)
         frame.pack(fill=tk.X, pady=(0, 10))
         
@@ -252,6 +276,26 @@ class IngestGUI:
         ttk.Label(frame, text="Channel:", style="Header.TLabel").pack(side=tk.LEFT, padx=(0, 5))
         self.channel_label = ttk.Label(frame, text="(auto-detected)", foreground="gray")
         self.channel_label.pack(side=tk.LEFT)
+        
+        # Server status display (right side)
+        server_frame = ttk.Frame(frame)
+        server_frame.pack(side=tk.RIGHT)
+        
+        # Extract host from API_BASE for display (e.g., "100.64.0.1:8000")
+        api_host = API_BASE.replace("http://", "").replace("https://", "").replace("/api", "")
+        
+        # Check server health
+        is_healthy, status_msg = check_server_health()
+        
+        ttk.Label(server_frame, text="Server:", style="Header.TLabel").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(server_frame, text=api_host, foreground="gray").pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Status indicator
+        if is_healthy:
+            status_label = ttk.Label(server_frame, text="✓ Connected", foreground="green")
+        else:
+            status_label = ttk.Label(server_frame, text=f"✗ {status_msg}", foreground="red")
+        status_label.pack(side=tk.LEFT)
     
     # =========================================================================
     # TAB 1: Multiple Video URLs
