@@ -44,16 +44,13 @@ pip install -r requirements.txt
 copy .env.example .env
 # Edit .env with your PostgreSQL password and Gemini API keys
 
-# 4. Initialize database
-python scripts/init_db.py
+# 4. Start all services (recommended)
+.\scripts\start_server.ps1
 
-# 5. Start backend
-uvicorn backend.main:app --reload --port 8000
-
-# 6. Start frontend (new terminal)
-cd frontend
-npm install
-npm run dev
+# OR start manually:
+# Terminal 1: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+# Terminal 2: cd frontend && npm run dev -- --host 0.0.0.0
+# Terminal 3: python -m backend.processing.gemini_worker --queue
 ```
 
 ### Access Points

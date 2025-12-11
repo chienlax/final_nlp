@@ -178,28 +178,34 @@ Each team member needs:
 
 ## 4. Running Services
 
-### 4.1 Start Backend
+### 4.1 Start All Services (Recommended)
 
-Run in terminal in final_nlp folder:
+Run the unified startup script which starts Backend, Frontend, and Gemini Worker in separate windows:
 
 ```powershell
-# Activate venv
-.\.venv\Scripts\Activate.ps1
+.\scripts\start_server.ps1
+```
 
-# Start FastAPI
+### 4.2 Manual Startup (Alternative)
+
+If you prefer to run services manually, open 3 terminal windows:
+
+**Terminal 1: Backend**
+```powershell
+.\.venv\Scripts\Activate.ps1
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-> [!IMPORTANT]
-> Use `--host 0.0.0.0` to accept connections from other machines (via Tailscale).
-
-### 4.2 Start Frontend
-
+**Terminal 2: Frontend**
 ```powershell
-# New terminal window
 cd frontend
-npm install
 npm run dev -- --host 0.0.0.0
+```
+
+**Terminal 3: Gemini Queue Worker**
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m backend.processing.gemini_worker --queue
 ```
 
 ### 4.3 Verify Access
@@ -378,8 +384,10 @@ Error: 403 Forbidden
 
 | Task | Command |
 |------|---------|
+| Start server (all) | `.\scripts\start_server.ps1` |
 | Start backend | `uvicorn backend.main:app --host 0.0.0.0 --port 8000` |
 | Start frontend | `npm run dev -- --host 0.0.0.0` |
+| Start worker | `python -m backend.processing.gemini_worker --queue` |
 | Get Tailscale IP | `tailscale ip -4` |
 | Backup database | `pg_dump -U postgres speech_translation_db > backup.sql` |
 | Push to DVC | `dvc push` |

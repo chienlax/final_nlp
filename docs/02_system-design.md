@@ -164,8 +164,21 @@ erDiagram
         string transcript
         string translation
         bool is_verified
+        bool is_rejected
         timestamp created_at
         timestamp updated_at
+    }
+
+    processing_jobs {
+        int id PK
+        int chunk_id FK
+        int video_id FK
+        enum status
+        int requested_by_user_id FK
+        timestamp created_at
+        timestamp started_at
+        timestamp completed_at
+        string error_message
     }
 ```
 
@@ -176,6 +189,7 @@ erDiagram
 | `UserRole` | ADMIN, ANNOTATOR | Permission levels |
 | `ProcessingStatus` | PENDING, PROCESSING, REVIEW_READY, IN_REVIEW, APPROVED, REJECTED | Chunk workflow state |
 | `DenoiseStatus` | NOT_NEEDED, FLAGGED, QUEUED, PROCESSED | Audio cleanup state |
+| `JobStatus` | QUEUED, PROCESSING, COMPLETED, FAILED | Gemini processing job state |
 
 ### 3.3 File: `backend/db/models.py`
 
@@ -202,7 +216,7 @@ SQLModel class definitions with:
 | `lifespan()` | Creates directories, initializes database on startup |
 | `CORSMiddleware` | Allows React frontend on port 5173 |
 | `StaticFiles` | Serves audio files at `/api/static/` |
-| `include_router()` | Mounts 4 routers under `/api` prefix |
+| `include_router()` | Mounts 6 routers under `/api` prefix (users, videos, chunks, segments, queue, export) |
 
 ### 4.2 Authentication (`backend/auth/deps.py`)
 
@@ -242,29 +256,47 @@ async def get_current_user(
 
 #### Chunks Router (`backend/routers/chunks.py`)
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
 | `/api/chunks` | GET | List chunks (optional filters) |
 | `/api/chunks/next` | GET | Work queue - get next available chunk |
 | `/api/chunks/{id}` | GET | Get chunk with video info |
 | `/api/chunks/{id}/lock` | POST | Acquire 30-min lock |
 | `/api/chunks/{id}/unlock` | POST | Release lock |
-| `/api/chunks/{id}/save` | POST | Batch save all segments |
-| `/api/chunks/{id}/flag-noise` | POST | Mark for denoising |
-| `/api/chunks/{id}/approve` | POST | Approve and release |
-| `/api/videos/{video_id}/chunks` | GET | List chunks for a video |
+| `/api/chunks/{id}/flag-noise` | POST | Toggle denoise flag |
+| `/api/chunks/{id}/approve` | POST | Approve and release lock |
+| `/api/chunks/{id}/retranscript` | POST | Re-queue chunk for Gemini (deletes segments) |
+| `/api/videos/{video_id}/chunks` | GET | List chunks for a video with lock info |
 
 #### Segments Router (`backend/routers/segments.py`)
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/segments` | GET | List segments |
-| `/api/chunks/{id}/segments` | GET | Get chunk's segments |
+| `/api/segments` | GET | List segments (with chunk filter) |
+| `/api/chunks/{id}/segments` | GET | Get chunk's segments (ordered by time) |
 | `/api/segments/{id}` | GET | Get segment by ID |
-| `/api/segments/{id}` | PUT | Update segment |
-| `/api/segments` | POST | Create segment |
+| `/api/segments/{id}` | PUT | Update segment text/timestamps |
+| `/api/segments` | POST | Create new segment |
 | `/api/segments/{id}` | DELETE | Delete segment |
-| `/api/segments/{id}/verify` | POST | Toggle verification |
+| `/api/segments/{id}/verify` | POST | Toggle verification status |
+| `/api/segments/bulk-verify` | POST | Mark multiple segments as verified |
+| `/api/segments/bulk-reject` | POST | Mark multiple segments as rejected |
+
+#### Queue Router (`backend/routers/queue.py`)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/queue` | POST | Add videos to processing queue |
+| `/api/queue/summary` | GET | Get queue status per video |
+| `/api/queue/stream` | GET | SSE endpoint for real-time updates |
+| `/api/queue/{video_id}/retry` | POST | Retry failed jobs for a video |
+| `/api/queue/stats` | GET | Overall queue statistics |
+| `/api/queue/logs` | GET | Get Gemini worker log tail |
+
+#### Export Router (`backend/routers/export.py`)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/export/preview` | GET | Preview export stats (approved chunks, verified segments) |
+| `/api/export/run` | POST | Run export and generate manifest.tsv |
 
 ---
 
@@ -318,6 +350,26 @@ Supports both `M:SS.mmm` and `H:MM:SS.mmm` formats.
 
 ---
 
+### 5.4 Queue Worker (Centralized Processing)
+
+The Gemini worker operates as a **separate long-running process** that polls the `ProcessingJob` table:
+
+**Startup Command**:
+```powershell
+python -m backend.processing.gemini_worker --queue
+```
+
+**Workflow**:
+1. Poll `processing_jobs` for `status = QUEUED`
+2. Claim job with row-level lock (`skip_locked=True`)
+3. Set job status to `PROCESSING`, call Gemini API
+4. Insert segments into database
+5. Set job to `COMPLETED` or `FAILED`
+
+**SSE Integration**: `/api/queue/stream` pushes real-time updates to PreprocessingPage.
+
+---
+
 ## 6. Frontend Layer
 
 ### 6.1 React Application Structure
@@ -326,16 +378,19 @@ Supports both `M:SS.mmm` and `H:MM:SS.mmm` formats.
 frontend/src/
 ├── main.tsx              # Entry point, dark theme, React Query
 ├── App.tsx               # Tab navigation, user selector, state management
+├── api/
+│   └── client.ts             # Shared Axios instance with X-User-ID header
 ├── pages/
 │   ├── DashboardPage.tsx     # System stats, channel list
 │   ├── ChannelPage.tsx       # Video list with accordion chunks
 │   ├── WorkbenchPage.tsx     # Annotation interface (waveform + segments)
-│   ├── ProcessingPage.tsx    # Chunking & Gemini processing controls
+│   ├── PreprocessingPage.tsx # Queue management for Gemini processing
+│   ├── ProcessingPage.tsx    # Legacy chunking controls (deprecated)
 │   ├── ExportPage.tsx        # Dataset export with overlap resolution
 │   └── SettingsPage.tsx      # Users, system info, keyboard shortcuts
 ├── components/
 │   ├── WaveformViewer.tsx    # Wavesurfer.js with regions
-│   └── SegmentTable.tsx      # Custom editable table
+│   └── SegmentTable.tsx      # Custom editable table with bulk actions
 └── styles/
     └── workbench.css         # Global styles, CSS variables
 ```
@@ -368,9 +423,9 @@ flowchart LR
 |------|---------|-------------|
 | **Dashboard** | Overview | System stats, channel list view with pending counts |
 | **Channel** | Video browser | Accordion expansion showing chunks, lock status, review buttons |
-| **Workbench** | Annotation | 3-zone layout (header, waveform, segment table), manual save |
-| **Processing** | Pipeline control | Chunking, Gemini transcription, queue status |
-| **Export** | Dataset generation | Overlap resolution, manifest.tsv output |
+| **Workbench** | Annotation | 3-zone layout (header, waveform, segment table), bulk verify/reject |
+| **Preprocessing** | Queue control | Add videos to queue, monitor progress via SSE, retry failed jobs |
+| **Export** | Dataset generation | Preview stats, export to manifest.tsv |
 | **Settings** | Configuration | Users list, system info, keyboard shortcuts reference |
 
 ### 6.5 WorkbenchPage Layout (3-Zone)

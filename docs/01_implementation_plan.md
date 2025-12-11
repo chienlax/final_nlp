@@ -1,6 +1,9 @@
 # Technical Specification: Vietnamese-English Code-Switching Pipeline
 **Version:** 1.0
 
+> [!CAUTION]
+> **LEGACY DOCUMENT**: This specification was written during initial development and may not reflect the current implementation. For up-to-date architecture details, refer to [02_system-design.md](./02_system-design.md).
+
 ---
 
 ## 1. Executive Summary & Architecture
