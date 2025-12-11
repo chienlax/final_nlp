@@ -248,7 +248,7 @@ export function ChannelPage({
 
     if (!selectedChannel) {
         return (
-            <Box className="channel-page">
+            <Box className="channel-page" sx={{ height: '100%', overflow: 'auto', p: 3 }}>
                 <Box className="channel-page-header">
                     <Typography variant="h5">📁 Channels</Typography>
                 </Box>
@@ -265,8 +265,8 @@ export function ChannelPage({
                             No channels yet. Use the ingestion tool to add YouTube channels.
                         </Alert>
                     ) : (
-                        <TableContainer component={Paper} sx={{ bgcolor: 'rgba(255,255,255,0.02)' }}>
-                            <Table>
+                        <TableContainer component={Paper} sx={{ bgcolor: 'rgba(255,255,255,0.02)', maxHeight: 500, overflow: 'auto' }}>
+                            <Table stickyHeader>
                                 <TableHead>
                                     <TableRow>
                                         <TableCell>Channel Name</TableCell>
@@ -370,7 +370,7 @@ export function ChannelPage({
     }
 
     return (
-        <Box className="channel-page">
+        <Box className="channel-page" sx={{ height: '100%', overflow: 'auto', p: 3 }}>
             {/* Header with back button */}
             <Box className="channel-page-header">
                 <IconButton onClick={() => onPersistChannelSelect(null)} sx={{ color: 'white', mr: 2 }}>
@@ -397,16 +397,16 @@ export function ChannelPage({
                         No videos in this channel yet. Use the ingestion tool to add videos.
                     </Alert>
                 ) : (
-                    <TableContainer component={Paper} sx={{ bgcolor: 'rgba(255,255,255,0.02)' }}>
-                        <Table>
+                    <TableContainer component={Paper} sx={{ bgcolor: 'rgba(255,255,255,0.02)', maxHeight: 700, overflow: 'auto' }}>
+                        <Table stickyHeader sx={{ minWidth: 1000 }}>
                             <TableHead>
                                 <TableRow>
                                     <TableCell width={40}></TableCell>
                                     <TableCell>Video Title</TableCell>
-                                    <TableCell width={100}>Duration</TableCell>
-                                    <TableCell width={80}>Chunks</TableCell>
-                                    <TableCell width={150}>Progress</TableCell>
-                                    <TableCell width={140}>Actions</TableCell>
+                                    <TableCell width={120}>Duration</TableCell>
+                                    <TableCell width={100}>Chunks</TableCell>
+                                    <TableCell width={180}>Progress</TableCell>
+                                    <TableCell width={160}>Actions</TableCell>
                                 </TableRow>
                             </TableHead>
                             <TableBody>
@@ -535,13 +535,12 @@ export function ChannelPage({
                                                                     )}
                                                                 </Box>
                                                             ) : (
-                                                                <Table size="small">
+                                                                <Table size="small" sx={{ minWidth: 550 }}>
                                                                     <TableHead>
                                                                         <TableRow>
                                                                             <TableCell>Chunk</TableCell>
                                                                             <TableCell>Status</TableCell>
                                                                             <TableCell>Segments</TableCell>
-                                                                            <TableCell>Denoise</TableCell>
                                                                             <TableCell>Action</TableCell>
                                                                         </TableRow>
                                                                     </TableHead>

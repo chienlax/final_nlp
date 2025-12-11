@@ -136,6 +136,13 @@ class SystemStatsResponse(BaseModel):
     total_segments: int
     approved_segments: int
     total_hours: float
+    # Project Progress
+    verified_hours: float
+    target_hours: float = 50.0
+    completion_percentage: float
+    # Workflow Status
+    chunks_pending_review: int
+    active_locks: int
 
 
 @router.get("/channels/stats", response_model=List[ChannelStatsResponse])
@@ -200,8 +207,9 @@ def get_system_stats(session: Session = Depends(get_session)):
     
     Used by Dashboard header to show total channels, videos, hours, etc.
     """
+    from datetime import datetime
     from sqlalchemy import func
-    from backend.db.models import Video, Chunk, Segment
+    from backend.db.models import Video, Chunk, Segment, ProcessingStatus
     
     total_channels = session.exec(select(func.count(Channel.id))).one()
     total_videos = session.exec(select(func.count(Video.id))).one()
@@ -217,13 +225,45 @@ def get_system_stats(session: Session = Depends(get_session)):
     ).one()
     total_hours = total_seconds / 3600.0 if total_seconds else 0.0
     
+    # Project Progress: Verified Hours
+    verified_duration = session.exec(
+        select(func.coalesce(
+            func.sum(Segment.end_time_relative - Segment.start_time_relative),
+            0
+        )).where(Segment.is_verified == True)
+    ).one()
+    verified_hours = verified_duration / 3600.0 if verified_duration else 0.0
+    
+    # Completion percentage (target: 50 hours)
+    target_hours = 50.0
+    completion_percentage = min((verified_hours / target_hours) * 100, 100.0) if target_hours > 0 else 0.0
+    
+    # Workflow Status: Chunks Pending Review
+    chunks_pending_review = session.exec(
+        select(func.count(Chunk.id)).where(Chunk.status == ProcessingStatus.REVIEW_READY)
+    ).one()
+    
+    # Workflow Status: Active Locks (not expired)
+    now = datetime.utcnow()
+    active_locks = session.exec(
+        select(func.count(Chunk.id)).where(
+            Chunk.locked_by_user_id.isnot(None),
+            Chunk.lock_expires_at > now
+        )
+    ).one()
+    
     return SystemStatsResponse(
         total_channels=total_channels,
         total_videos=total_videos,
         total_chunks=total_chunks,
         total_segments=total_segments,
         approved_segments=approved_segments,
-        total_hours=total_hours
+        total_hours=round(total_hours, 1),
+        verified_hours=round(verified_hours, 2),
+        target_hours=target_hours,
+        completion_percentage=round(completion_percentage, 1),
+        chunks_pending_review=chunks_pending_review,
+        active_locks=active_locks
     )
 
 

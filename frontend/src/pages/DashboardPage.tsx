@@ -19,7 +19,7 @@ import {
     TableRow,
     Paper,
 } from '@mui/material'
-import { Folder, VideoLibrary, Pending, CheckCircle, AccessTime } from '@mui/icons-material'
+import { Folder, VideoLibrary, Pending, CheckCircle, AccessTime, Lock, HourglassEmpty, TrendingUp, Flag } from '@mui/icons-material'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import '../styles/workbench.css'
@@ -45,6 +45,13 @@ interface SystemStats {
     total_segments: number
     approved_segments: number
     total_hours: number
+    // Project Progress
+    verified_hours: number
+    target_hours: number
+    completion_percentage: number
+    // Workflow Status
+    chunks_pending_review: number
+    active_locks: number
 }
 
 interface DashboardPageProps {
@@ -80,15 +87,15 @@ export function DashboardPage({ userId }: DashboardPageProps) {
 
     if (channelError) {
         return (
-            <Box className="dashboard-container">
+            <Box className="dashboard-container" sx={{ height: '100%', overflow: 'auto', p: 3 }}>
                 <Alert severity="error">Failed to load channels. Is the backend running?</Alert>
             </Box>
         )
     }
 
     return (
-        <Box className="dashboard-container">
-            {/* System Stats Panel */}
+        <Box className="dashboard-container" sx={{ height: '100%', overflow: 'auto', p: 3 }}>
+            {/* System Stats Panel - Volume & Inventory */}
             <Box className="stats-panel">
                 <Typography variant="h5" className="panel-title">
                     📊 System Overview
@@ -122,6 +129,51 @@ export function DashboardPage({ userId }: DashboardPageProps) {
                 </Box>
             </Box>
 
+            {/* Project Progress Panel */}
+            <Box className="stats-panel">
+                <Typography variant="h5" className="panel-title">
+                    🎯 Project Progress
+                </Typography>
+                <Box className="stats-grid">
+                    <Box className="stat-card">
+                        <CheckCircle sx={{ fontSize: 40, color: '#4caf50' }} />
+                        <Typography variant="h4">{systemStats?.verified_hours?.toFixed(2) || '0.00'}</Typography>
+                        <Typography color="text.secondary">Verified Hours</Typography>
+                    </Box>
+                    <Box className="stat-card">
+                        <Flag sx={{ fontSize: 40, color: '#2196f3' }} />
+                        <Typography variant="h4">{systemStats?.target_hours || 50}</Typography>
+                        <Typography color="text.secondary">Target Hours</Typography>
+                    </Box>
+                    <Box className="stat-card" sx={{
+                        background: `linear-gradient(90deg, rgba(76, 175, 80, 0.2) ${systemStats?.completion_percentage || 0}%, transparent ${systemStats?.completion_percentage || 0}%)`
+                    }}>
+                        <TrendingUp sx={{ fontSize: 40, color: (systemStats?.completion_percentage || 0) >= 50 ? '#4caf50' : '#ff9800' }} />
+                        <Typography variant="h4">{systemStats?.completion_percentage?.toFixed(1) || '0.0'}%</Typography>
+                        <Typography color="text.secondary">Completion</Typography>
+                    </Box>
+                </Box>
+            </Box>
+
+            {/* Workflow Status Panel */}
+            <Box className="stats-panel">
+                <Typography variant="h5" className="panel-title">
+                    ⚡ Workflow Status
+                </Typography>
+                <Box className="stats-grid">
+                    <Box className="stat-card">
+                        <HourglassEmpty sx={{ fontSize: 40, color: '#ff9800' }} />
+                        <Typography variant="h4">{systemStats?.chunks_pending_review || 0}</Typography>
+                        <Typography color="text.secondary">Pending Review</Typography>
+                    </Box>
+                    <Box className="stat-card">
+                        <Lock sx={{ fontSize: 40, color: '#4caf50' }} />
+                        <Typography variant="h4">{systemStats?.active_locks || 0}</Typography>
+                        <Typography color="text.secondary">Active Locks</Typography>
+                    </Box>
+                </Box>
+            </Box>
+
             {/* Channel List */}
             <Box className="channel-section">
                 <Typography variant="h5" className="section-title">
@@ -139,8 +191,8 @@ export function DashboardPage({ userId }: DashboardPageProps) {
                         No channels yet. Use the ingestion tool to add YouTube channels.
                     </Alert>
                 ) : (
-                    <TableContainer component={Paper} sx={{ bgcolor: 'rgba(255,255,255,0.02)' }}>
-                        <Table>
+                    <TableContainer component={Paper} sx={{ bgcolor: 'rgba(255,255,255,0.02)', maxHeight: 500, overflow: 'auto' }}>
+                        <Table stickyHeader>
                             <TableHead>
                                 <TableRow>
                                     <TableCell>Channel Name</TableCell>

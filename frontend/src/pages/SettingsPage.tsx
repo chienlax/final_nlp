@@ -161,43 +161,10 @@ export function SettingsPage({ userId }: SettingsPageProps) {
                                 </Box>
                                 <Divider />
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <Typography variant="body2">Toggle Denoise Flag</Typography>
-                                    <Chip label="Ctrl + D" size="small" sx={{ fontFamily: 'monospace' }} />
-                                </Box>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <Typography variant="body2">Save Changes</Typography>
                                     <Chip label="Ctrl + S" size="small" sx={{ fontFamily: 'monospace' }} />
                                 </Box>
                             </Box>
-                        </CardContent>
-                    </Card>
-                </Grid>
-
-                {/* About Panel */}
-                <Grid item xs={12}>
-                    <Card className="settings-card">
-                        <CardContent>
-                            <Typography variant="h6" gutterBottom>
-                                About
-                            </Typography>
-                            <Divider sx={{ mb: 2 }} />
-
-                            <Typography variant="body1" gutterBottom>
-                                <strong>Speech Translation Workbench</strong>
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                                A production-grade Vietnamese-English Code-Switching Speech Translation Pipeline.
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                                Build high-quality speech translation datasets with AI-assisted transcription
-                                (Gemini 2.5 Flash) and human verification.
-                            </Typography>
-
-                            <Alert severity="info" sx={{ mt: 2 }}>
-                                <Typography variant="body2">
-                                    Target: 150+ hours of verified audio data for training.
-                                </Typography>
-                            </Alert>
                         </CardContent>
                     </Card>
                 </Grid>
