@@ -7,10 +7,8 @@
 import { Box, Typography, Card, CardContent, Grid, Chip, Avatar, Alert, Divider } from '@mui/material'
 import { Person, AdminPanelSettings, Folder, Storage, Api } from '@mui/icons-material'
 import { useQuery } from '@tanstack/react-query'
-import axios from 'axios'
+import { api } from '../api/client'
 import '../styles/workbench.css'
-
-const api = axios.create({ baseURL: '/api' })
 
 interface User {
     id: number
@@ -29,8 +27,6 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ userId }: SettingsPageProps) {
-    // Configure API header
-    api.defaults.headers.common['X-User-ID'] = userId.toString()
 
     // Fetch users
     const { data: users = [], isLoading: loadingUsers } = useQuery<User[]>({

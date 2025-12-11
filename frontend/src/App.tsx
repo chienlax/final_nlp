@@ -36,7 +36,7 @@ import {
     Person,
 } from '@mui/icons-material'
 import { useQuery } from '@tanstack/react-query'
-import axios from 'axios'
+import { api, setApiUserId } from './api/client'
 
 // Page imports
 import { DashboardPage } from './pages/DashboardPage'
@@ -74,16 +74,15 @@ const TABS: TabConfig[] = [
     { id: 'settings', label: 'Settings', icon: <SettingsIcon /> },
 ]
 
-// API base
-const api = axios.create({
-    baseURL: '/api',
-})
-
 function App() {
     const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
     const [currentTab, setCurrentTab] = useState<TabId>('dashboard')
     const [selectedVideoId, setSelectedVideoId] = useState<number | null>(null)
     const [selectedChunkId, setSelectedChunkId] = useState<number | null>(null)
+
+    // Channel Tab Persistence State
+    const [channelTabSelectedChannelId, setChannelTabSelectedChannelId] = useState<number | null>(null)
+    const [channelTabExpandedVideoId, setChannelTabExpandedVideoId] = useState<number | null>(null)
 
     // Fetch users
     const { data: users, isLoading, error } = useQuery<User[]>({
@@ -98,11 +97,9 @@ function App() {
         }
     }, [users, selectedUserId])
 
-    // Configure axios default header
+    // Configure axios default header for all API calls across the app
     useEffect(() => {
-        if (selectedUserId) {
-            api.defaults.headers.common['X-User-ID'] = selectedUserId.toString()
-        }
+        setApiUserId(selectedUserId)
     }, [selectedUserId])
 
     const selectedUser = users?.find(u => u.id === selectedUserId)
@@ -189,11 +186,7 @@ function App() {
         <Box className="app-container">
             {/* Header with tabs and user selector */}
             <Box className="app-header">
-                <Box className="header-left">
-                    <Typography variant="h6" className="app-title">
-                        🎙️ Speech Translation
-                    </Typography>
-                </Box>
+                {/* Logo removed as per user request */}
 
                 <Box className="header-tabs">
                     <Tabs
@@ -259,6 +252,10 @@ function App() {
                     <ChannelPage
                         userId={selectedUserId}
                         onVideoSelect={handleVideoSelect}
+                        persistedSelectedChannelId={channelTabSelectedChannelId}
+                        onPersistChannelSelect={setChannelTabSelectedChannelId}
+                        persistedExpandedVideoId={channelTabExpandedVideoId}
+                        onPersistVideoExpand={setChannelTabExpandedVideoId}
                     />
                 )}
 
@@ -272,7 +269,12 @@ function App() {
                         username={selectedUser?.username || 'User'}
                         preselectedVideoId={selectedVideoId}
                         preselectedChunkId={selectedChunkId}
-                        onBackToDashboard={() => setCurrentTab('dashboard')}
+                        onBackToDashboard={() => {
+                            // Clear selected IDs so we don't auto-reload the same chunk
+                            setSelectedVideoId(null)
+                            setSelectedChunkId(null)
+                            setCurrentTab('channel')
+                        }}
                     />
                 )}
 

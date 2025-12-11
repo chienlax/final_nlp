@@ -31,6 +31,7 @@ class SegmentResponse(BaseModel):
     transcript: str
     translation: str
     is_verified: bool
+    is_rejected: bool
     created_at: datetime
     updated_at: datetime
     
@@ -45,6 +46,7 @@ class SegmentUpdate(BaseModel):
     transcript: Optional[str] = None
     translation: Optional[str] = None
     is_verified: Optional[bool] = None
+    is_rejected: Optional[bool] = None
 
 
 class SegmentCreate(BaseModel):
@@ -55,6 +57,7 @@ class SegmentCreate(BaseModel):
     transcript: str
     translation: str
     is_verified: bool = False
+    is_rejected: bool = False
 
 
 class BulkSegmentResponse(BaseModel):
@@ -267,12 +270,14 @@ def bulk_verify_segments(
 ):
     """
     Mark multiple segments as verified.
+    Sets is_verified=True and is_rejected=False.
     """
     count = 0
     for segment_id in data.segment_ids:
         segment = session.get(Segment, segment_id)
         if segment:
             segment.is_verified = True
+            segment.is_rejected = False  # Clear rejection when verifying
             segment.updated_at = datetime.utcnow()
             session.add(segment)
             count += 1
@@ -288,21 +293,20 @@ def bulk_reject_segments(
     session: Session = Depends(get_session)
 ):
     """
-    Mark multiple segments as unverified (rejected for now).
-    
-    Note: This ONLY sets is_verified=False, does NOT modify transcript/translation.
-    The original content is preserved for potential re-verification.
+    Mark multiple segments as rejected.
+    Sets is_rejected=True and is_verified=False.
+    Rejected segments will be excluded from export.
     """
     count = 0
     for segment_id in data.segment_ids:
         segment = session.get(Segment, segment_id)
         if segment:
-            segment.is_verified = False
-            # DO NOT modify transcript/translation - preserve original content
+            segment.is_rejected = True
+            segment.is_verified = False  # Clear verification when rejecting
             segment.updated_at = datetime.utcnow()
             session.add(segment)
             count += 1
     
     session.commit()
-    return {"message": f"Unverified {count} segments", "count": count}
+    return {"message": f"Rejected {count} segments", "count": count}
 

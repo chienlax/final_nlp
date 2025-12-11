@@ -21,10 +21,8 @@ import {
 } from '@mui/material'
 import { Folder, VideoLibrary, Pending, CheckCircle, AccessTime } from '@mui/icons-material'
 import { useQuery } from '@tanstack/react-query'
-import axios from 'axios'
+import { api } from '../api/client'
 import '../styles/workbench.css'
-
-const api = axios.create({ baseURL: '/api' })
 
 interface Channel {
     id: number
@@ -118,8 +116,8 @@ export function DashboardPage({ userId }: DashboardPageProps) {
                     </Box>
                     <Box className="stat-card">
                         <CheckCircle sx={{ fontSize: 40, color: '#81c784' }} />
-                        <Typography variant="h4">{systemStats?.approved_segments || 0}</Typography>
-                        <Typography color="text.secondary">Verified Segments</Typography>
+                        <Typography variant="h4">{systemStats?.total_segments || 0}</Typography>
+                        <Typography color="text.secondary">Total Segments</Typography>
                     </Box>
                 </Box>
             </Box>

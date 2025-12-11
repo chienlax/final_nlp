@@ -29,10 +29,8 @@ import {
     Description
 } from '@mui/icons-material'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import axios from 'axios'
+import { api } from '../api/client'
 import '../styles/workbench.css'
-
-const api = axios.create({ baseURL: '/api' })
 
 interface Channel {
     id: number
@@ -56,13 +54,10 @@ interface ExportPageProps {
     userId: number
 }
 
-export function ExportPage({ userId }: ExportPageProps) {
+export function ExportPage({ userId: _userId }: ExportPageProps) {
     const [exportScope, setExportScope] = useState<'all' | 'channel'>('all')
     const [selectedChannel, setSelectedChannel] = useState<number | ''>('')
     const [exportResult, setExportResult] = useState<ExportResult | null>(null)
-
-    // Configure API header
-    api.defaults.headers.common['X-User-ID'] = userId.toString()
 
     // Fetch channels for selection
     const { data: channels = [] } = useQuery<Channel[]>({

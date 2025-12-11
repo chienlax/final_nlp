@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.db.engine import create_db_and_tables, DATA_ROOT
-from backend.routers import users, videos, chunks, segments, queue
+from backend.routers import users, videos, chunks, segments, queue, export
 
 
 # =============================================================================
@@ -102,6 +102,7 @@ app.include_router(videos.router, prefix="/api", tags=["Videos"])
 app.include_router(chunks.router, prefix="/api", tags=["Chunks"])
 app.include_router(segments.router, prefix="/api", tags=["Segments"])
 app.include_router(queue.router, prefix="/api", tags=["Processing Queue"])
+app.include_router(export.router, prefix="/api", tags=["Export"])
 
 
 # =============================================================================

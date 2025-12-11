@@ -25,14 +25,19 @@ import {
     CircularProgress,
     Alert,
     LinearProgress,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
 } from '@mui/material'
 import {
     PlayArrow as PlayIcon,
     Refresh as RefreshIcon,
     Warning as WarningIcon,
+    Article as LogIcon,
 } from '@mui/icons-material'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import axios from 'axios'
+import { api } from '../api/client'
 
 // Types
 interface VideoQueueStatus {
@@ -42,10 +47,10 @@ interface VideoQueueStatus {
     duration_seconds: number
     total_chunks: number
     pending_chunks: number
-    queued_jobs: number
-    processing_jobs: number
-    completed_jobs: number
-    failed_jobs: number
+    queued_chunks: number
+    processing_chunks: number
+    completed_chunks: number
+    failed_chunks: number
 }
 
 interface QueueStats {
@@ -55,9 +60,6 @@ interface QueueStats {
     failed: number
     pending_chunks: number
 }
-
-// API client
-const api = axios.create({ baseURL: '/api' })
 
 // Helper to format duration
 const formatDuration = (seconds: number): string => {
@@ -77,6 +79,7 @@ interface PreprocessingPageProps {
 export function PreprocessingPage({ userId }: PreprocessingPageProps) {
     const [selectedVideos, setSelectedVideos] = useState<Set<number>>(new Set())
     const [sseConnected, setSseConnected] = useState(false)
+    const [showLogModal, setShowLogModal] = useState(false)
     const queryClient = useQueryClient()
 
     // Fetch queue summary
@@ -91,6 +94,19 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
         queryKey: ['queue-stats'],
         queryFn: () => api.get('/queue/stats').then(r => r.data),
         refetchInterval: 5000,
+    })
+
+    // Fetch worker logs
+    const { data: logsData, refetch: refetchLogs, isFetching: loadingLogs } = useQuery<{
+        exists: boolean
+        lines: string[]
+        total_lines?: number
+        message?: string
+    }>({
+        queryKey: ['worker-logs'],
+        queryFn: () => api.get('/queue/logs?lines=200').then(r => r.data),
+        enabled: showLogModal,
+        refetchInterval: showLogModal ? 3000 : false,
     })
 
     // SSE connection for real-time updates
@@ -178,7 +194,7 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
 
     // Get status chip for a video
     const getStatusChip = (video: VideoQueueStatus) => {
-        if (video.processing_jobs > 0) {
+        if (video.processing_chunks > 0) {
             return (
                 <Chip
                     icon={<CircularProgress size={12} />}
@@ -188,20 +204,20 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
                 />
             )
         }
-        if (video.queued_jobs > 0) {
+        if (video.queued_chunks > 0) {
             return (
                 <Chip
-                    label={`${video.queued_jobs} queued`}
+                    label={`${video.queued_chunks} queued`}
                     color="warning"
                     size="small"
                 />
             )
         }
-        if (video.failed_jobs > 0) {
+        if (video.failed_chunks > 0) {
             return (
                 <Chip
                     icon={<WarningIcon />}
-                    label={`${video.failed_jobs} failed`}
+                    label={`${video.failed_chunks} failed`}
                     color="error"
                     size="small"
                 />
@@ -228,7 +244,7 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
     // Calculate progress for a video
     const getProgress = (video: VideoQueueStatus): number => {
         if (video.total_chunks === 0) return 0
-        const processed = video.completed_jobs
+        const processed = video.completed_chunks
         return (processed / video.total_chunks) * 100
     }
 
@@ -307,6 +323,17 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
                         <RefreshIcon />
                     </IconButton>
                 </Tooltip>
+
+                <Tooltip title="View worker logs">
+                    <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<LogIcon />}
+                        onClick={() => setShowLogModal(true)}
+                    >
+                        View Logs
+                    </Button>
+                </Tooltip>
             </Paper>
 
             {/* Instructions */}
@@ -374,7 +401,7 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
                                                 sx={{ flexGrow: 1, height: 6, borderRadius: 1 }}
                                             />
                                             <Typography variant="caption" color="text.secondary">
-                                                {video.completed_jobs}/{video.total_chunks}
+                                                {video.completed_chunks}/{video.total_chunks}
                                             </Typography>
                                         </Box>
                                     </TableCell>
@@ -382,8 +409,8 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
                                         {getStatusChip(video)}
                                     </TableCell>
                                     <TableCell>
-                                        {video.failed_jobs > 0 && (
-                                            <Tooltip title={`Retry ${video.failed_jobs} failed chunks`}>
+                                        {video.failed_chunks > 0 && (
+                                            <Tooltip title={`Retry ${video.failed_chunks} failed chunks`}>
                                                 <IconButton
                                                     size="small"
                                                     onClick={() => retryFailed.mutate(video.video_id)}
@@ -412,6 +439,75 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
                     3. Real-time updates show progress. Failed chunks can be retried using the refresh button.
                 </Typography>
             </Alert>
+
+            {/* Log Viewer Modal */}
+            <Dialog
+                open={showLogModal}
+                onClose={() => setShowLogModal(false)}
+                maxWidth="lg"
+                fullWidth
+            >
+                <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <LogIcon />
+                    Gemini Worker Logs
+                    <Box sx={{ flexGrow: 1 }} />
+                    <Tooltip title="Refresh logs">
+                        <IconButton
+                            onClick={() => refetchLogs()}
+                            disabled={loadingLogs}
+                            size="small"
+                        >
+                            <RefreshIcon />
+                        </IconButton>
+                    </Tooltip>
+                </DialogTitle>
+                <DialogContent>
+                    {logsData?.exists === false ? (
+                        <Alert severity="warning">
+                            {logsData.message || 'Log file not found. Start the worker to generate logs.'}
+                        </Alert>
+                    ) : (
+                        <Box
+                            sx={{
+                                bgcolor: '#1e1e1e',
+                                color: '#d4d4d4',
+                                fontFamily: 'monospace',
+                                fontSize: '12px',
+                                p: 2,
+                                borderRadius: 1,
+                                maxHeight: '60vh',
+                                overflow: 'auto',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                            }}
+                        >
+                            {logsData?.lines?.length ? (
+                                logsData.lines.map((line, i) => (
+                                    <Box key={i} sx={{
+                                        py: 0.25,
+                                        borderBottom: '1px solid #333',
+                                        color: line.includes('[ERROR]') ? '#f48771' :
+                                            line.includes('[WARNING]') ? '#dcdcaa' :
+                                                line.includes('[INFO]') ? '#9cdcfe' : '#d4d4d4'
+                                    }}>
+                                        {line}
+                                    </Box>
+                                ))
+                            ) : (
+                                <Typography color="text.secondary">No log entries yet.</Typography>
+                            )}
+                        </Box>
+                    )}
+                    {logsData?.total_lines && (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                            Showing last 200 of {logsData.total_lines} lines
+                        </Typography>
+                    )}
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setShowLogModal(false)}>Close</Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     )
 }

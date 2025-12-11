@@ -18,6 +18,11 @@ import {
     CircularProgress,
     Alert,
     Snackbar,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogContentText,
+    DialogActions,
 } from '@mui/material'
 import {
     PlayArrow,
@@ -31,9 +36,10 @@ import {
     Lock,
     SkipNext,
     Speed,
+    Refresh,
 } from '@mui/icons-material'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import axios from 'axios'
+import { api } from '../api/client'
 import { WaveformViewer, WaveformViewerRef } from '../components/WaveformViewer'
 import { SegmentTable } from '../components/SegmentTable'
 import '../styles/workbench.css'
@@ -60,11 +66,10 @@ interface Segment {
     transcript: string
     translation: string
     is_verified: boolean
+    is_rejected: boolean
 }
 
 // Channel interface removed - not used in this component
-
-const api = axios.create({ baseURL: '/api' })
 
 interface WorkbenchPageProps {
     userId: number
@@ -86,6 +91,7 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
     const [playbackRate, setPlaybackRate] = useState(1)  // Persisted across chunks
     const [activeSegmentId, setActiveSegmentId] = useState<number | null>(null)
     const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+    const [showApprovalSuccess, setShowApprovalSuccess] = useState(false)  // Show success after approval
     const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'info' }>({
         open: false,
         message: '',
@@ -108,8 +114,9 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
         enabled: !!preselectedChunkId && !currentChunk,
     })
 
-    // Fetch next available chunk - only if no preselectedChunkId
-    const { data: nextChunk, isLoading: loadingNext, refetch: refetchNext } = useQuery<Chunk | null>({
+    // Fetch next available chunk - only if preselectedVideoId is set
+    // If neither preselectedVideoId nor preselectedChunkId is set, show "No chunk selected" prompt
+    const { data: nextChunk, isLoading: loadingNext } = useQuery<Chunk | null>({
         queryKey: ['chunks', 'next', userId, preselectedVideoId],
         queryFn: () => {
             const params = new URLSearchParams()
@@ -119,7 +126,8 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
             const url = params.toString() ? `/chunks/next?${params}` : '/chunks/next'
             return api.get(url).then(res => res.data)
         },
-        enabled: !currentChunk && !preselectedChunkId,
+        // Only fetch if we have a preselectedVideoId (user intentionally navigated here)
+        enabled: !currentChunk && !preselectedChunkId && !!preselectedVideoId,
     })
 
     // Use preselected chunk or next chunk
@@ -150,9 +158,13 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
         mutationFn: (chunkId: number) => api.post(`/chunks/${chunkId}/approve`),
         onSuccess: () => {
             setCurrentChunk(null)
-            queryClient.invalidateQueries({ queryKey: ['chunks'] })
-            refetchNext()
-            showSnackbar('Chunk approved! Loading next...', 'success')
+            // Invalidate all related queries and force refetch
+            queryClient.invalidateQueries({ queryKey: ['chunks'], refetchType: 'all' })
+            queryClient.invalidateQueries({ queryKey: ['video', 'chunks'], refetchType: 'all' })
+            queryClient.invalidateQueries({ queryKey: ['videos', 'stats'], refetchType: 'all' })
+            queryClient.invalidateQueries({ queryKey: ['channels', 'stats'], refetchType: 'all' })
+            // Show success screen instead of auto-loading next
+            setShowApprovalSuccess(true)
         },
     })
 
@@ -186,15 +198,37 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
         },
     })
 
+    // Re-transcript mutation - resets chunk for Gemini re-processing
+    const [showRetranscriptDialog, setShowRetranscriptDialog] = useState(false)
+    const retranscriptMutation = useMutation({
+        mutationFn: (chunkId: number) => api.post(`/chunks/${chunkId}/retranscript`),
+        onSuccess: (response) => {
+            setShowRetranscriptDialog(false)
+            setCurrentChunk(null)
+            queryClient.invalidateQueries({ queryKey: ['chunks'] })
+            queryClient.invalidateQueries({ queryKey: ['queue'] })
+            showSnackbar(`Chunk queued for re-transcription. ${response.data.segments_deleted} segments deleted.`, 'success')
+        },
+        onError: (error: any) => {
+            showSnackbar(error.response?.data?.detail || 'Failed to queue re-transcription', 'error')
+        }
+    })
+
     // Computed values
     const verifiedCount = useMemo(() =>
         segments.filter(s => s.is_verified).length,
         [segments]
     )
 
-    const allVerified = useMemo(() =>
-        segments.length > 0 && verifiedCount === segments.length,
-        [segments.length, verifiedCount]
+    const rejectedCount = useMemo(() =>
+        segments.filter(s => s.is_rejected).length,
+        [segments]
+    )
+
+    // All segments must be reviewed (either verified or rejected) before approving
+    const allReviewed = useMemo(() =>
+        segments.length > 0 && (verifiedCount + rejectedCount) === segments.length,
+        [segments.length, verifiedCount, rejectedCount]
     )
 
     const isDenoiseActive = currentChunk?.denoise_status === 'flagged'
@@ -294,15 +328,52 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
 
     // Auto-start chunk when selected (skip "Ready to Review" prompt)
     // MUST be before early returns to comply with React's Rules of Hooks
+    // CRITICAL: Do NOT auto-start if showApprovalSuccess is true (prevents re-lock after approval)
     useEffect(() => {
-        if (!currentChunk && effectiveNextChunk && !lockMutation.isPending) {
+        if (!currentChunk && effectiveNextChunk && !lockMutation.isPending && !showApprovalSuccess) {
             startChunk(effectiveNextChunk)
         }
-    }, [effectiveNextChunk, currentChunk, lockMutation.isPending])
+    }, [effectiveNextChunk, currentChunk, lockMutation.isPending, showApprovalSuccess])
 
     // ==========================================================================
     // RENDER
     // ==========================================================================
+
+    // Approval success screen - show after Mark as Finished
+    if (showApprovalSuccess) {
+        return (
+            <Box className="workbench-container" sx={{ justifyContent: 'center', alignItems: 'center' }}>
+                <Box sx={{
+                    p: 4,
+                    background: 'var(--glass-bg)',
+                    borderRadius: 3,
+                    textAlign: 'center',
+                    maxWidth: 500
+                }}>
+                    <CheckCircle sx={{ fontSize: 80, color: '#4caf50', mb: 2 }} />
+                    <Typography variant="h4" sx={{ mb: 2, color: '#4caf50' }}>
+                        Chunk Approved!
+                    </Typography>
+                    <Typography variant="body1" sx={{ mb: 3, opacity: 0.8 }}>
+                        Great work! The chunk has been marked as finished and is ready for export.
+                    </Typography>
+                    {onBackToDashboard && (
+                        <Button
+                            variant="contained"
+                            color="primary"
+                            size="large"
+                            onClick={() => {
+                                setShowApprovalSuccess(false)
+                                onBackToDashboard()
+                            }}
+                        >
+                            Go to Channel Tab
+                        </Button>
+                    )}
+                </Box>
+            </Box>
+        )
+    }
 
     // No chunk selected - prompt user to go to dashboard
     if (!preselectedChunkId && !preselectedVideoId && !currentChunk) {
@@ -325,7 +396,7 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
                             size="large"
                             onClick={onBackToDashboard}
                         >
-                            Back to Dashboard
+                            Go to Channel Tab
                         </Button>
                     )}
                 </Box>
@@ -472,6 +543,19 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
                         Reject All
                     </Button>
 
+                    <Tooltip title="Reset chunk and request new AI transcription">
+                        <Button
+                            variant="outlined"
+                            color="warning"
+                            size="small"
+                            startIcon={<Refresh />}
+                            onClick={() => setShowRetranscriptDialog(true)}
+                            disabled={retranscriptMutation.isPending}
+                        >
+                            Re-transcript
+                        </Button>
+                    </Tooltip>
+
                     <Button
                         variant="outlined"
                         startIcon={<Save />}
@@ -488,14 +572,14 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
                         Save Changes
                     </Button>
 
-                    <Tooltip title={!allVerified ? `${verifiedCount}/${segments.length} segments verified` : 'All segments verified!'}>
+                    <Tooltip title={!allReviewed ? `${verifiedCount + rejectedCount}/${segments.length} segments reviewed` : 'All segments reviewed!'}>
                         <span>
                             <Button
                                 variant="contained"
                                 color="success"
                                 startIcon={<CheckCircle />}
                                 onClick={() => currentChunk && approveMutation.mutate(currentChunk.id)}
-                                disabled={!allVerified || approveMutation.isPending}
+                                disabled={!allReviewed || approveMutation.isPending}
                             >
                                 Mark as Finished
                             </Button>
@@ -585,18 +669,6 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
                 ZONE C: Editor Table
             ================================================================ */}
             <Box className="zone-table">
-                <Box className="table-header">
-                    <Typography variant="h6">
-                        Segments ({segments.length})
-                    </Typography>
-                    <Typography
-                        variant="body2"
-                        className={allVerified ? 'verified-count complete' : 'verified-count'}
-                    >
-                        {verifiedCount} / {segments.length} verified
-                        {allVerified && ' ✓'}
-                    </Typography>
-                </Box>
 
                 <Box className="table-container segment-table">
                     {loadingSegments ? (
@@ -629,6 +701,30 @@ export function WorkbenchPage({ userId, username, preselectedVideoId, preselecte
                     {snackbar.message}
                 </Alert>
             </Snackbar>
+
+            {/* Re-transcript Confirmation Dialog */}
+            <Dialog
+                open={showRetranscriptDialog}
+                onClose={() => setShowRetranscriptDialog(false)}
+            >
+                <DialogTitle>Re-transcript this chunk?</DialogTitle>
+                <DialogContent>
+                    <DialogContentText>
+                        This will delete all {segments.length} existing segments and queue the chunk for re-transcription by Gemini AI. This action cannot be undone.
+                    </DialogContentText>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setShowRetranscriptDialog(false)}>Cancel</Button>
+                    <Button
+                        onClick={() => currentChunk && retranscriptMutation.mutate(currentChunk.id)}
+                        color="warning"
+                        variant="contained"
+                        disabled={retranscriptMutation.isPending}
+                    >
+                        {retranscriptMutation.isPending ? 'Processing...' : 'Re-transcript'}
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     )
 }

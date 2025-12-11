@@ -63,11 +63,11 @@ class VideoQueueStatus(BaseModel):
     channel_name: str
     duration_seconds: int
     total_chunks: int
-    pending_chunks: int      # PENDING status in Chunk table (not yet queued)
-    queued_jobs: int         # QUEUED in ProcessingJob
-    processing_jobs: int     # PROCESSING in ProcessingJob (0 or 1)
-    completed_jobs: int      # COMPLETED
-    failed_jobs: int         # FAILED
+    pending_chunks: int       # PENDING status in Chunk table (not yet queued)
+    queued_chunks: int        # Distinct chunks with QUEUED job
+    processing_chunks: int    # Distinct chunks currently PROCESSING (0 or 1)
+    completed_chunks: int     # Distinct chunks with COMPLETED job
+    failed_chunks: int        # Distinct chunks with FAILED job (latest status)
 
 
 class RetryResponse(BaseModel):
@@ -172,7 +172,7 @@ def get_queue_summary(session: Session = Depends(get_session)):
     """
     # Use raw SQL for efficiency (complex aggregation)
     # NOTE: Cast enums to text AND use LOWER() because PostgreSQL stores enum values as UPPERCASE
-    # Only include videos that HAVE chunks (use JOIN not LEFT JOIN)
+    # IMPORTANT: Count DISTINCT chunks, not jobs (to avoid counting retries multiple times)
     query = text("""
         SELECT 
             v.id as video_id,
@@ -181,10 +181,10 @@ def get_queue_summary(session: Session = Depends(get_session)):
             v.duration_seconds,
             COUNT(DISTINCT ch.id) as total_chunks,
             COUNT(DISTINCT CASE WHEN LOWER(ch.status::text) = 'pending' THEN ch.id END) as pending_chunks,
-            COALESCE(SUM(CASE WHEN LOWER(pj.status::text) = 'queued' THEN 1 ELSE 0 END), 0) as queued_jobs,
-            COALESCE(SUM(CASE WHEN LOWER(pj.status::text) = 'processing' THEN 1 ELSE 0 END), 0) as processing_jobs,
-            COALESCE(SUM(CASE WHEN LOWER(pj.status::text) = 'completed' THEN 1 ELSE 0 END), 0) as completed_jobs,
-            COALESCE(SUM(CASE WHEN LOWER(pj.status::text) = 'failed' THEN 1 ELSE 0 END), 0) as failed_jobs
+            COUNT(DISTINCT CASE WHEN LOWER(pj.status::text) = 'queued' THEN ch.id END) as queued_chunks,
+            COUNT(DISTINCT CASE WHEN LOWER(pj.status::text) = 'processing' THEN ch.id END) as processing_chunks,
+            COUNT(DISTINCT CASE WHEN LOWER(pj.status::text) = 'completed' THEN ch.id END) as completed_chunks,
+            COUNT(DISTINCT CASE WHEN LOWER(pj.status::text) = 'failed' THEN ch.id END) as failed_chunks
         FROM videos v
         JOIN channels c ON v.channel_id = c.id
         JOIN chunks ch ON ch.video_id = v.id
@@ -192,8 +192,8 @@ def get_queue_summary(session: Session = Depends(get_session)):
         GROUP BY v.id, v.title, c.name, v.duration_seconds
         HAVING 
             COUNT(DISTINCT CASE WHEN LOWER(ch.status::text) = 'pending' THEN ch.id END) > 0
-            OR COALESCE(SUM(CASE WHEN LOWER(pj.status::text) IN ('queued', 'processing') THEN 1 ELSE 0 END), 0) > 0
-            OR COALESCE(SUM(CASE WHEN LOWER(pj.status::text) = 'failed' THEN 1 ELSE 0 END), 0) > 0
+            OR COUNT(DISTINCT CASE WHEN LOWER(pj.status::text) IN ('queued', 'processing') THEN ch.id END) > 0
+            OR COUNT(DISTINCT CASE WHEN LOWER(pj.status::text) = 'failed' THEN ch.id END) > 0
         ORDER BY c.name, v.title
     """)
     
@@ -207,10 +207,10 @@ def get_queue_summary(session: Session = Depends(get_session)):
             duration_seconds=row["duration_seconds"],
             total_chunks=row["total_chunks"],
             pending_chunks=row["pending_chunks"],
-            queued_jobs=int(row["queued_jobs"]),
-            processing_jobs=int(row["processing_jobs"]),
-            completed_jobs=int(row["completed_jobs"]),
-            failed_jobs=int(row["failed_jobs"])
+            queued_chunks=int(row["queued_chunks"]),
+            processing_chunks=int(row["processing_chunks"]),
+            completed_chunks=int(row["completed_chunks"]),
+            failed_chunks=int(row["failed_chunks"])
         )
         for row in result
     ]
@@ -400,3 +400,43 @@ def get_queue_stats(session: Session = Depends(get_session)):
     stats["pending_chunks"] = len(pending_chunks)
     
     return stats
+
+
+@router.get("/logs")
+def get_worker_logs(
+    lines: int = Query(100, ge=10, le=1000, description="Number of lines to return"),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get the last N lines from the Gemini worker log file.
+    
+    Used by the Preprocessing page to monitor worker activity.
+    """
+    from pathlib import Path
+    
+    # Log file location relative to backend directory
+    log_file = Path(__file__).parent.parent.parent / "logs" / "gemini_worker.log"
+    
+    if not log_file.exists():
+        return {
+            "log_file": str(log_file),
+            "exists": False,
+            "lines": [],
+            "message": "Log file not found. The worker may not have started yet."
+        }
+    
+    try:
+        # Read last N lines efficiently
+        with open(log_file, 'r', encoding='utf-8') as f:
+            all_lines = f.readlines()
+            last_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        
+        return {
+            "log_file": str(log_file),
+            "exists": True,
+            "total_lines": len(all_lines),
+            "lines": [line.rstrip('\n\r') for line in last_lines]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read log file: {str(e)}")
+

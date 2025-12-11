@@ -7,7 +7,7 @@
  * Back button returns to channel list (not dashboard).
  */
 
-import { useState } from 'react'
+import React from 'react'
 import {
     Box,
     Typography,
@@ -43,10 +43,8 @@ import {
     ChevronRight,
 } from '@mui/icons-material'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import axios from 'axios'
+import { api } from '../api/client'
 import '../styles/workbench.css'
-
-const api = axios.create({ baseURL: '/api' })
 
 interface Channel {
     id: number
@@ -97,11 +95,24 @@ interface ChunkInfo {
 interface ChannelPageProps {
     userId: number
     onVideoSelect: (videoId: number, chunkId?: number) => void
+    persistedSelectedChannelId: number | null
+    onPersistChannelSelect: (id: number | null) => void
+    persistedExpandedVideoId: number | null
+    onPersistVideoExpand: (id: number | null) => void
 }
 
-export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
-    const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null)
-    const [expandedVideoId, setExpandedVideoId] = useState<number | null>(null)
+export function ChannelPage({
+    userId,
+    onVideoSelect,
+    persistedSelectedChannelId,
+    onPersistChannelSelect,
+    persistedExpandedVideoId,
+    onPersistVideoExpand
+}: ChannelPageProps) {
+    // Local state replaced by props-driven state
+    // const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null)
+    // const [expandedVideoId, setExpandedVideoId] = useState<number | null>(null)
+
     const queryClient = useQueryClient()
 
     // Configure API header
@@ -114,6 +125,9 @@ export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
         queryKey: ['channels'],
         queryFn: () => api.get('/channels').then(res => res.data),
     })
+
+    // Derive selected channel from persisted ID
+    const selectedChannel = channels.find(c => c.id === persistedSelectedChannelId) || null
 
     // Fetch channel stats
     const { data: channelStats = [] } = useQuery<ChannelStats[]>({
@@ -139,13 +153,15 @@ export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
         queryKey: ['videos', 'stats', selectedChannel?.id],
         queryFn: () => api.get(`/channels/${selectedChannel!.id}/videos/stats`).then(res => res.data).catch(() => []),
         enabled: !!selectedChannel,
+        refetchOnMount: 'always',  // Always refetch when tab becomes visible
     })
 
     // Fetch chunks for expanded video
     const { data: chunks = [], isLoading: loadingChunks } = useQuery<ChunkInfo[]>({
-        queryKey: ['video', 'chunks', expandedVideoId],
-        queryFn: () => api.get(`/videos/${expandedVideoId}/chunks`).then(res => res.data),
-        enabled: !!expandedVideoId,
+        queryKey: ['video', 'chunks', persistedExpandedVideoId],
+        queryFn: () => api.get(`/videos/${persistedExpandedVideoId}/chunks`).then(res => res.data),
+        enabled: !!persistedExpandedVideoId,
+        refetchOnMount: 'always',  // Always refetch when tab becomes visible
     })
 
     const getVideoStats = (videoId: number): VideoStats | undefined => {
@@ -158,7 +174,7 @@ export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
     const unlockMutation = useMutation({
         mutationFn: (chunkId: number) => api.post(`/chunks/${chunkId}/unlock`),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['video', 'chunks', expandedVideoId] })
+            queryClient.invalidateQueries({ queryKey: ['video', 'chunks', persistedExpandedVideoId] })
         },
     })
 
@@ -181,12 +197,18 @@ export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
     }
 
     const toggleExpand = (videoId: number) => {
-        setExpandedVideoId(prev => prev === videoId ? null : videoId)
+        onPersistVideoExpand(persistedExpandedVideoId === videoId ? null : videoId)
     }
 
     const getChunkStatusChip = (chunk: ChunkInfo) => {
         const isLockedByMe = chunk.locked_by_user_id === userId
 
+        // Check APPROVED status FIRST - approved chunks should show approved, not locked
+        if (chunk.status === 'approved' || chunk.status === 'APPROVED') {
+            return <Chip icon={<CheckCircle fontSize="small" />} label="Approved" size="small" color="success" />
+        }
+
+        // Then check lock status for non-approved chunks
         if (chunk.locked_by_username) {
             if (isLockedByMe) {
                 return (
@@ -211,9 +233,6 @@ export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
         }
 
         switch (chunk.status) {
-            case 'approved':
-            case 'APPROVED':
-                return <Chip icon={<CheckCircle fontSize="small" />} label="Approved" size="small" color="success" />
             case 'review_ready':
             case 'REVIEW_READY':
             case 'in_review':
@@ -273,7 +292,7 @@ export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
                                                     cursor: 'pointer',
                                                     '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' }
                                                 }}
-                                                onClick={() => setSelectedChannel(channel)}
+                                                onClick={() => onPersistChannelSelect(channel.id)}
                                             >
                                                 <TableCell>
                                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -324,7 +343,7 @@ export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
                                                         endIcon={<ChevronRight />}
                                                         onClick={(e) => {
                                                             e.stopPropagation()
-                                                            setSelectedChannel(channel)
+                                                            onPersistChannelSelect(channel.id)
                                                         }}
                                                     >
                                                         View
@@ -356,7 +375,7 @@ export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
         <Box className="channel-page">
             {/* Header with back button */}
             <Box className="channel-page-header">
-                <IconButton onClick={() => setSelectedChannel(null)} sx={{ color: 'white', mr: 2 }}>
+                <IconButton onClick={() => onPersistChannelSelect(null)} sx={{ color: 'white', mr: 2 }}>
                     <ArrowBack />
                 </IconButton>
                 <Box>
@@ -395,16 +414,15 @@ export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
                             <TableBody>
                                 {videos.map(video => {
                                     const stats = getVideoStats(video.id)
-                                    const isExpanded = expandedVideoId === video.id
+                                    const isExpanded = persistedExpandedVideoId === video.id
                                     const readyCount = (stats?.pending_chunks || 0)
                                     const approvedCount = stats?.approved_chunks || 0
                                     const totalCount = stats?.total_chunks || 0
 
                                     return (
-                                        <>
+                                        <React.Fragment key={video.id}>
                                             {/* Video Row */}
                                             <TableRow
-                                                key={video.id}
                                                 hover
                                                 sx={{
                                                     cursor: 'pointer',
@@ -571,7 +589,7 @@ export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
                                                                                                     disabled={isLockedByOther || isProcessing}
                                                                                                     onClick={() => onVideoSelect(video.id, chunk.id)}
                                                                                                 >
-                                                                                                    {chunk.status === 'approved' || chunk.status === 'APPROVED' ? 'View' : 'Review'}
+                                                                                                    {chunk.status === 'approved' || chunk.status === 'APPROVED' ? 'Re-review' : 'Review'}
                                                                                                 </Button>
                                                                                                 {isLockedByMe && (
                                                                                                     <Button
@@ -601,7 +619,7 @@ export function ChannelPage({ userId, onVideoSelect }: ChannelPageProps) {
                                                     </Collapse>
                                                 </TableCell>
                                             </TableRow>
-                                        </>
+                                        </React.Fragment>
                                     )
                                 })}
                             </TableBody>

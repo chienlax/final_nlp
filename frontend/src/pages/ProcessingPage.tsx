@@ -18,10 +18,8 @@ import {
 import { PlayArrow, Refresh, VolumeOff, CheckCircle, Pending, Error } from '@mui/icons-material'
 import { DataGrid, GridColDef, GridRenderCellParams } from '@mui/x-data-grid'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import axios from 'axios'
+import { api } from '../api/client'
 import '../styles/workbench.css'
-
-const api = axios.create({ baseURL: '/api' })
 
 interface DenoiseQueueItem {
     id: number

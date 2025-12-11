@@ -537,9 +537,18 @@ if __name__ == "__main__":
     import sys
     from datetime import datetime
     
+    # Setup logging to both console and file
+    log_dir = Path(__file__).parent.parent.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "gemini_worker.log"
+    
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s"
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.StreamHandler(),  # Console
+            logging.FileHandler(log_file, mode='a', encoding='utf-8')  # File
+        ]
     )
     
     if len(sys.argv) > 1:

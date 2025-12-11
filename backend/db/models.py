@@ -198,7 +198,8 @@ class Segment(SQLModel, table=True):
     translation: str  # Vietnamese translation
     
     # Quality Control
-    is_verified: bool = Field(default=False)  # Checkbox on Frontend
+    is_verified: bool = Field(default=False)  # Green checkmark - segment is good
+    is_rejected: bool = Field(default=False)  # Red X - segment is bad, exclude from export
     
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

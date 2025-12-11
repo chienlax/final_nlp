@@ -299,6 +299,11 @@ def lock_chunk(
     - If unlocked or lock expired: Grant lock
     - If locked by same user: Refresh lock
     - If locked by other user: Return 409 Conflict
+    
+    Status Handling:
+    - REVIEW_READY → IN_REVIEW (new work)
+    - APPROVED → IN_REVIEW (re-review, destructive)
+    - IN_REVIEW → IN_REVIEW (refresh, no change)
     """
     chunk = session.get(Chunk, chunk_id)
     if not chunk:
@@ -322,7 +327,11 @@ def lock_chunk(
     # Grant or refresh lock
     chunk.locked_by_user_id = current_user.id
     chunk.lock_expires_at = now + timedelta(minutes=LOCK_DURATION_MINUTES)
-    chunk.status = ProcessingStatus.IN_REVIEW
+    
+    # Only change status to IN_REVIEW if it's REVIEW_READY or APPROVED
+    # If already IN_REVIEW (refresh by same user), don't touch status
+    if chunk.status in (ProcessingStatus.REVIEW_READY, ProcessingStatus.APPROVED):
+        chunk.status = ProcessingStatus.IN_REVIEW
     
     session.add(chunk)
     session.commit()
@@ -433,3 +442,70 @@ def approve_chunk(
     session.commit()
     
     return {"message": "Chunk approved", "status": ProcessingStatus.APPROVED}
+
+
+@router.post("/chunks/{chunk_id}/retranscript")
+def retranscript_chunk(
+    chunk_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """
+    Mark a chunk for re-transcription by Gemini.
+    
+    This will:
+    1. Delete all existing segments for this chunk
+    2. Reset chunk status to PENDING
+    3. Release any lock
+    4. Create a new ProcessingJob to queue for Gemini
+    
+    Use when AI transcription was poor and needs to be redone.
+    """
+    from backend.db.models import Segment, ProcessingJob, JobStatus
+    
+    chunk = session.get(Chunk, chunk_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    
+    # Delete existing segments
+    segments = session.exec(
+        select(Segment).where(Segment.chunk_id == chunk_id)
+    ).all()
+    segments_deleted = len(segments)
+    for seg in segments:
+        session.delete(seg)
+    
+    # Reset chunk status
+    chunk.status = ProcessingStatus.PENDING
+    chunk.locked_by_user_id = None
+    chunk.lock_expires_at = None
+    session.add(chunk)
+    
+    # Check if already has a QUEUED/PROCESSING job
+    existing_job = session.exec(
+        select(ProcessingJob)
+        .where(ProcessingJob.chunk_id == chunk_id)
+        .where(ProcessingJob.status.in_([JobStatus.QUEUED, JobStatus.PROCESSING]))
+    ).first()
+    
+    job_created = False
+    if not existing_job:
+        # Create new ProcessingJob
+        job = ProcessingJob(
+            chunk_id=chunk_id,
+            video_id=chunk.video_id,
+            status=JobStatus.QUEUED,
+            requested_by_user_id=current_user.id
+        )
+        session.add(job)
+        job_created = True
+    
+    session.commit()
+    
+    return {
+        "message": "Chunk queued for re-transcription",
+        "chunk_id": chunk_id,
+        "segments_deleted": segments_deleted,
+        "job_created": job_created
+    }
+

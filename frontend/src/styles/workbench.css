@@ -561,16 +561,24 @@
   padding: 24px;
   max-width: 1600px;
   margin: 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .channel-page-header {
   display: flex;
   align-items: center;
   margin-bottom: 24px;
+  flex-shrink: 0;
 }
 
 .video-section {
   margin-top: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .video-card {

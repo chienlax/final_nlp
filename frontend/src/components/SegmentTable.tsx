@@ -26,11 +26,10 @@ import {
     Circle,
     Delete,
     Check,
+    Cancel,
 } from '@mui/icons-material'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import axios from 'axios'
-
-const api = axios.create({ baseURL: '/api' })
+import { api } from '../api/client'
 
 interface Segment {
     id: number
@@ -40,6 +39,7 @@ interface Segment {
     transcript: string
     translation: string
     is_verified: boolean
+    is_rejected: boolean
 }
 
 interface SegmentTableProps {
@@ -96,29 +96,35 @@ export function SegmentTable({
         },
     })
 
-    // Toggle verification mutation
-    const verifyMutation = useMutation({
-        mutationFn: (id: number) => api.post(`/segments/${id}/verify`),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['segments', chunkId] })
-        },
-    })
-
     // Bulk verify mutation
     const bulkVerifyMutation = useMutation({
-        mutationFn: (ids: number[]) => api.post('/segments/bulk-verify', { segment_ids: ids }),
-        onSuccess: () => {
+        mutationFn: (ids: number[]) => {
+            console.log('[SegmentTable] bulkVerify called with IDs:', ids, 'chunkId:', chunkId)
+            return api.post('/segments/bulk-verify', { segment_ids: ids })
+        },
+        onSuccess: (response) => {
+            console.log('[SegmentTable] bulkVerify success:', response.data)
             queryClient.invalidateQueries({ queryKey: ['segments', chunkId] })
             setSelectedIds(new Set())
+        },
+        onError: (error: any) => {
+            console.error('[SegmentTable] bulkVerify error:', error.response?.data || error.message)
         },
     })
 
     // Bulk reject (mark as rejected) mutation
     const bulkRejectMutation = useMutation({
-        mutationFn: (ids: number[]) => api.post('/segments/bulk-reject', { segment_ids: ids }),
-        onSuccess: () => {
+        mutationFn: (ids: number[]) => {
+            console.log('[SegmentTable] bulkReject called with IDs:', ids, 'chunkId:', chunkId)
+            return api.post('/segments/bulk-reject', { segment_ids: ids })
+        },
+        onSuccess: (response) => {
+            console.log('[SegmentTable] bulkReject success:', response.data)
             queryClient.invalidateQueries({ queryKey: ['segments', chunkId] })
             setSelectedIds(new Set())
+        },
+        onError: (error: any) => {
+            console.error('[SegmentTable] bulkReject error:', error.response?.data || error.message)
         },
     })
 
@@ -187,12 +193,6 @@ export function SegmentTable({
             setSelectedIds(new Set(segments.map(s => s.id)))
         }
     }, [segments, selectedIds.size])
-
-    // Handle verify checkbox click
-    const handleVerifyClick = useCallback((id: number, e: React.MouseEvent) => {
-        e.stopPropagation()
-        verifyMutation.mutate(id)
-    }, [verifyMutation])
 
     // Scroll active row into view
     useEffect(() => {
@@ -309,15 +309,22 @@ export function SegmentTable({
                                 />
                             </Box>
 
-                            {/* Verify checkbox */}
-                            <Box onClick={(e) => handleVerifyClick(segment.id, e)}>
-                                <Tooltip title={segment.is_verified ? 'Verified' : 'Click to verify'}>
-                                    <Checkbox
-                                        checked={segment.is_verified}
-                                        size="small"
-                                        icon={<Circle fontSize="small" sx={{ color: 'rgba(255,255,255,0.3)' }} />}
-                                        checkedIcon={<CheckCircle fontSize="small" sx={{ color: '#4caf50' }} />}
-                                    />
+                            {/* Status icon - 3 states: verified (✓), rejected (✗), unreviewed (○) */}
+                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <Tooltip title={
+                                    segment.is_verified ? 'Verified - Good to export' :
+                                        segment.is_rejected ? 'Rejected - Will not export' :
+                                            'Unreviewed'
+                                }>
+                                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                        {segment.is_verified ? (
+                                            <CheckCircle fontSize="small" sx={{ color: '#4caf50' }} />
+                                        ) : segment.is_rejected ? (
+                                            <Cancel fontSize="small" sx={{ color: '#f44336' }} />
+                                        ) : (
+                                            <Circle fontSize="small" sx={{ color: 'rgba(255,255,255,0.3)' }} />
+                                        )}
+                                    </Box>
                                 </Tooltip>
                             </Box>
 

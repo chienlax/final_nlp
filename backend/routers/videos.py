@@ -61,6 +61,7 @@ class VideoUploadResponse(BaseModel):
     title: str
     file_path: str
     chunks_created: int = 0  # Number of chunks created (0 if failed)
+    jobs_queued: int = 0  # Number of chunks auto-queued for Gemini processing
     message: str
 
 
@@ -203,12 +204,36 @@ async def upload_video(
     
     # Auto-chunk the video (non-blocking - errors don't fail upload)
     chunks_created = 0
+    jobs_queued = 0
     try:
         from backend.processing.chunker import chunk_video
         chunks_created = chunk_video(video.id, session)
         logger.info(f"Auto-chunked video {video.id}: {chunks_created} chunks created")
+        
+        # Auto-queue for Gemini processing
+        if chunks_created > 0:
+            from backend.db.models import Chunk, ProcessingJob, JobStatus, ProcessingStatus
+            chunks = session.exec(
+                select(Chunk)
+                .where(Chunk.video_id == video.id)
+                .where(Chunk.status == ProcessingStatus.PENDING)
+            ).all()
+            
+            for chunk in chunks:
+                job = ProcessingJob(
+                    chunk_id=chunk.id,
+                    video_id=video.id,
+                    status=JobStatus.QUEUED,
+                    requested_by_user_id=current_user.id
+                )
+                session.add(job)
+                jobs_queued += 1
+            
+            session.commit()
+            logger.info(f"Auto-queued {jobs_queued} chunks for Gemini processing (video {video.id})")
+            
     except Exception as e:
-        logger.error(f"Auto-chunk failed for video {video.id}: {e}")
+        logger.error(f"Auto-chunk/queue failed for video {video.id}: {e}")
         # Don't fail the upload, just log the error
     
     return VideoUploadResponse(
@@ -216,7 +241,8 @@ async def upload_video(
         title=video.title,
         file_path=video.file_path,
         chunks_created=chunks_created,
-        message=f"Video uploaded successfully. {chunks_created} chunks created."
+        jobs_queued=jobs_queued,
+        message=f"Video uploaded successfully. {chunks_created} chunks created, {jobs_queued} queued for processing."
     )
 
 

@@ -123,6 +123,9 @@ export const WaveformViewer = forwardRef<WaveformViewerRef, WaveformViewerProps>
         useEffect(() => {
             if (!containerRef.current) return
 
+            // Track if we're still mounted to avoid state updates after unmount
+            let isMounted = true
+
             // Create plugins
             const regions = RegionsPlugin.create()
             regionsRef.current = regions
@@ -171,34 +174,38 @@ export const WaveformViewer = forwardRef<WaveformViewerRef, WaveformViewerProps>
             // Load audio
             wavesurfer.load(audioUrl)
 
-            // Event handlers
-            wavesurfer.on('play', () => onPlayPause?.(true))
-            wavesurfer.on('pause', () => onPlayPause?.(false))
-            wavesurfer.on('finish', () => onPlayPause?.(false))
+            // Event handlers - only call if still mounted
+            wavesurfer.on('play', () => isMounted && onPlayPause?.(true))
+            wavesurfer.on('pause', () => isMounted && onPlayPause?.(false))
+            wavesurfer.on('finish', () => isMounted && onPlayPause?.(false))
 
             wavesurfer.on('audioprocess', () => {
-                onTimeUpdate?.(wavesurfer.getCurrentTime())
+                if (isMounted) onTimeUpdate?.(wavesurfer.getCurrentTime())
             })
 
             wavesurfer.on('ready', () => {
-                onDurationChange?.(wavesurfer.getDuration())
+                if (isMounted) onDurationChange?.(wavesurfer.getDuration())
             })
 
             // Region events
             regions.on('region-updated', (region: Region) => {
-                onRegionUpdate?.(region.id, region.start, region.end)
+                if (isMounted) onRegionUpdate?.(region.id, region.start, region.end)
             })
 
             regions.on('region-clicked', (region: Region, e: MouseEvent) => {
                 e.stopPropagation()
-                onRegionClick?.(region.id)
-
-                // Play region on click
-                wavesurfer.seekTo(region.start / wavesurfer.getDuration())
+                if (isMounted) {
+                    onRegionClick?.(region.id)
+                    // Play region on click
+                    wavesurfer.seekTo(region.start / wavesurfer.getDuration())
+                }
             })
 
             // Cleanup
+            // NOTE: AbortError may appear in console during development due to React StrictMode
+            // double-mounting components. This is benign and won't occur in production.
             return () => {
+                isMounted = false
                 wavesurfer.destroy()
             }
         }, [audioUrl])
