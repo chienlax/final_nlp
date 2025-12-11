@@ -70,6 +70,11 @@ def get_yt_dlp_config(output_dir: Path, video_id: str) -> Dict[str, Any]:
         'no_warnings': True,
         'ignoreerrors': True,  # Skip private videos without crashing
         
+        # Network:
+        'socket_timeout': 30,  # 30 second timeout to prevent hanging
+        'retries': 3,          # Retry failed downloads
+        'fragment_retries': 3, # Retry failed fragments
+        
         # Progress:
         'progress_hooks': [],
     }
@@ -157,6 +162,19 @@ def fetch_metadata(url: str) -> Optional[VideoMetadata]:
         return None
 
 
+def _build_video_url(video_id: str) -> str:
+    """
+    Build a full YouTube watch URL from a video ID.
+    
+    Args:
+        video_id: 11-character YouTube video ID
+        
+    Returns:
+        Full YouTube watch URL
+    """
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
 def fetch_playlist_metadata(url: str) -> List[VideoMetadata]:
     """
     Fetch metadata for all videos in a playlist or channel.
@@ -171,12 +189,16 @@ def fetch_playlist_metadata(url: str) -> List[VideoMetadata]:
         When using extract_flat mode, individual entries often lack channel info.
         We extract channel info from the parent playlist/channel metadata and
         apply it to all entries.
+        
+        CRITICAL: extract_flat returns video IDs, not full URLs. We must
+        construct proper YouTube watch URLs for downloads to work.
     """
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'extract_flat': 'in_playlist',
         'ignoreerrors': True,
+        'socket_timeout': 30,  # Prevent hanging on network issues
     }
     
     results = []
@@ -215,13 +237,26 @@ def fetch_playlist_metadata(url: str) -> List[VideoMetadata]:
                         entry_channel = entry.get('channel') or entry.get('uploader')
                         entry_channel_url = entry.get('channel_url') or entry.get('uploader_url')
                         
+                        # CRITICAL: extract_flat returns video IDs in 'url' field,
+                        # not full URLs. We must build proper watch URLs.
+                        video_id = entry.get('id', '')
+                        
+                        # Determine the proper URL: prefer webpage_url if present,
+                        # otherwise build from video ID
+                        raw_url = entry.get('webpage_url') or entry.get('url', '')
+                        if raw_url and 'youtube.com' not in raw_url and 'youtu.be' not in raw_url:
+                            # raw_url is just a video ID, build full URL
+                            original_url = _build_video_url(video_id) if video_id else raw_url
+                        else:
+                            original_url = raw_url
+                        
                         results.append(VideoMetadata(
-                            video_id=entry.get('id', ''),
+                            video_id=video_id,
                             title=entry.get('title', 'Unknown'),
                             duration_seconds=int(entry.get('duration', 0) or 0),
                             channel_name=entry_channel if entry_channel else parent_channel_name,
                             channel_url=entry_channel_url if entry_channel_url else parent_channel_url,
-                            original_url=entry.get('url', entry.get('webpage_url', '')),
+                            original_url=original_url,
                         ))
                         
     except Exception as e:
@@ -254,13 +289,34 @@ def download_audio(
     # Configure yt-dlp
     config = get_yt_dlp_config(output_dir, video_id)
     
+    # CRITICAL: Disable ignoreerrors for single video downloads
+    # We need to know if the download actually failed
+    config['ignoreerrors'] = False
+    
+    # Track if download actually completed
+    download_completed = False
+    download_error = None
+    
     if progress_callback:
         def hook(d):
+            nonlocal download_completed, download_error
             if d['status'] == 'downloading':
                 percent = d.get('_percent_str', '0%')
                 progress_callback(f"Downloading: {percent}")
             elif d['status'] == 'finished':
+                download_completed = True
                 progress_callback("Processing...")
+            elif d['status'] == 'error':
+                download_error = d.get('error', 'Unknown error')
+        config['progress_hooks'] = [hook]
+    else:
+        # Still need to track completion even without callback
+        def hook(d):
+            nonlocal download_completed, download_error
+            if d['status'] == 'finished':
+                download_completed = True
+            elif d['status'] == 'error':
+                download_error = d.get('error', 'Unknown error')
         config['progress_hooks'] = [hook]
     
     try:
@@ -268,30 +324,52 @@ def download_audio(
             info = ydl.extract_info(url, download=True)
             
             if not info:
+                logger.error(f"Download returned no info for {url}")
                 return None
             
-            # Find the downloaded file
-            file_path = output_dir / f"{video_id}.m4a"
-            if not file_path.exists():
-                # Try to find any audio file with this ID
-                for ext in ['m4a', 'mp3', 'wav', 'opus', 'webm']:
-                    candidate = output_dir / f"{video_id}.{ext}"
+            # Check for download error
+            if download_error:
+                logger.error(f"Download error for {url}: {download_error}")
+                return None
+            
+            # Find the downloaded file - check multiple possible filenames
+            # yt-dlp might use the actual video ID from info, not our extracted one
+            actual_video_id = info.get('id', video_id)
+            
+            file_path = None
+            # Try both our extracted ID and the actual ID from yt-dlp
+            for vid in [actual_video_id, video_id]:
+                for ext in ['m4a', 'mp3', 'wav', 'opus', 'webm', 'mp4']:
+                    candidate = output_dir / f"{vid}.{ext}"
                     if candidate.exists():
                         file_path = candidate
                         break
+                if file_path:
+                    break
+            
+            if not file_path or not file_path.exists():
+                logger.error(f"Download completed but file not found for {url}")
+                logger.error(f"  Searched for: {actual_video_id}.* and {video_id}.* in {output_dir}")
+                return None
             
             return VideoMetadata(
-                video_id=info.get('id', video_id),
+                video_id=actual_video_id,
                 title=info.get('title', 'Unknown'),
                 duration_seconds=int(info.get('duration', 0)),
                 channel_name=info.get('channel', info.get('uploader', 'Unknown')),
                 channel_url=info.get('channel_url', ''),
                 original_url=info.get('webpage_url', url),
-                file_path=file_path if file_path.exists() else None,
+                file_path=file_path,
             )
             
+    except yt_dlp.utils.DownloadError as e:
+        error_msg = str(e)
+        logger.error(f"Download failed for {url}: {error_msg}")
+        if progress_callback:
+            progress_callback(f"Error: {error_msg[:50]}")
+        return None
     except Exception as e:
-        logger.error(f"Download failed: {e}")
+        logger.error(f"Download failed for {url}: {e}")
         return None
 
 
