@@ -53,7 +53,7 @@ database_data/
 *.sqlite3
 *.db-shm
 *.db-wal
-data/
+/data/
 frontend/node_modules/
 frontend/package-lock.json
 docs/*.pdf
