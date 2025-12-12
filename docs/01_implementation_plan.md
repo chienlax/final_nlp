@@ -1,4 +1,4 @@
-# Technical Specification: Vietnamese-English Code-Switching Pipeline
+# Technical Specification: Vietnamese-English Code-Switching Pipeline [LEGACY]
 **Version:** 1.0
 
 > [!CAUTION]

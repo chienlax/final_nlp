@@ -1,0 +1,35 @@
+# =============================================================================
+# Vietnamese-English Code-Switching Speech Translation - Training Dependencies
+# =============================================================================
+
+# Core Deep Learning
+torch>=2.0.0
+torchaudio>=2.0.0
+transformers>=4.36.0
+datasets>=2.14.0
+accelerate>=0.24.0
+
+# Audio Processing
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# Metrics
+jiwer>=3.0.0
+sacrebleu>=2.3.0
+evaluate>=0.4.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+pandas>=2.0.0
+
+# Logging
+tensorboard>=2.14.0
+
+# Configuration
+pyyaml>=6.0
+omegaconf>=2.3.0
+
+# Utilities
+tqdm>=4.65.0
+numpy>=1.24.0

@@ -1,0 +1,45 @@
+# =============================================================================
+# Production Config - Whisper (H100 SXM 80GB)
+# =============================================================================
+# Optimized for convergence on 40-50hrs of data
+
+# Model
+model:
+  name: "openai/whisper-medium"
+  type: "whisper"
+  language: "vi"
+  task: "both" # multitask: ASR + ST
+
+# Training - Optimized for H100
+training:
+  batch_size: 24
+  gradient_accumulation_steps: 2
+  # Effective batch size: 48
+
+  learning_rate: 1.0e-5 # Conservative for convergence
+  lr_scheduler_type: "linear"
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+
+  num_train_epochs: 3
+  max_steps: -1 # Use epochs
+
+  bf16: true # Native H100 support
+  gradient_checkpointing: false # Not needed with 80GB
+
+  eval_steps: 200
+  save_steps: 200
+  logging_steps: 50
+
+# DataLoader - Maximize H100 utilization
+dataloader:
+  num_workers: 24
+  pin_memory: true
+  prefetch_factor: 4
+  persistent_workers: true
+
+# Output
+output:
+  dir: "training/outputs/prod_whisper"
+  experiment_name: "whisper_medium_prod"

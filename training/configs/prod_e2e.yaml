@@ -1,0 +1,50 @@
+# =============================================================================
+# Production Config - E2E Model (H100 SXM 80GB)
+# =============================================================================
+# Full-scale training with convergence guarantees
+
+# Model
+model:
+  type: "e2e"
+  encoder: "facebook/wav2vec2-large-xlsr-53" # Full multilingual encoder
+  decoder: "facebook/mbart-large-50"
+  add_adapter: true
+  freeze_encoder: false
+
+# Training - Conservative for stability
+training:
+  batch_size: 8
+  gradient_accumulation_steps: 4
+  # Effective batch size: 32
+
+  learning_rate: 5.0e-6 # Very conservative for encoder-decoder
+  lr_scheduler_type: "cosine" # Smoother for stability
+  warmup_ratio: 0.15 # 15% warmup
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+
+  num_train_epochs: 3
+  max_steps: -1
+
+  bf16: true
+  gradient_checkpointing: true # Still useful for this large model
+
+  eval_steps: 300
+  save_steps: 300
+  logging_steps: 50
+
+  # Encoder freezing strategy
+  freeze_feature_encoder: true
+  freeze_encoder_epochs: 1 # Unfreeze after epoch 1
+
+# DataLoader
+dataloader:
+  num_workers: 24
+  pin_memory: true
+  prefetch_factor: 4
+  persistent_workers: true
+
+# Output
+output:
+  dir: "training/outputs/prod_e2e"
+  experiment_name: "e2e_large_prod"
