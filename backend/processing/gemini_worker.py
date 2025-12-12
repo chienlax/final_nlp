@@ -660,7 +660,9 @@ def _worker_thread(
     key_manager: ApiKeyManager,
     stop_event: threading.Event,
     model_name: str = DEFAULT_MODEL,
-    rate_limit_delay: float = 1.0
+    rate_limit_delay: float = 1.0,
+    daemon_mode: bool = False,
+    poll_interval: float = 5.0
 ) -> Dict[str, int]:
     """
     Single worker thread - processes jobs until queue empty or key exhausted.
@@ -671,6 +673,8 @@ def _worker_thread(
         stop_event: Event to signal shutdown
         model_name: Gemini model to use
         rate_limit_delay: Seconds to wait between jobs
+        daemon_mode: If True, poll continuously instead of exiting when queue empty
+        poll_interval: Seconds to wait when queue is empty (only in daemon mode)
         
     Returns:
         Dict with success/fail counts
@@ -709,8 +713,14 @@ def _worker_thread(
                 
                 if not job:
                     # No jobs in queue
-                    logger.debug(f"[Worker {worker_id}] Queue empty, exiting")
-                    break
+                    if daemon_mode:
+                        # Daemon mode: wait and poll again
+                        time.sleep(poll_interval)
+                        continue
+                    else:
+                        # Batch mode: exit when done
+                        logger.debug(f"[Worker {worker_id}] Queue empty, exiting")
+                        break
                 
                 # Claim the job
                 job.status = JobStatus.PROCESSING
@@ -800,7 +810,9 @@ def _worker_thread(
 def run_parallel_workers(
     num_workers: int = 4,
     model_name: str = DEFAULT_MODEL,
-    rate_limit_delay: float = 1.0
+    rate_limit_delay: float = 1.0,
+    daemon_mode: bool = False,
+    poll_interval: float = 5.0
 ) -> Dict[str, Any]:
     """
     Run N workers in parallel, each with a dedicated API key.
@@ -809,6 +821,8 @@ def run_parallel_workers(
         num_workers: Number of parallel workers (should match number of API keys)
         model_name: Gemini model to use
         rate_limit_delay: Seconds to wait between jobs per worker
+        daemon_mode: If True, workers poll continuously (never exit until Ctrl+C)
+        poll_interval: Seconds to wait when queue is empty (daemon mode only)
         
     Returns:
         Aggregated results from all workers
@@ -817,6 +831,7 @@ def run_parallel_workers(
     logger.info(f"Starting Parallel Gemini Workers")
     logger.info(f"  Workers requested: {num_workers}")
     logger.info(f"  Model: {model_name}")
+    logger.info(f"  Mode: {'DAEMON (continuous)' if daemon_mode else 'BATCH (exit when done)'}")
     logger.info("=" * 60)
     
     key_manager = ApiKeyManager()
@@ -845,7 +860,9 @@ def run_parallel_workers(
                     key_manager=key_manager,
                     stop_event=stop_event,
                     model_name=model_name,
-                    rate_limit_delay=rate_limit_delay
+                    rate_limit_delay=rate_limit_delay,
+                    daemon_mode=daemon_mode,
+                    poll_interval=poll_interval
                 ): i
                 for i in range(actual_workers)
             }
@@ -902,11 +919,18 @@ if __name__ == "__main__":
             # Run as queue worker (centralized processing, single-threaded)
             run_queue_worker()
         elif sys.argv[1] == "--parallel":
-            # Run parallel workers (multi-threaded, 4x speedup)
+            # Run parallel workers (multi-threaded, batch mode - exits when done)
             num_workers = 4
             if len(sys.argv) > 2:
                 num_workers = int(sys.argv[2])
-            run_parallel_workers(num_workers=num_workers)
+            run_parallel_workers(num_workers=num_workers, daemon_mode=False)
+        elif sys.argv[1] == "--daemon":
+            # Run parallel workers in daemon mode (continuous, never exits)
+            num_workers = 4
+            if len(sys.argv) > 2:
+                num_workers = int(sys.argv[2])
+            print("Starting daemon mode (Ctrl+C to stop)...")
+            run_parallel_workers(num_workers=num_workers, daemon_mode=True)
         elif sys.argv[1] == "--all":
             # Process all pending chunks (legacy mode)
             limit = 10
@@ -923,12 +947,12 @@ if __name__ == "__main__":
         print("Gemini Worker - Audio Transcription")
         print("")
         print("Usage:")
-        print("  python -m backend.processing.gemini_worker --parallel [N]  # Run N parallel workers (RECOMMENDED)")
-        print("  python -m backend.processing.gemini_worker --queue         # Run single-threaded queue worker")
-        print("  python -m backend.processing.gemini_worker --all [N]       # Process N pending chunks (legacy)")
+        print("  python -m backend.processing.gemini_worker --daemon [N]    # Run N workers CONTINUOUSLY (background)")
+        print("  python -m backend.processing.gemini_worker --parallel [N]  # Run N workers, exit when queue empty")
+        print("  python -m backend.processing.gemini_worker --queue         # Single-threaded queue worker")
         print("  python -m backend.processing.gemini_worker <chunk_id>      # Process single chunk")
         print("")
         print("Examples:")
-        print("  python -m backend.processing.gemini_worker --parallel 4    # 4 workers = 4x speedup")
-        print("  python -m backend.processing.gemini_worker --parallel      # Auto-detect (uses all available API keys)")
+        print("  python -m backend.processing.gemini_worker --daemon 6      # 6 workers, runs forever")
+        print("  python -m backend.processing.gemini_worker --parallel 4    # 4 workers, exits when done")
 
