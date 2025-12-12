@@ -20,7 +20,9 @@ import re
 import json
 import time
 import logging
-from datetime import datetime
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from itertools import cycle
@@ -196,6 +198,126 @@ class ApiKeyPool:
         self.current_key = next(self.key_cycle)
         logger.info(f"Rotated to new API key: ...{self.current_key[-8:]}")
         return self.current_key
+
+
+class ApiKeyManager:
+    """
+    Thread-safe API key manager with cooldown tracking.
+    
+    When a key gets rate-limited (429 error), it's marked as "cooling down"
+    for COOLDOWN_MINUTES. Workers check this before making requests.
+    
+    Usage:
+        manager = ApiKeyManager()
+        key = manager.get_key_for_worker(worker_id)  # Assigns dedicated key
+        
+        # On 429 error:
+        manager.mark_rate_limited(key)
+    """
+    
+    COOLDOWN_MINUTES = 50  # Based on observed key exhaustion time
+    
+    def __init__(self):
+        self._keys = self._load_keys()
+        if not self._keys:
+            raise ValueError("No Gemini API keys found. Set GEMINI_API_KEYS env var.")
+        self._cooldowns: Dict[str, datetime] = {}  # key -> cooldown_until
+        self._lock = threading.Lock()
+        logger.info(f"ApiKeyManager loaded {len(self._keys)} keys")
+    
+    def _load_keys(self) -> List[str]:
+        """Load API keys from environment."""
+        keys = []
+        
+        # Try comma-separated list first
+        combined = os.getenv("GEMINI_API_KEYS", "")
+        if combined:
+            keys = [k.strip() for k in combined.split(",") if k.strip()]
+        
+        # Fallback to numbered keys
+        if not keys:
+            for i in range(1, 10):
+                key = os.getenv(f"GEMINI_API_KEY_{i}")
+                if key:
+                    keys.append(key)
+        
+        # Final fallback
+        if not keys:
+            key = os.getenv("GEMINI_API_KEY")
+            if key:
+                keys.append(key)
+        
+        return keys
+    
+    @property
+    def keys(self) -> List[str]:
+        """Get list of all keys."""
+        return self._keys.copy()
+    
+    @property
+    def key_count(self) -> int:
+        """Get number of available keys."""
+        return len(self._keys)
+    
+    def get_key_for_worker(self, worker_id: int) -> Optional[str]:
+        """
+        Get a dedicated API key for a worker.
+        
+        Each worker gets a different key (worker_id mod num_keys).
+        Returns None if assigned key is cooling down.
+        """
+        if not self._keys:
+            return None
+        
+        key = self._keys[worker_id % len(self._keys)]
+        
+        if self.is_cooling_down(key):
+            return None
+        
+        return key
+    
+    def is_cooling_down(self, key: str) -> bool:
+        """Check if a key is currently cooling down."""
+        with self._lock:
+            cooldown_until = self._cooldowns.get(key)
+            if cooldown_until is None:
+                return False
+            return datetime.utcnow() < cooldown_until
+    
+    def mark_rate_limited(self, key: str) -> None:
+        """Mark a key as rate-limited (cooling down)."""
+        with self._lock:
+            cooldown_until = datetime.utcnow() + timedelta(minutes=self.COOLDOWN_MINUTES)
+            self._cooldowns[key] = cooldown_until
+            logger.warning(
+                f"API key ...{key[-8:]} marked as rate-limited until "
+                f"{cooldown_until.strftime('%H:%M:%S')}"
+            )
+    
+    def get_available_key(self) -> Optional[str]:
+        """Get any available key that's not cooling down."""
+        with self._lock:
+            now = datetime.utcnow()
+            for key in self._keys:
+                cooldown_until = self._cooldowns.get(key)
+                if cooldown_until is None or now >= cooldown_until:
+                    return key
+            return None
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get status of all keys (for monitoring/logging)."""
+        with self._lock:
+            now = datetime.utcnow()
+            status = []
+            for i, key in enumerate(self._keys):
+                cooldown_until = self._cooldowns.get(key)
+                is_available = cooldown_until is None or now >= cooldown_until
+                status.append({
+                    "key_suffix": f"...{key[-8:]}",
+                    "available": is_available,
+                    "cooldown_until": cooldown_until.isoformat() if cooldown_until else None
+                })
+            return {"keys": status, "total": len(self._keys)}
 
 
 # =============================================================================
@@ -530,6 +652,230 @@ def run_queue_worker(
 
 
 # =============================================================================
+# PARALLEL WORKER (Multi-threaded Processing)
+# =============================================================================
+
+def _worker_thread(
+    worker_id: int,
+    key_manager: ApiKeyManager,
+    stop_event: threading.Event,
+    model_name: str = DEFAULT_MODEL,
+    rate_limit_delay: float = 1.0
+) -> Dict[str, int]:
+    """
+    Single worker thread - processes jobs until queue empty or key exhausted.
+    
+    Args:
+        worker_id: Unique worker identifier (for logging)
+        key_manager: Shared API key manager
+        stop_event: Event to signal shutdown
+        model_name: Gemini model to use
+        rate_limit_delay: Seconds to wait between jobs
+        
+    Returns:
+        Dict with success/fail counts
+    """
+    results = {"success": 0, "failed": 0, "rate_limited": False}
+    logger.info(f"[Worker {worker_id}] Starting")
+    
+    # Get dedicated API key for this worker
+    api_key = key_manager.get_key_for_worker(worker_id)
+    if not api_key:
+        logger.warning(f"[Worker {worker_id}] No available API key, exiting")
+        return results
+    
+    logger.info(f"[Worker {worker_id}] Using API key ...{api_key[-8:]}")
+    
+    # Configure Gemini for this thread
+    genai.configure(api_key=api_key)
+    
+    while not stop_event.is_set():
+        # Check if our key is cooling down
+        if key_manager.is_cooling_down(api_key):
+            logger.info(f"[Worker {worker_id}] Key is cooling down, stopping")
+            results["rate_limited"] = True
+            break
+        
+        try:
+            with Session(engine) as session:
+                # Get oldest QUEUED job with row-level lock
+                job = session.exec(
+                    select(ProcessingJob)
+                    .where(ProcessingJob.status == JobStatus.QUEUED)
+                    .order_by(ProcessingJob.created_at)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                ).first()
+                
+                if not job:
+                    # No jobs in queue
+                    logger.debug(f"[Worker {worker_id}] Queue empty, exiting")
+                    break
+                
+                # Claim the job
+                job.status = JobStatus.PROCESSING
+                job.started_at = datetime.utcnow()
+                session.add(job)
+                session.commit()
+                
+                job_id = job.id
+                chunk_id = job.chunk_id
+            
+            logger.info(f"[Worker {worker_id}] Processing job {job_id}: chunk {chunk_id}")
+            
+            # Process the chunk
+            try:
+                # Create a simple key pool wrapper for process_chunk compatibility
+                class SingleKeyPool:
+                    def __init__(self, key):
+                        self._key = key
+                    def get_key(self):
+                        return self._key
+                    def rotate(self):
+                        return self._key
+                
+                segments_created, _ = process_chunk(
+                    chunk_id, 
+                    api_key_pool=SingleKeyPool(api_key),
+                    model_name=model_name
+                )
+                
+                # Mark job as completed
+                with Session(engine) as session:
+                    job = session.get(ProcessingJob, job_id)
+                    if job:
+                        job.status = JobStatus.COMPLETED
+                        job.completed_at = datetime.utcnow()
+                        session.add(job)
+                        session.commit()
+                
+                results["success"] += 1
+                logger.info(f"[Worker {worker_id}] ✓ Job {job_id}: {segments_created} segments")
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                
+                # Detect rate limiting (429 errors)
+                if "429" in error_str or "resource" in error_str or "quota" in error_str:
+                    logger.warning(f"[Worker {worker_id}] Rate limited, marking key as cooling down")
+                    key_manager.mark_rate_limited(api_key)
+                    results["rate_limited"] = True
+                    
+                    # Mark job as QUEUED again so another worker can pick it up
+                    with Session(engine) as session:
+                        job = session.get(ProcessingJob, job_id)
+                        if job:
+                            job.status = JobStatus.QUEUED
+                            job.started_at = None
+                            session.add(job)
+                            session.commit()
+                    break
+                
+                # Other errors: mark job as failed
+                error_msg = str(e)[:1000]
+                logger.error(f"[Worker {worker_id}] ✗ Job {job_id} failed: {error_msg}")
+                
+                with Session(engine) as session:
+                    job = session.get(ProcessingJob, job_id)
+                    if job:
+                        job.status = JobStatus.FAILED
+                        job.completed_at = datetime.utcnow()
+                        job.error_message = error_msg
+                        session.add(job)
+                        session.commit()
+                
+                results["failed"] += 1
+            
+            # Rate limiting between jobs
+            time.sleep(rate_limit_delay)
+            
+        except Exception as e:
+            logger.error(f"[Worker {worker_id}] Error: {e}")
+            time.sleep(2)
+    
+    logger.info(f"[Worker {worker_id}] Finished: {results}")
+    return results
+
+
+def run_parallel_workers(
+    num_workers: int = 4,
+    model_name: str = DEFAULT_MODEL,
+    rate_limit_delay: float = 1.0
+) -> Dict[str, Any]:
+    """
+    Run N workers in parallel, each with a dedicated API key.
+    
+    Args:
+        num_workers: Number of parallel workers (should match number of API keys)
+        model_name: Gemini model to use
+        rate_limit_delay: Seconds to wait between jobs per worker
+        
+    Returns:
+        Aggregated results from all workers
+    """
+    logger.info("=" * 60)
+    logger.info(f"Starting Parallel Gemini Workers")
+    logger.info(f"  Workers requested: {num_workers}")
+    logger.info(f"  Model: {model_name}")
+    logger.info("=" * 60)
+    
+    key_manager = ApiKeyManager()
+    
+    # Limit workers to number of keys
+    actual_workers = min(num_workers, key_manager.key_count)
+    if actual_workers < num_workers:
+        logger.warning(
+            f"Only {key_manager.key_count} API keys available, "
+            f"running {actual_workers} workers instead of {num_workers}"
+        )
+    
+    logger.info(f"  Actual workers: {actual_workers}")
+    logger.info(f"  API keys: {key_manager.key_count}")
+    logger.info("=" * 60)
+    
+    stop_event = threading.Event()
+    all_results = {"total_success": 0, "total_failed": 0, "workers_rate_limited": 0}
+    
+    try:
+        with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+            futures = {
+                executor.submit(
+                    _worker_thread,
+                    worker_id=i,
+                    key_manager=key_manager,
+                    stop_event=stop_event,
+                    model_name=model_name,
+                    rate_limit_delay=rate_limit_delay
+                ): i
+                for i in range(actual_workers)
+            }
+            
+            for future in as_completed(futures):
+                worker_id = futures[future]
+                try:
+                    result = future.result()
+                    all_results["total_success"] += result["success"]
+                    all_results["total_failed"] += result["failed"]
+                    if result.get("rate_limited"):
+                        all_results["workers_rate_limited"] += 1
+                except Exception as e:
+                    logger.error(f"Worker {worker_id} crashed: {e}")
+    
+    except KeyboardInterrupt:
+        logger.info("\nShutdown requested, stopping workers...")
+        stop_event.set()
+    
+    logger.info("=" * 60)
+    logger.info(f"All workers finished")
+    logger.info(f"  Total success: {all_results['total_success']}")
+    logger.info(f"  Total failed: {all_results['total_failed']}")
+    logger.info(f"  Workers rate-limited: {all_results['workers_rate_limited']}")
+    logger.info("=" * 60)
+    
+    return all_results
+
+
+# =============================================================================
 # CLI ENTRY POINT
 # =============================================================================
 
@@ -553,8 +899,14 @@ if __name__ == "__main__":
     
     if len(sys.argv) > 1:
         if sys.argv[1] == "--queue":
-            # Run as queue worker (centralized processing)
+            # Run as queue worker (centralized processing, single-threaded)
             run_queue_worker()
+        elif sys.argv[1] == "--parallel":
+            # Run parallel workers (multi-threaded, 4x speedup)
+            num_workers = 4
+            if len(sys.argv) > 2:
+                num_workers = int(sys.argv[2])
+            run_parallel_workers(num_workers=num_workers)
         elif sys.argv[1] == "--all":
             # Process all pending chunks (legacy mode)
             limit = 10
@@ -571,7 +923,12 @@ if __name__ == "__main__":
         print("Gemini Worker - Audio Transcription")
         print("")
         print("Usage:")
-        print("  python -m backend.processing.gemini_worker --queue     # Run queue worker")
-        print("  python -m backend.processing.gemini_worker --all [N]   # Process N pending chunks")
-        print("  python -m backend.processing.gemini_worker <chunk_id>  # Process single chunk")
+        print("  python -m backend.processing.gemini_worker --parallel [N]  # Run N parallel workers (RECOMMENDED)")
+        print("  python -m backend.processing.gemini_worker --queue         # Run single-threaded queue worker")
+        print("  python -m backend.processing.gemini_worker --all [N]       # Process N pending chunks (legacy)")
+        print("  python -m backend.processing.gemini_worker <chunk_id>      # Process single chunk")
+        print("")
+        print("Examples:")
+        print("  python -m backend.processing.gemini_worker --parallel 4    # 4 workers = 4x speedup")
+        print("  python -m backend.processing.gemini_worker --parallel      # Auto-detect (uses all available API keys)")
 

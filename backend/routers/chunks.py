@@ -436,6 +436,15 @@ def retranscript_chunk(
     chunk.lock_expires_at = None
     session.add(chunk)
     
+    # Delete old FAILED/COMPLETED jobs for this chunk (prevents stale status in UI)
+    old_jobs = session.exec(
+        select(ProcessingJob)
+        .where(ProcessingJob.chunk_id == chunk_id)
+        .where(ProcessingJob.status.in_([JobStatus.FAILED, JobStatus.COMPLETED]))
+    ).all()
+    for old_job in old_jobs:
+        session.delete(old_job)
+    
     # Check if already has a QUEUED/PROCESSING job
     existing_job = session.exec(
         select(ProcessingJob)
