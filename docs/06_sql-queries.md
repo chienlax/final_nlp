@@ -336,3 +336,103 @@ WHERE pj.status = 'failed'
 ORDER BY pj.completed_at DESC
 LIMIT 20;
 ```
+
+---
+
+## Data Consistency (Fix Stale Status)
+
+> [!IMPORTANT]
+> These queries help fix the "fully processed but shows failed" issue visible in the UI.
+
+### Find videos showing "processed" but have failed jobs
+
+This finds videos where the progress bar looks complete, but there are still failed jobs lurking:
+
+```sql
+SELECT 
+    v.id AS video_id,
+    v.title,
+    COUNT(c.id) AS total_chunks,
+    COUNT(CASE WHEN c.status = 'review_ready' THEN 1 END) AS review_ready,
+    COUNT(CASE WHEN c.status = 'pending' THEN 1 END) AS pending,
+    (SELECT COUNT(*) FROM processing_jobs pj 
+     WHERE pj.video_id = v.id AND pj.status = 'failed') AS failed_jobs
+FROM videos v
+JOIN chunks c ON v.id = c.video_id
+GROUP BY v.id, v.title
+HAVING (SELECT COUNT(*) FROM processing_jobs pj 
+        WHERE pj.video_id = v.id AND pj.status = 'failed') > 0
+ORDER BY failed_jobs DESC;
+```
+
+### Clean up stale FAILED jobs (chunks already processed successfully)
+
+When a chunk is `review_ready` but has an old `failed` job record, delete the stale job:
+
+```sql
+-- Preview first
+SELECT pj.id, pj.chunk_id, c.status AS chunk_status, pj.status AS job_status
+FROM processing_jobs pj
+JOIN chunks c ON pj.chunk_id = c.id
+WHERE pj.status = 'failed' 
+AND c.status = 'review_ready';
+
+-- Delete stale failed jobs
+DELETE FROM processing_jobs pj
+USING chunks c
+WHERE pj.chunk_id = c.id
+AND pj.status = 'failed'
+AND c.status = 'review_ready';
+```
+
+### Clean up all COMPLETED/FAILED jobs for already-processed chunks
+
+More aggressive cleanup - removes ALL old job history for chunks that are done:
+
+```sql
+DELETE FROM processing_jobs pj
+USING chunks c
+WHERE pj.chunk_id = c.id
+AND pj.status IN ('completed', 'failed')
+AND c.status = 'review_ready';
+```
+
+### Find orphaned jobs (chunk no longer exists)
+
+```sql
+SELECT pj.* 
+FROM processing_jobs pj
+LEFT JOIN chunks c ON pj.chunk_id = c.id
+WHERE c.id IS NULL;
+```
+
+### Delete orphaned jobs
+
+```sql
+DELETE FROM processing_jobs pj
+WHERE NOT EXISTS (
+    SELECT 1 FROM chunks c WHERE c.id = pj.chunk_id
+);
+```
+
+### True video processing status (accurate count)
+
+This shows the REAL status of each video, ignoring stale job records:
+
+```sql
+SELECT 
+    v.id,
+    v.title,
+    COUNT(c.id) AS total_chunks,
+    COUNT(CASE WHEN c.status = 'pending' THEN 1 END) AS pending,
+    COUNT(CASE WHEN c.status = 'processing' THEN 1 END) AS processing,
+    COUNT(CASE WHEN c.status = 'review_ready' THEN 1 END) AS review_ready,
+    COUNT(CASE WHEN c.status = 'in_review' THEN 1 END) AS in_review,
+    COUNT(CASE WHEN c.status = 'approved' THEN 1 END) AS approved,
+    COUNT(CASE WHEN c.status = 'rejected' THEN 1 END) AS rejected
+FROM videos v
+LEFT JOIN chunks c ON v.id = c.video_id
+GROUP BY v.id, v.title
+ORDER BY pending DESC, v.id;
+```
+

@@ -4,7 +4,7 @@
  * User management and system configuration.
  */
 
-import { Box, Typography, Card, CardContent, Grid, Chip, Avatar, Alert, Divider } from '@mui/material'
+import { Box, Typography, Card, CardContent, Grid, Chip, Avatar, Divider } from '@mui/material'
 import { Person, AdminPanelSettings, Folder, Storage, Api } from '@mui/icons-material'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'

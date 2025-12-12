@@ -16,6 +16,7 @@ import {
     TableContainer,
     TableHead,
     TableRow,
+    TableSortLabel,
     Paper,
     Checkbox,
     Button,
@@ -35,6 +36,7 @@ import {
     Refresh as RefreshIcon,
     Warning as WarningIcon,
     Article as LogIcon,
+    Cancel as CancelIcon,
 } from '@mui/icons-material'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -80,6 +82,8 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
     const [selectedVideos, setSelectedVideos] = useState<Set<number>>(new Set())
     const [sseConnected, setSseConnected] = useState(false)
     const [showLogModal, setShowLogModal] = useState(false)
+    const [sortBy, setSortBy] = useState<'title' | 'channel' | 'duration' | 'progress'>('channel')
+    const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
     const queryClient = useQueryClient()
 
     // Fetch queue summary
@@ -169,6 +173,22 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
         }
     })
 
+    // Cancel bulk jobs mutation
+    const cancelBulkJobs = useMutation({
+        mutationFn: (videoIds: number[]) =>
+            api.delete('/queue/jobs/bulk', {
+                data: { video_ids: videoIds },
+                headers: { 'X-User-ID': userId.toString() }
+            }),
+        onSuccess: (response) => {
+            const data = response.data
+            console.log(`Cancelled ${data.cancelled} queued jobs`)
+            queryClient.invalidateQueries({ queryKey: ['queue-summary'] })
+            queryClient.invalidateQueries({ queryKey: ['queue-stats'] })
+            setSelectedVideos(new Set())
+        }
+    })
+
     // Selection handlers
     const toggleVideo = useCallback((videoId: number) => {
         setSelectedVideos(prev => {
@@ -248,6 +268,36 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
         return (processed / video.total_chunks) * 100
     }
 
+    // Sorting handler
+    const handleSort = (column: 'title' | 'channel' | 'duration' | 'progress') => {
+        if (sortBy === column) {
+            setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
+        } else {
+            setSortBy(column)
+            setSortDir('asc')
+        }
+    }
+
+    // Sort videos
+    const sortedVideos = videos ? [...videos].sort((a, b) => {
+        let cmp = 0
+        switch (sortBy) {
+            case 'title':
+                cmp = a.video_title.localeCompare(b.video_title)
+                break
+            case 'channel':
+                cmp = a.channel_name.localeCompare(b.channel_name)
+                break
+            case 'duration':
+                cmp = a.duration_seconds - b.duration_seconds
+                break
+            case 'progress':
+                cmp = getProgress(a) - getProgress(b)
+                break
+        }
+        return sortDir === 'asc' ? cmp : -cmp
+    }) : []
+
     if (isLoading) {
         return (
             <Box sx={{ p: 3, display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -318,6 +368,16 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
                     {addToQueue.isPending ? 'Adding...' : `Process Selected (${selectedVideos.size})`}
                 </Button>
 
+                <Button
+                    variant="outlined"
+                    color="error"
+                    startIcon={<CancelIcon />}
+                    onClick={() => cancelBulkJobs.mutate(Array.from(selectedVideos))}
+                    disabled={selectedVideos.size === 0 || cancelBulkJobs.isPending}
+                >
+                    {cancelBulkJobs.isPending ? 'Cancelling...' : `Cancel Queued (${selectedVideos.size})`}
+                </Button>
+
                 <Tooltip title="Refresh list">
                     <IconButton onClick={() => refetch()}>
                         <RefreshIcon />
@@ -356,16 +416,48 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
                                         onChange={toggleAll}
                                     />
                                 </TableCell>
-                                <TableCell>Video</TableCell>
-                                <TableCell>Channel</TableCell>
-                                <TableCell>Duration</TableCell>
-                                <TableCell>Progress</TableCell>
+                                <TableCell sx={{ minWidth: 350 }}>
+                                    <TableSortLabel
+                                        active={sortBy === 'title'}
+                                        direction={sortBy === 'title' ? sortDir : 'asc'}
+                                        onClick={() => handleSort('title')}
+                                    >
+                                        Video
+                                    </TableSortLabel>
+                                </TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={sortBy === 'channel'}
+                                        direction={sortBy === 'channel' ? sortDir : 'asc'}
+                                        onClick={() => handleSort('channel')}
+                                    >
+                                        Channel
+                                    </TableSortLabel>
+                                </TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={sortBy === 'duration'}
+                                        direction={sortBy === 'duration' ? sortDir : 'asc'}
+                                        onClick={() => handleSort('duration')}
+                                    >
+                                        Duration
+                                    </TableSortLabel>
+                                </TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={sortBy === 'progress'}
+                                        direction={sortBy === 'progress' ? sortDir : 'asc'}
+                                        onClick={() => handleSort('progress')}
+                                    >
+                                        Progress
+                                    </TableSortLabel>
+                                </TableCell>
                                 <TableCell>Status</TableCell>
                                 <TableCell>Actions</TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
-                            {videos.map(video => (
+                            {sortedVideos.map(video => (
                                 <TableRow
                                     key={video.video_id}
                                     sx={{
@@ -380,8 +472,18 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
                                             onChange={() => toggleVideo(video.video_id)}
                                         />
                                     </TableCell>
-                                    <TableCell>
-                                        <Typography variant="body2" noWrap sx={{ maxWidth: 300 }}>
+                                    <TableCell sx={{ minWidth: 350 }}>
+                                        <Typography
+                                            variant="body2"
+                                            sx={{
+                                                maxWidth: 400,
+                                                display: '-webkit-box',
+                                                WebkitLineClamp: 2,
+                                                WebkitBoxOrient: 'vertical',
+                                                overflow: 'hidden',
+                                                lineHeight: 1.4
+                                            }}
+                                        >
                                             {video.video_title}
                                         </Typography>
                                     </TableCell>

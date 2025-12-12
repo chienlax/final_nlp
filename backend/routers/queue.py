@@ -76,6 +76,23 @@ class RetryResponse(BaseModel):
     video_id: int
 
 
+class CancelResponse(BaseModel):
+    """Response after cancelling queued jobs."""
+    cancelled: int
+    video_id: int
+
+
+class CancelBulkRequest(BaseModel):
+    """Request to cancel jobs for multiple videos."""
+    video_ids: List[int]
+
+
+class CancelBulkResponse(BaseModel):
+    """Response after bulk cancelling jobs."""
+    cancelled: int
+    video_ids: List[int]
+
+
 # =============================================================================
 # ADD VIDEOS TO QUEUE
 # =============================================================================
@@ -370,6 +387,96 @@ def retry_failed_jobs(
     logger.info(f"User {current_user.username} retried {retried} failed chunks for video {video_id}")
     
     return RetryResponse(retried=retried, video_id=video_id)
+
+
+# =============================================================================
+# CANCEL QUEUED JOBS
+# =============================================================================
+
+@router.delete("/videos/{video_id}/jobs", response_model=CancelResponse)
+def cancel_video_jobs(
+    video_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """
+    Cancel all QUEUED jobs for a video.
+    
+    Does NOT cancel jobs that are currently PROCESSING.
+    This allows users to remove videos from the queue without
+    affecting work in progress.
+    
+    Args:
+        video_id: Video ID to cancel jobs for
+        current_user: Authenticated user
+        
+    Returns:
+        Count of cancelled jobs
+    """
+    # Verify video exists
+    video = session.get(Video, video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    # Find and delete QUEUED jobs for this video
+    queued_jobs = session.exec(
+        select(ProcessingJob)
+        .where(ProcessingJob.video_id == video_id)
+        .where(ProcessingJob.status == JobStatus.QUEUED)
+    ).all()
+    
+    cancelled = 0
+    for job in queued_jobs:
+        session.delete(job)
+        cancelled += 1
+    
+    session.commit()
+    
+    logger.info(f"User {current_user.username} cancelled {cancelled} queued jobs for video {video_id}")
+    
+    return CancelResponse(cancelled=cancelled, video_id=video_id)
+
+
+@router.delete("/jobs/bulk", response_model=CancelBulkResponse)
+def cancel_bulk_jobs(
+    request: CancelBulkRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """
+    Cancel all QUEUED jobs for multiple videos.
+    
+    Does NOT cancel jobs that are currently PROCESSING.
+    
+    Args:
+        request: List of video IDs to cancel jobs for
+        current_user: Authenticated user
+        
+    Returns:
+        Total count of cancelled jobs
+    """
+    total_cancelled = 0
+    
+    for video_id in request.video_ids:
+        # Find and delete QUEUED jobs for this video
+        queued_jobs = session.exec(
+            select(ProcessingJob)
+            .where(ProcessingJob.video_id == video_id)
+            .where(ProcessingJob.status == JobStatus.QUEUED)
+        ).all()
+        
+        for job in queued_jobs:
+            session.delete(job)
+            total_cancelled += 1
+    
+    session.commit()
+    
+    logger.info(
+        f"User {current_user.username} cancelled {total_cancelled} queued jobs "
+        f"for {len(request.video_ids)} videos"
+    )
+    
+    return CancelBulkResponse(cancelled=total_cancelled, video_ids=request.video_ids)
 
 
 # =============================================================================
