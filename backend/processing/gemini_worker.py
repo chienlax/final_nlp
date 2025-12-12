@@ -174,7 +174,7 @@ class ApiKeyPool:
         
         # Fallback to numbered keys
         if not keys:
-            for i in range(1, 10):
+            for i in range(1, 100):
                 key = os.getenv(f"GEMINI_API_KEY_{i}")
                 if key:
                     keys.append(key)
@@ -210,7 +210,7 @@ class ApiKeyManager:
     """
     
     COOLDOWN_MINUTES = 5   # Cooldown per exhausted key
-    WAIT_MINUTES = 2       # Wait time when all keys exhausted
+    WAIT_MINUTES = 10       # Wait time when all keys exhausted
     
     def __init__(self):
         self._keys = self._load_keys()
@@ -230,7 +230,7 @@ class ApiKeyManager:
         
         # Fallback to numbered keys
         if not keys:
-            for i in range(1, 10):
+            for i in range(1, 100):
                 key = os.getenv(f"GEMINI_API_KEY_{i}")
                 if key:
                     keys.append(key)
