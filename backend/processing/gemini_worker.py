@@ -1,8 +1,9 @@
 """
 Gemini AI Worker for Audio Transcription.
 
-Sends audio chunks to Gemini Flash for transcription and translation.
-Handles JSON parsing, timestamp conversion, and API key rotation.
+Sends audio chunks to Gemini for transcription and translation.
+Supports multi-model cascade (Flash → Pro) when quota is exhausted.
+Handles JSON parsing, timestamp conversion, and smart API key rotation.
 
 Output Schema:
     [
@@ -23,7 +24,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
-from itertools import cycle
 
 # Load .env file BEFORE importing anything else that uses env vars
 from dotenv import load_dotenv
@@ -147,77 +147,37 @@ RESPONSE_SCHEMA = {
 # API KEY MANAGEMENT
 # =============================================================================
 
-class ApiKeyPool:
+class ModelKeyManager:
     """
-    Rotating pool of Gemini API keys.
+    Smart API key manager with multi-model cascade and cooldown tracking.
     
-    Reads from GEMINI_API_KEYS env var (comma-separated).
-    Falls back to GEMINI_API_KEY_1, GEMINI_API_KEY_2, etc.
-    """
+    Tracks cooldowns per (model, key) tuple, not just per key.
+    This allows switching models when one model's quota is exhausted.
     
-    def __init__(self):
-        self.keys = self._load_keys()
-        if not self.keys:
-            raise ValueError("No Gemini API keys found. Set GEMINI_API_KEYS env var.")
-        self.key_cycle = cycle(self.keys)
-        self.current_key = next(self.key_cycle)
-        logger.info(f"Loaded {len(self.keys)} API keys")
-    
-    def _load_keys(self) -> List[str]:
-        """Load API keys from environment."""
-        keys = []
-        
-        # Try comma-separated list first
-        combined = os.getenv("GEMINI_API_KEYS", "")
-        if combined:
-            keys = [k.strip() for k in combined.split(",") if k.strip()]
-        
-        # Fallback to numbered keys
-        if not keys:
-            for i in range(1, 100):
-                key = os.getenv(f"GEMINI_API_KEY_{i}")
-                if key:
-                    keys.append(key)
-        
-        # Final fallback
-        if not keys:
-            key = os.getenv("GEMINI_API_KEY")
-            if key:
-                keys.append(key)
-        
-        return keys
-    
-    def get_key(self) -> str:
-        """Get current API key."""
-        return self.current_key
-    
-    def rotate(self) -> str:
-        """Rotate to next API key and return it."""
-        self.current_key = next(self.key_cycle)
-        logger.info(f"Rotated to new API key: ...{self.current_key[-8:]}")
-        return self.current_key
-
-
-class ApiKeyManager:
-    """
-    Smart API key manager with cooldown tracking.
-    
-    Algorithm:
-    1. Try each key in order
-    2. If key is cooling down, skip to next
-    3. If all keys cooling, wait 2 mins and recheck
-    4. On 429 error, mark key as cooling for 5 mins
+    Cascade Algorithm:
+    1. Try all keys on Flash (primary model)
+    2. If all Flash keys exhausted → switch to Pro
+    3. If all Pro keys exhausted → recheck Flash (some may have recovered)
+    4. If everything exhausted → sleep 15 min → restart from Flash
     """
     
-    COOLDOWN_MINUTES = 5   # Cooldown per exhausted key
-    WAIT_MINUTES = 10       # Wait time when all keys exhausted
+    # Model priority order (first = primary)
+    MODELS = ["gemini-2.5-flash", "gemini-2.5-pro"]
+    
+    COOLDOWN_MINUTES = 5           # Cooldown per exhausted (model, key)
+    EXHAUSTED_SLEEP_MINUTES = 15   # Sleep when ALL models+keys exhausted
     
     def __init__(self):
         self._keys = self._load_keys()
         if not self._keys:
             raise ValueError("No Gemini API keys found. Set GEMINI_API_KEYS env var.")
-        self._cooldowns: Dict[str, datetime] = {}
-        logger.info(f"ApiKeyManager: loaded {len(self._keys)} API keys")
+        
+        # Cooldowns tracked per (model, key) tuple
+        self._cooldowns: Dict[Tuple[str, str], datetime] = {}
+        self._current_model_idx = 0
+        
+        logger.info(f"ModelKeyManager: loaded {len(self._keys)} API keys")
+        logger.info(f"ModelKeyManager: models = {self.MODELS}")
     
     def _load_keys(self) -> List[str]:
         """Load API keys from environment."""
@@ -247,43 +207,82 @@ class ApiKeyManager:
     def key_count(self) -> int:
         return len(self._keys)
     
-    def is_cooling(self, key: str) -> bool:
-        """Check if key is currently in cooldown."""
-        cooldown_until = self._cooldowns.get(key)
+    @property
+    def current_model(self) -> str:
+        """Get the current model being used."""
+        return self.MODELS[self._current_model_idx]
+    
+    def is_cooling(self, model: str, key: str) -> bool:
+        """Check if (model, key) combo is currently in cooldown."""
+        cooldown_until = self._cooldowns.get((model, key))
         if cooldown_until is None:
             return False
         return datetime.now(timezone.utc) < cooldown_until
     
-    def mark_cooling(self, key: str) -> None:
-        """Mark a key as exhausted (5-min cooldown)."""
+    def mark_cooling(self, model: str, key: str) -> None:
+        """Mark a (model, key) combo as exhausted (5-min cooldown)."""
         cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=self.COOLDOWN_MINUTES)
-        self._cooldowns[key] = cooldown_until
-        logger.warning(f"Key ...{key[-8:]} exhausted, cooling until {cooldown_until.strftime('%H:%M:%S')}")
+        self._cooldowns[(model, key)] = cooldown_until
+        logger.warning(
+            f"Key ...{key[-8:]} exhausted on {model}, "
+            f"cooling until {cooldown_until.strftime('%H:%M:%S UTC')}"
+        )
     
-    def get_available_key(self) -> Optional[str]:
-        """Get first available key (not cooling). Returns None if all cooling."""
+    def get_available_key(self, model: str) -> Optional[str]:
+        """Get first available key for a specific model (not cooling)."""
         for key in self._keys:
-            if not self.is_cooling(key):
+            if not self.is_cooling(model, key):
                 return key
         return None
     
-    def wait_for_available_key(self) -> str:
+    def get_next_available(self) -> Tuple[str, str]:
         """
-        Wait until a key becomes available.
-        If all keys cooling, wait 2 mins and recheck.
-        """
-        while True:
-            key = self.get_available_key()
-            if key:
-                return key
+        Get next available (model, key) pair using cascade logic.
+        
+        Returns:
+            Tuple of (model_name, api_key)
             
-            logger.info(f"All {len(self._keys)} keys exhausted! Waiting {self.WAIT_MINUTES} mins...")
-            time.sleep(self.WAIT_MINUTES * 60)
+        Algorithm:
+        1. Try current model's keys
+        2. If none → switch to next model
+        3. Cycle through all models twice (allows keys to recover)
+        4. If still nothing → sleep 15 min → restart from first model
+        """
+        # Try up to 2 full cycles through all models
+        # (first cycle exhausts, second cycle allows recovery check)
+        max_attempts = len(self.MODELS) * 2
+        
+        for attempt in range(max_attempts):
+            model = self.MODELS[self._current_model_idx]
+            key = self.get_available_key(model)
+            
+            if key:
+                logger.info(f"Using model: {model}, key: ...{key[-8:]}")
+                return model, key
+            
+            # All keys exhausted for this model, switch to next
+            old_model = model
+            self._current_model_idx = (self._current_model_idx + 1) % len(self.MODELS)
+            new_model = self.MODELS[self._current_model_idx]
+            logger.info(f"All keys exhausted for {old_model}, switching to {new_model}...")
+        
+        # All models exhausted, sleep and restart
+        logger.warning(
+            f"All models and keys exhausted! "
+            f"Sleeping {self.EXHAUSTED_SLEEP_MINUTES} minutes..."
+        )
+        time.sleep(self.EXHAUSTED_SLEEP_MINUTES * 60)
+        
+        # Reset to first model and try again
+        self._current_model_idx = 0
+        self._cooldowns.clear()  # Clear all cooldowns after long sleep
+        logger.info("Cooldowns cleared, restarting from first model...")
+        
+        return self.get_next_available()  # Recursive retry
     
     def configure_genai(self, key: str) -> None:
-        """Configure genai with the given key."""
+        """Configure genai library with the given API key."""
         genai.configure(api_key=key)
-        logger.info(f"Using API key: ...{key[-8:]}")
 
 
 # =============================================================================
@@ -355,7 +354,7 @@ def parse_gemini_response(text: str) -> List[Dict[str, Any]]:
 
 def process_chunk(
     chunk_id: int,
-    api_key_pool: Optional[ApiKeyPool] = None,
+    api_key_pool: Any,
     model_name: str = DEFAULT_MODEL
 ) -> Tuple[int, Dict[str, Any]]:
     """
@@ -363,14 +362,15 @@ def process_chunk(
     
     Args:
         chunk_id: ID of chunk to process
-        api_key_pool: API key pool (creates new if not provided)
+        api_key_pool: Object with get_key() method returning API key string
         model_name: Gemini model to use
         
     Returns:
         Tuple of (segments_created, metadata)
     """
     if api_key_pool is None:
-        api_key_pool = ApiKeyPool()
+        raise ValueError("api_key_pool is required")
+
     
     with Session(engine) as session:
         chunk = session.get(Chunk, chunk_id)
@@ -515,37 +515,36 @@ def process_all_pending(
 def run_queue_worker(
     poll_interval: float = 2.0,
     rate_limit_delay: float = 1.0,
-    model_name: str = DEFAULT_MODEL
 ):
     """
-    Run the centralized queue worker with smart API key rotation.
+    Run the centralized queue worker with multi-model cascade.
     
     This is a single-threaded worker that:
     1. Polls for QUEUED jobs
-    2. Gets an available API key (rotates if exhausted)
+    2. Gets an available (model, key) pair (cascades Flash → Pro)
     3. Processes the chunk
-    4. On 429 error: marks key as cooling (5 min), tries next key
-    5. If all keys exhausted: waits 2 min, rechecks
+    4. On 429 error: marks (model, key) as cooling, cascades to next
+    5. If all models+keys exhausted: sleeps 15 min, rechecks
     
     Run:
         python -m backend.processing.gemini_worker --queue
     """
     logger.info("=" * 60)
-    logger.info("Starting Gemini Queue Worker (Smart Key Rotation)")
+    logger.info("Starting Gemini Queue Worker (Multi-Model Cascade)")
     logger.info(f"  Poll interval: {poll_interval}s")
     logger.info(f"  Rate limit delay: {rate_limit_delay}s")
-    logger.info(f"  Model: {model_name}")
+    logger.info(f"  Models: {ModelKeyManager.MODELS}")
     logger.info("=" * 60)
     
-    # Initialize key manager
-    key_manager = ApiKeyManager()
-    current_key = key_manager.wait_for_available_key()
-    key_manager.configure_genai(current_key)
+    # Initialize multi-model key manager
+    model_manager = ModelKeyManager()
+    current_model, current_key = model_manager.get_next_available()
+    model_manager.configure_genai(current_key)
     
     # Simple key pool wrapper for process_chunk compatibility
     class SmartKeyPool:
-        def __init__(self, manager: ApiKeyManager):
-            self._manager = manager
+        """Wrapper to maintain compatibility with process_chunk signature."""
+        def __init__(self):
             self._current_key = None
         
         def set_key(self, key: str):
@@ -555,9 +554,10 @@ def run_queue_worker(
             return self._current_key
         
         def rotate(self):
+            # No-op, rotation handled by model_manager
             return self._current_key
     
-    key_pool = SmartKeyPool(key_manager)
+    key_pool = SmartKeyPool()
     key_pool.set_key(current_key)
     
     while True:
@@ -588,11 +588,11 @@ def run_queue_worker(
                 chunk_id = job.chunk_id
                 video_id = job.video_id
                 
-            logger.info(f"Processing job {job_id}: chunk {chunk_id} (video {video_id})")
+            logger.info(f"Processing job {job_id}: chunk {chunk_id} (video {video_id}) with {current_model}")
             
-            # Process the chunk
+            # Process the chunk with current model
             try:
-                segments_created, metadata = process_chunk(chunk_id, key_pool, model_name)
+                segments_created, metadata = process_chunk(chunk_id, key_pool, current_model)
                 
                 # Mark job as completed
                 with Session(engine) as session:
@@ -603,7 +603,7 @@ def run_queue_worker(
                         session.add(job)
                         session.commit()
                 
-                logger.info(f"✓ Job {job_id} completed: {segments_created} segments")
+                logger.info(f"✓ Job {job_id} completed: {segments_created} segments ({current_model})")
                 
             except Exception as e:
                 error_str = str(e).lower()
@@ -611,8 +611,8 @@ def run_queue_worker(
                 
                 # Check if rate limited (429 error)
                 if "429" in error_str or "resource" in error_str or "quota" in error_str:
-                    logger.warning(f"Rate limited! Key exhausted.")
-                    key_manager.mark_cooling(current_key)
+                    logger.warning(f"Rate limited on {current_model}! Marking (model, key) as cooling...")
+                    model_manager.mark_cooling(current_model, current_key)
                     
                     # Return job to queue so it can be retried
                     with Session(engine) as session:
@@ -623,11 +623,12 @@ def run_queue_worker(
                             session.add(job)
                             session.commit()
                     
-                    # Get next available key (waits if all exhausted)
-                    current_key = key_manager.wait_for_available_key()
-                    key_manager.configure_genai(current_key)
+                    # Get next available (model, key) - may switch models or wait
+                    current_model, current_key = model_manager.get_next_available()
+                    model_manager.configure_genai(current_key)
                     key_pool.set_key(current_key)
                     continue
+
                 
                 # Other errors: mark job as failed
                 logger.error(f"✗ Job {job_id} failed: {error_msg}")
@@ -689,14 +690,16 @@ if __name__ == "__main__":
             chunk_id = int(sys.argv[1])
             process_chunk(chunk_id)
     else:
-        print("Gemini Worker - Audio Transcription (Smart Key Rotation)")
+        print("Gemini Worker - Audio Transcription (Multi-Model Cascade)")
         print("")
         print("Usage:")
         print("  python -m backend.processing.gemini_worker --queue      # Run queue worker")
         print("  python -m backend.processing.gemini_worker --all [N]    # Process N pending chunks")
         print("  python -m backend.processing.gemini_worker <chunk_id>   # Process single chunk")
         print("")
-        print("The worker will:")
-        print("  - Rotate through API keys automatically")
-        print("  - Mark exhausted keys as cooling (5 min)")
-        print("  - Wait 2 min if all keys exhausted, then retry")
+        print("Multi-Model Cascade:")
+        print("  1. Try all API keys on gemini-2.5-flash")
+        print("  2. If all exhausted → switch to gemini-2.5-pro")
+        print("  3. If all pro keys exhausted → recheck flash (may have recovered)")
+        print("  4. If everything exhausted → sleep 15 min → restart")
+

@@ -61,10 +61,10 @@ if not exist "%REQUIREMENTS_FLAG%" (
     echo [1/6] Installing dependencies...
     
     echo [1/6a] Upgrading pip...
-    python -m pip install --upgrade pip -q
+    python -m pip install --upgrade pip -q --no-cache-dir
     
     echo [1/6b] Installing PyTorch with CUDA 12.4...
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 -q
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 -q --no-cache-dir
     if errorlevel 1 (
         echo [ERROR] Failed to install PyTorch!
         pause
@@ -72,7 +72,7 @@ if not exist "%REQUIREMENTS_FLAG%" (
     )
     
     echo [1/6c] Installing remaining dependencies...
-    pip install -r training\requirements.txt -q
+    pip install -r training\requirements.txt -q --no-cache-dir
     if errorlevel 1 (
         echo [ERROR] Failed to install requirements!
         pause
