@@ -33,11 +33,12 @@ nvidia-smi --query-gpu=name,memory.total --format=csv
 echo.
 
 REM =============================================================================
-REM ENVIRONMENT SETUP - Creates isolated training/.venv if not exists
+REM ENVIRONMENT SETUP - Creates isolated venv OUTSIDE project to avoid uvicorn conflict
 REM =============================================================================
 
-set VENV_DIR=training\.venv
-set REQUIREMENTS_FLAG=training\.requirements_installed
+REM Use venv outside project dir (uvicorn --reload watches project, causes conflict)
+set VENV_DIR=%USERPROFILE%\.training_venvs\final_nlp
+set REQUIREMENTS_FLAG=%VENV_DIR%\.requirements_installed
 
 REM Create virtual environment if it doesn't exist
 if not exist "%VENV_DIR%\Scripts\activate.bat" (

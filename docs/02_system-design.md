@@ -321,15 +321,31 @@ ffmpeg -i input.m4a -ss <start> -t <duration> -ac 1 -ar 16000 -acodec pcm_s16le 
 
 ### 5.2 Gemini Worker (`backend/processing/gemini_worker.py`)
 
-**API Key Rotation**:
+**Multi-Model Cascade**:
+
+The worker implements a cascade strategy when API quota is exhausted:
+
+```
+1. Try all API keys on gemini-2.5-flash (primary model)
+2. If all Flash keys exhausted → switch to gemini-2.5-pro
+3. If all Pro keys exhausted → recheck Flash (some may have recovered)
+4. If everything exhausted → sleep 15 minutes → restart from step 1
+```
+
+**ModelKeyManager Class**:
 ```python
-class ApiKeyPool:
-    def __init__(self):
-        self.keys = load_from_env()  # GEMINI_API_KEYS or GEMINI_API_KEY_1..9
-        self.key_cycle = cycle(self.keys)
+class ModelKeyManager:
+    MODELS = ["gemini-2.5-flash", "gemini-2.5-pro"]
+    COOLDOWN_MINUTES = 5      # Per (model, key) tuple
+    EXHAUSTED_SLEEP_MINUTES = 15
     
-    def rotate(self):
-        self.current_key = next(self.key_cycle)
+    def get_next_available(self) -> Tuple[str, str]:
+        # Returns (model_name, api_key) or blocks until available
+        ...
+    
+    def mark_cooling(self, model: str, key: str):
+        # Called on 429 error, puts (model, key) on 5-min cooldown
+        ...
 ```
 
 **System Prompt** instructs Gemini to:
@@ -338,7 +354,7 @@ class ApiKeyPool:
 - Segment audio into 2-25 second chunks
 - Transcribe code-switching accurately
 
-**Error Handling**: On failure, rotates API key and resets chunk status to PENDING
+**Error Handling**: On 429 (quota exceeded), immediately rotates to next (model, key) pair
 
 ### 5.3 Time Parser (`backend/utils/time_parser.py`)
 

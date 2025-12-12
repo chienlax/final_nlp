@@ -384,11 +384,15 @@ Error: could not connect to server
 Error: 429 RESOURCE_EXHAUSTED
 ```
 
-**Solution**:
+**How it's handled** (automatic):
 
-1. Add more API keys to `GEMINI_API_KEYS` in `.env`
-2. Worker automatically rotates keys on failure
-3. Wait for quota reset (daily limit)
+1. Worker tries all API keys on **Flash** model first
+2. If all exhausted → switches to **Pro** model
+3. If both exhausted → sleeps 15 min → restarts
+
+**Manual options**:
+- Add more API keys to `GEMINI_API_KEYS` in `.env`
+- Wait for quota reset (daily limit)
 
 ### FFmpeg Not Found
 
@@ -437,6 +441,31 @@ Failed to load users. Is the backend running on port 8000?
 1. Check backend is running: `curl http://localhost:8000/health`
 2. Check Vite proxy config in `frontend/vite.config.ts`
 3. Verify CORS origins in `backend/main.py`
+
+---
+
+## 8. Training Workflow
+
+After exporting approved data, train speech translation models.
+
+### 8.1 Export Dataset
+
+```powershell
+python -m backend.operations.exporter --all
+# Output: data/export/manifest.tsv
+```
+
+### 8.2 Run Training
+
+```powershell
+# Development (RTX 2050, ~30 min)
+training\run_dev.bat
+
+# Production (H100, ~3.5 hours)
+training/run_prod.sh
+```
+
+See [05_model-training.md](05_model-training.md) for detailed training documentation.
 
 ---
 

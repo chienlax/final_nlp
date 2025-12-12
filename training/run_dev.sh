@@ -22,11 +22,12 @@ cd "$(dirname "$0")/.."
 echo "[INFO] Working directory: $(pwd)"
 
 # =============================================================================
-# ENVIRONMENT SETUP - Creates isolated training/.venv if not exists
+# ENVIRONMENT SETUP - Creates isolated venv OUTSIDE project to avoid uvicorn conflict
 # =============================================================================
 
-VENV_DIR="training/.venv"
-REQUIREMENTS_FLAG="training/.requirements_installed"
+# Use venv outside project dir (uvicorn --reload watches project, causes conflict)
+VENV_DIR="$HOME/.training_venvs/final_nlp"
+REQUIREMENTS_FLAG="$VENV_DIR/.requirements_installed"
 
 # Create virtual environment if it doesn't exist
 if [ ! -d "$VENV_DIR" ]; then

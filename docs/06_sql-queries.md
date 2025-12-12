@@ -88,16 +88,111 @@ DELETE FROM processing_jobs WHERE status = 'completed';
 ### Find "stuck" jobs (processing for too long)
 ```sql
 SELECT * FROM processing_jobs 
-WHERE status = 'processing' 
+WHERE status = 'PROCESSING' 
 AND started_at < NOW() - INTERVAL '10 minutes';
 ```
 
 ### Reset stuck jobs to QUEUED
 ```sql
 UPDATE processing_jobs 
-SET status = 'queued', started_at = NULL 
-WHERE status = 'processing' 
+SET status = 'QUEUED', started_at = NULL 
+WHERE status = 'PROCESSING' 
 AND started_at < NOW() - INTERVAL '10 minutes';
+```
+
+### Find videos where chunks are already 'review_ready' but have stale 'failed' job records
+```sql
+SELECT 
+    v.id AS video_id,
+    v.title,
+    COUNT(DISTINCT pj.chunk_id) AS phantom_failed_chunks,
+    COUNT(DISTINCT c.id) AS total_chunks
+FROM processing_jobs pj
+JOIN chunks c ON pj.chunk_id = c.id
+JOIN videos v ON c.video_id = v.id
+WHERE pj.status = 'FAILED'
+  AND c.status = 'REVIEW_READY'  -- Chunk is actually DONE
+GROUP BY v.id, v.title
+ORDER BY phantom_failed_chunks DESC;
+```
+
+### Preview first
+```sql
+SELECT pj.id, pj.chunk_id, c.status AS chunk_status, pj.status AS job_status, pj.error_message
+FROM processing_jobs pj
+JOIN chunks c ON pj.chunk_id = c.id
+WHERE pj.status = 'FAILED' AND c.status = 'REVIEW_READY';
+```
+
+### Delete the stale records
+```sql
+DELETE FROM processing_jobs pj
+USING chunks c
+WHERE pj.chunk_id = c.id
+  AND pj.status = 'FAILED'
+  AND c.status = 'REVIEW_READY';
+```
+
+### Show all status mismatches between chunks and jobs
+```sql
+SELECT 
+    v.id AS video_id,
+    v.title,
+    c.id AS chunk_id,
+    c.chunk_index,
+    c.status AS chunk_status,
+    pj.status AS job_status,
+    pj.error_message
+FROM chunks c
+JOIN videos v ON c.video_id = v.id
+LEFT JOIN processing_jobs pj ON c.id = pj.chunk_id
+WHERE 
+    -- Case 1: Job says failed, but chunk is actually done
+    (pj.status = 'FAILED' AND c.status IN ('REVIEW_READY', 'APPROVED', 'IN_REVIEW'))
+    OR
+    -- Case 2: Chunk stuck in PROCESSING (worker crashed)
+    (c.status = 'PROCESSING' AND (pj.status IS NULL OR pj.status IN ('FAILED', 'COMPLETED')))
+    OR
+    -- Case 3: Orphaned failed job
+    (pj.status = 'FAILED' AND c.status NOT IN ('PENDING', 'PROCESSING'))
+ORDER BY v.id, c.chunk_index;
+```
+
+### Delete ALL completed and failed jobs (they're just history logs)
+```sql
+DELETE FROM processing_jobs 
+WHERE status IN ('COMPLETED', 'FAILED');
+```
+
+### Preview stuck chunks
+```sql
+SELECT c.id, c.chunk_index, v.title, c.status
+FROM chunks c
+JOIN videos v ON c.video_id = v.id
+WHERE c.status = 'PROCESSING';
+```
+
+### Reset them to PENDING (so they get re-queued)
+```sql
+UPDATE chunks 
+SET status = 'PENDING'
+WHERE status = 'PROCESSING';
+```
+
+### Step 1: Delete all failed/completed job records
+```sql
+DELETE FROM processing_jobs WHERE status IN ('COMPLETED', 'FAILED');
+```
+
+### Step 2: Reset any stuck PROCESSING chunks to PENDING
+```sql
+UPDATE chunks SET status = 'PENDING' WHERE status = 'PROCESSING';
+```
+
+### Step 3: Also delete any PROCESSING jobs (orphaned)
+```sql
+DELETE FROM processing_jobs WHERE status = 'PROCESSING' 
+AND started_at < NOW() - INTERVAL '30 minutes';
 ```
 
 ---
