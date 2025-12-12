@@ -82,7 +82,7 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
     const [selectedVideos, setSelectedVideos] = useState<Set<number>>(new Set())
     const [sseConnected, setSseConnected] = useState(false)
     const [showLogModal, setShowLogModal] = useState(false)
-    const [sortBy, setSortBy] = useState<'title' | 'channel' | 'duration' | 'progress'>('channel')
+    const [sortBy, setSortBy] = useState<'title' | 'channel' | 'duration' | 'progress' | 'status'>('channel')
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
     const queryClient = useQueryClient()
 
@@ -269,13 +269,22 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
     }
 
     // Sorting handler
-    const handleSort = (column: 'title' | 'channel' | 'duration' | 'progress') => {
+    const handleSort = (column: 'title' | 'channel' | 'duration' | 'progress' | 'status') => {
         if (sortBy === column) {
             setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
         } else {
             setSortBy(column)
             setSortDir('asc')
         }
+    }
+
+    // Get status priority for sorting (processing > queued > failed > pending > ready)
+    const getStatusPriority = (video: VideoQueueStatus): number => {
+        if (video.processing_chunks > 0) return 1
+        if (video.queued_chunks > 0) return 2
+        if (video.failed_chunks > 0) return 3
+        if (video.pending_chunks > 0) return 4
+        return 5 // Ready
     }
 
     // Sort videos
@@ -293,6 +302,9 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
                 break
             case 'progress':
                 cmp = getProgress(a) - getProgress(b)
+                break
+            case 'status':
+                cmp = getStatusPriority(a) - getStatusPriority(b)
                 break
         }
         return sortDir === 'asc' ? cmp : -cmp
@@ -452,7 +464,15 @@ export function PreprocessingPage({ userId }: PreprocessingPageProps) {
                                         Progress
                                     </TableSortLabel>
                                 </TableCell>
-                                <TableCell>Status</TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={sortBy === 'status'}
+                                        direction={sortBy === 'status' ? sortDir : 'asc'}
+                                        onClick={() => handleSort('status')}
+                                    >
+                                        Status
+                                    </TableSortLabel>
+                                </TableCell>
                                 <TableCell>Actions</TableCell>
                             </TableRow>
                         </TableHead>
