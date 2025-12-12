@@ -1,10 +1,12 @@
 # =============================================================================
 # Vietnamese-English Code-Switching Speech Translation - Training Dependencies
 # =============================================================================
+# NOTE: torch and torchvision are NOT listed here. They must be installed FIRST
+#       with CUDA support via the PyTorch index URL:
+#       pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+# =============================================================================
 
-# Core Deep Learning
-torch>=2.0.0
-torchaudio>=2.0.0
+# Core Deep Learning (torch installed separately with CUDA)
 transformers>=4.36.0
 datasets>=2.14.0
 accelerate>=0.24.0

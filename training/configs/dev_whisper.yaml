@@ -12,7 +12,7 @@ model:
 
 # Training - Conservative for 4GB VRAM
 training:
-  batch_size: 2
+  batch_size: 1
   gradient_accumulation_steps: 4
   # Effective batch size: 8
 

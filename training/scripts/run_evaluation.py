@@ -4,8 +4,8 @@ Evaluation Script for Speech Translation Models.
 Runs trained models on test set and computes metrics.
 
 Usage:
-    python evaluate.py --model_dir outputs/whisper --output results/
-    python evaluate.py --model_dir outputs/e2e --model_type e2e --output results/
+    python run_evaluation.py --model_dir outputs/whisper --output results/
+    python run_evaluation.py --model_dir outputs/e2e --model_type e2e --output results/
 """
 
 import argparse

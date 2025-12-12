@@ -60,3 +60,8 @@ docs/*.pdf
 docs/*.html
 .hintrc
 frontend/.vite 
+
+# Training - Isolated environment and outputs
+training/.venv/
+training/.requirements_installed
+training/outputs/

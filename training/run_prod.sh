@@ -1,12 +1,15 @@
 #!/bin/bash
 # =============================================================================
-# Production Training Pipeline - Linux (H100 SXM 80GB)
+# Production Training Pipeline - Linux (H100 SXM 80GB) - Fully Self-Contained
 # =============================================================================
 # GPU: H100 SXM (80GB VRAM)
 # CPU: AMD EPYC 9554 64-core
 # Data: 40-50 hours audio
 # Models: whisper-medium, wav2vec2-large-xlsr + mbart-large
 # Budget: 6-7 hours (target: 3.5 hours)
+#
+# This script creates its own isolated virtual environment in training/.venv/
+# Run from: final_nlp folder (project root)
 # =============================================================================
 
 set -e  # Exit on error
@@ -19,24 +22,68 @@ echo ""
 # Record start time
 START_TIME=$(date +%s)
 
-# Change to project root
+# Change to project root (script is in training/, so go up one level)
 cd "$(dirname "$0")/.."
+echo "[INFO] Working directory: $(pwd)"
 
-# Verify GPU
+# =============================================================================
+# GPU CHECK
+# =============================================================================
+
 echo "[SYSTEM] Checking GPU..."
 nvidia-smi --query-gpu=name,memory.total --format=csv
 echo ""
 
-# Check Python and GPU
-echo "[INFO] Python: $(python --version)"
-python -c "import torch; print(f'[INFO] PyTorch: {torch.__version__}'); print(f'[INFO] CUDA: {torch.cuda.is_available()}'); print(f'[INFO] CUDA Device: {torch.cuda.get_device_name(0)}')"
+# =============================================================================
+# ENVIRONMENT SETUP - Creates isolated training/.venv if not exists
+# =============================================================================
 
-# Install requirements
+VENV_DIR="training/.venv"
+REQUIREMENTS_FLAG="training/.requirements_installed"
+
+# Create virtual environment if it doesn't exist
+if [ ! -d "$VENV_DIR" ]; then
+    echo ""
+    echo "[SETUP] Creating isolated training environment..."
+    python3 -m venv "$VENV_DIR"
+    echo "[SETUP] Virtual environment created: $VENV_DIR"
+    # Delete requirements flag to force reinstall
+    rm -f "$REQUIREMENTS_FLAG"
+fi
+
+# Activate the training virtual environment
+echo "[SETUP] Activating training environment..."
+source "$VENV_DIR/bin/activate"
+
+# Verify we're using the right Python
 echo ""
-echo "[1/6] Installing requirements..."
+echo "[INFO] Python: $(python --version)"
+echo "[INFO] Python path: $(which python)"
+
+# =============================================================================
+# DEPENDENCY INSTALLATION
+# =============================================================================
+
+echo ""
+echo "[1/6] Installing dependencies..."
+
+echo "[1/6a] Upgrading pip..."
+python -m pip install --upgrade pip -q
+
+echo "[1/6b] Installing PyTorch with CUDA 12.4..."
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 -q
+
+echo "[1/6c] Installing remaining dependencies..."
 pip install -r training/requirements.txt -q
 
-# Split data
+# Verify PyTorch installation
+echo ""
+python -c "import torch; print(f'[INFO] PyTorch: {torch.__version__}'); print(f'[INFO] CUDA: {torch.cuda.is_available()}'); print(f'[INFO] CUDA Device: {torch.cuda.get_device_name(0)}')"
+
+# =============================================================================
+# DATA PREPARATION
+# =============================================================================
+
 echo ""
 echo "[2/6] Preparing data..."
 python training/data/split_data.py --manifest data/export/manifest.tsv --output_dir data/splits
@@ -45,6 +92,10 @@ python training/data/split_data.py --manifest data/export/manifest.tsv --output_
 echo ""
 echo "[INFO] Data split summary:"
 wc -l data/splits/*.csv
+
+# =============================================================================
+# TRAINING
+# =============================================================================
 
 # Train Whisper
 echo ""
@@ -74,16 +125,19 @@ E2E_END=$(date +%s)
 E2E_DURATION=$((E2E_END - E2E_START))
 echo "[INFO] E2E training completed in $((E2E_DURATION / 60)) minutes"
 
-# Evaluate models
+# =============================================================================
+# EVALUATION
+# =============================================================================
+
 echo ""
 echo "[5/6] Evaluating models on test set..."
 echo "=========================================="
-python training/scripts/evaluate.py \
+python training/scripts/run_evaluation.py \
     --model_dir training/outputs/prod_whisper \
     --model_type whisper \
     --output training/outputs/results
 
-python training/scripts/evaluate.py \
+python training/scripts/run_evaluation.py \
     --model_dir training/outputs/prod_e2e \
     --model_type e2e \
     --output training/outputs/results
@@ -97,6 +151,10 @@ python training/scripts/export_charts.py \
     --logs_dir training/outputs \
     --output training/outputs/charts \
     --dpi 300
+
+# =============================================================================
+# COMPLETE
+# =============================================================================
 
 # Calculate total time
 END_TIME=$(date +%s)
@@ -126,6 +184,7 @@ echo "Don't forget to download your checkpoints!"
 echo ""
 
 # Create summary file
+mkdir -p training/outputs
 cat << EOF > training/outputs/training_summary.txt
 Production Training Summary
 ===========================
