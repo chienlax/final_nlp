@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 from transformers import (
     SpeechEncoderDecoderModel,
-    Wav2Vec2Processor,
+    Wav2Vec2FeatureExtractor,
     MBart50Tokenizer,
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer
@@ -23,6 +23,61 @@ logger = logging.getLogger(__name__)
 # Special task tokens
 TRANSCRIBE_TOKEN = "<2transcribe>"
 TRANSLATE_TOKEN = "<2translate>"
+
+
+class SpeechEncoderDecoderModelWrapper(nn.Module):
+    """
+    Wrapper for SpeechEncoderDecoderModel that filters out unsupported arguments.
+    
+    Newer HuggingFace Trainer versions pass `num_items_in_batch` to forward(),
+    but MBartForCausalLM (the decoder) doesn't accept it. This wrapper filters
+    out such arguments.
+    """
+    
+    def __init__(self, model: SpeechEncoderDecoderModel):
+        super().__init__()
+        self.model = model
+        
+    def forward(self, **kwargs):
+        # Filter out arguments that the underlying model doesn't accept
+        kwargs.pop('num_items_in_batch', None)
+        return self.model(**kwargs)
+    
+    def generate(self, *args, **kwargs):
+        return self.model.generate(*args, **kwargs)
+    
+    def save_pretrained(self, *args, **kwargs):
+        return self.model.save_pretrained(*args, **kwargs)
+    
+    @property
+    def config(self):
+        return self.model.config
+    
+    @property
+    def encoder(self):
+        return self.model.encoder
+    
+    @property
+    def decoder(self):
+        return self.model.decoder
+    
+    @property
+    def enc_to_dec_proj(self):
+        return getattr(self.model, 'enc_to_dec_proj', None)
+    
+    @enc_to_dec_proj.setter
+    def enc_to_dec_proj(self, value):
+        self.model.enc_to_dec_proj = value
+    
+    def gradient_checkpointing_enable(self, *args, **kwargs):
+        return self.model.gradient_checkpointing_enable(*args, **kwargs)
+    
+    def __getattr__(self, name):
+        # Delegate all other attributes to the wrapped model
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.model, name)
 
 
 class E2EModel:
@@ -58,20 +113,27 @@ class E2EModel:
         logger.info(f"Building E2E model: {encoder_name} + {decoder_name}")
         
         # Load processors
-        self.audio_processor = Wav2Vec2Processor.from_pretrained(encoder_name)
+        # NOTE: Use FeatureExtractor, not Processor, because xlsr-53 doesn't have a tokenizer
+        self.audio_processor = Wav2Vec2FeatureExtractor.from_pretrained(encoder_name)
         self.tokenizer = MBart50Tokenizer.from_pretrained(decoder_name)
         
         # Add special tokens
         self._add_special_tokens()
         
         # Build model
-        self.model = SpeechEncoderDecoderModel.from_encoder_decoder_pretrained(
+        base_model = SpeechEncoderDecoderModel.from_encoder_decoder_pretrained(
             encoder_name,
             decoder_name
         )
         
         # Resize embeddings for new tokens
-        self.model.decoder.resize_token_embeddings(len(self.tokenizer))
+        base_model.decoder.resize_token_embeddings(len(self.tokenizer))
+        
+        # Store unwrapped model for configuration
+        self._base_model = base_model
+        
+        # Wrap model to filter out incompatible forward() arguments
+        self.model = SpeechEncoderDecoderModelWrapper(base_model)
         
         # Configure model
         self._configure_model()
@@ -132,7 +194,7 @@ class E2EModel:
         """Get the underlying model."""
         return self.model
     
-    def get_audio_processor(self) -> Wav2Vec2Processor:
+    def get_audio_processor(self) -> Wav2Vec2FeatureExtractor:
         """Get audio processor."""
         return self.audio_processor
     
@@ -185,7 +247,7 @@ class E2EModel:
         """Load from saved checkpoint."""
         wrapper = cls.__new__(cls)
         wrapper.model = SpeechEncoderDecoderModel.from_pretrained(path)
-        wrapper.audio_processor = Wav2Vec2Processor.from_pretrained(path)
+        wrapper.audio_processor = Wav2Vec2FeatureExtractor.from_pretrained(path)
         wrapper.tokenizer = MBart50Tokenizer.from_pretrained(path)
         
         # Restore special token IDs

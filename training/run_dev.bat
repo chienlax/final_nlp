@@ -20,11 +20,11 @@ cd /d "%~dp0\.."
 echo [INFO] Working directory: %CD%
 
 REM =============================================================================
-REM ENVIRONMENT SETUP - Creates isolated venv OUTSIDE project to avoid uvicorn conflict
+REM ENVIRONMENT SETUP - Creates isolated venv in training/.venv/
 REM =============================================================================
 
-REM Use venv outside project dir (uvicorn --reload watches project, causes conflict)
-set VENV_DIR=%USERPROFILE%\.training_venvs\final_nlp
+REM Virtual environment inside training folder (self-contained)
+set VENV_DIR=%~dp0.venv
 set REQUIREMENTS_FLAG=%VENV_DIR%\.requirements_installed
 
 REM Create virtual environment if it doesn't exist

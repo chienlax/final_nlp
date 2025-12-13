@@ -162,6 +162,7 @@ def create_training_args(config: Dict, output_dir: str) -> Seq2SeqTrainingArgume
         # Precision
         fp16=fp16,
         bf16=bf16,
+        tf32=train_config.get('tf32', False),  # H100 TensorFloat-32 acceleration
         
         # Checkpointing
         gradient_checkpointing=train_config.get('gradient_checkpointing', False),
@@ -176,6 +177,9 @@ def create_training_args(config: Dict, output_dir: str) -> Seq2SeqTrainingArgume
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         
+        # Use pytorch format for E2E model (mBART has shared tensors that safetensors can't handle)
+        save_safetensors=False,
+        
         # Logging
         logging_steps=train_config.get('logging_steps', 50),
         logging_dir=f"{output_dir}/logs",
@@ -184,6 +188,9 @@ def create_training_args(config: Dict, output_dir: str) -> Seq2SeqTrainingArgume
         # DataLoader
         dataloader_num_workers=dataloader_config.get('num_workers', 4),
         dataloader_pin_memory=dataloader_config.get('pin_memory', True),
+        
+        # CRITICAL: Do not remove custom dataset columns before collation
+        remove_unused_columns=False,
         
         # Generation (for Seq2Seq)
         predict_with_generate=True,
@@ -356,10 +363,10 @@ def train_e2e(config: Dict, resume_from: Optional[str] = None) -> Dict:
     logger.info("Starting training...")
     train_result = trainer.train(resume_from_checkpoint=resume_from)
     
-    # Save final model
-    trainer.save_model()
-    model.get_audio_processor().save_pretrained(output_dir)
-    model.get_tokenizer().save_pretrained(output_dir)
+    # Save final model (includes processor and tokenizer)
+    # NOTE: We must save the underlying model explicitly because Trainer
+    # saves the wrapper, which may not include the full config.json
+    model.save(output_dir)
     
     # Log results
     results = {

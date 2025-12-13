@@ -27,7 +27,7 @@ training:
   max_steps: 100 # Quick test
 
   fp16: true
-  gradient_checkpointing: true # Essential
+  gradient_checkpointing: false # Disabled: causes issues with multitask batch doubling
 
   eval_steps: 25
   save_steps: 50

@@ -1,50 +1,52 @@
 # =============================================================================
-# Production Config - E2E Model (H100 SXM 80GB)
+# Production Config - E2E Model (H100 SXM 80GB) - MEMORY OPTIMIZED
 # =============================================================================
-# Full-scale training with convergence guarantees
+# Using smaller encoder to fit in 80GB with mbart-large decoder
 
-# Model
+# Model - SMALLER ENCODER
 model:
   type: "e2e"
-  encoder: "facebook/wav2vec2-large-xlsr-53" # Full multilingual encoder
-  decoder: "facebook/mbart-large-50"
+  encoder: "facebook/wav2vec2-base"  # 94M params (was xlsr-53 317M)
+  decoder: "facebook/mbart-large-50"  # 611M params
   add_adapter: true
-  freeze_encoder: false
+  freeze_encoder: false  # DON'T freeze - we need to fine-tune for Vietnamese!
 
-# Training - Conservative for stability
+# Training - Memory-conscious
 training:
-  batch_size: 8
-  gradient_accumulation_steps: 4
-  # Effective batch size: 32
+  batch_size: 1  # Reduced: encoder trainable needs more VRAM
+  gradient_accumulation_steps: 32  # Effective batch = 64
 
-  learning_rate: 5.0e-6 # Very conservative for encoder-decoder
-  lr_scheduler_type: "cosine" # Smoother for stability
-  warmup_ratio: 0.15 # 15% warmup
+  learning_rate: 5.0e-5  # INCREASED: faster learning since encoder is trainable
+  lr_scheduler_type: "linear"
+  warmup_ratio: 0.1  # INCREASED: longer warmup for stability
   weight_decay: 0.01
   max_grad_norm: 1.0
 
-  num_train_epochs: 3
+  num_train_epochs: 4
   max_steps: -1
 
   bf16: true
-  gradient_checkpointing: true # Still useful for this large model
+  gradient_checkpointing: false  # Keep disabled for multitask (causes backward issues)
+  tf32: true
 
-  eval_steps: 300
-  save_steps: 300
-  logging_steps: 50
+  eval_steps: 99999
+  save_steps: 99999
+  logging_steps: 10
 
-  # Encoder freezing strategy
-  freeze_feature_encoder: true
-  freeze_encoder_epochs: 1 # Unfreeze after epoch 1
+  # Freeze only the CNN feature extractor (first few layers), not the transformer
+  freeze_feature_encoder: true  # Freeze CNN, but transformer is trainable
+  freeze_encoder_epochs: 1  # Freeze transformer for 1 epoch warmup, then unfreeze
 
 # DataLoader
 dataloader:
-  num_workers: 24
+  num_workers: 8  # Reduced to save memory
   pin_memory: true
-  prefetch_factor: 4
-  persistent_workers: true
+  prefetch_factor: 2
+  persistent_workers: false  # Disable to save memory
 
 # Output
 output:
   dir: "training/outputs/prod_e2e"
-  experiment_name: "e2e_large_prod"
+  experiment_name: "e2e_base_prod"
+
+

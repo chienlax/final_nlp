@@ -13,7 +13,7 @@ from typing import Dict, List, Any, Optional, Union
 import torch
 from transformers import (
     WhisperProcessor,
-    Wav2Vec2Processor,
+    Wav2Vec2FeatureExtractor,
     MBart50Tokenizer
 )
 
@@ -44,12 +44,15 @@ class WhisperCollator:
         # Collect audio samples
         audio_samples = [f['audio'].numpy() for f in features]
         
-        # Process audio
+        # Process audio - Whisper expects 30s (3000 mel frames) fixed-length input
+        # Use padding="max_length" to ensure consistent 30s length
         batch = self.processor(
             audio_samples,
             sampling_rate=16000,
             return_tensors="pt",
-            padding=True
+            padding="max_length",  # Pad to 30 seconds
+            truncation=True,       # Truncate if longer
+            max_length=480000      # 30s * 16kHz
         )
         
         if self.task == "both":
@@ -96,15 +99,21 @@ class WhisperCollator:
         Collate for multitask learning.
         
         Each audio sample produces 2 training examples:
-        - One with transcript as target
-        - One with translation as target
-        """
-        # Duplicate input features for both tasks
-        input_features = batch['input_features']
-        batch_size = input_features.shape[0]
+        - One with transcript as target (ASR)
+        - One with translation as target (ST)
         
-        # Double the batch: [ASR samples, ST samples]
-        doubled_input = torch.cat([input_features, input_features], dim=0)
+        NOTE: We create completely independent copies of the input features
+        to avoid gradient checkpointing issues during backward pass.
+        """
+        input_features = batch['input_features']
+        
+        # Create two completely independent copies of input features
+        # Using contiguous().clone() ensures no shared memory or computation graph
+        features_asr = input_features.contiguous().clone()
+        features_st = input_features.contiguous().clone()
+        
+        # Concatenate independent copies
+        doubled_input = torch.cat([features_asr, features_st], dim=0)
         
         # Prepare text targets
         transcripts = [f['transcript'] for f in features]
@@ -139,13 +148,13 @@ class E2ECollator:
     - <2translate>: ST task
     
     Args:
-        audio_processor: Wav2Vec2Processor instance
+        audio_processor: Wav2Vec2FeatureExtractor instance
         tokenizer: MBart50Tokenizer instance
         task: "transcribe", "translate", or "both"
         max_input_length: Maximum audio samples (16kHz * seconds)
         max_label_length: Maximum label tokens
     """
-    audio_processor: Wav2Vec2Processor
+    audio_processor: Wav2Vec2FeatureExtractor
     tokenizer: MBart50Tokenizer
     task: str = "both"
     max_input_length: int = 480000  # 30 seconds at 16kHz
@@ -219,16 +228,17 @@ class E2ECollator:
         batch_size = processed['input_values'].shape[0]
         
         # Double input features
+        # IMPORTANT: Clone to avoid gradient checkpointing backward issues
         doubled_input = torch.cat([
             processed['input_values'], 
-            processed['input_values']
+            processed['input_values'].clone()
         ], dim=0)
         
         doubled_attention = None
         if processed.get('attention_mask') is not None:
             doubled_attention = torch.cat([
                 processed['attention_mask'],
-                processed['attention_mask']
+                processed['attention_mask'].clone()
             ], dim=0)
         
         # Prepare labels: first half transcripts with <2transcribe>, second half translations with <2translate>

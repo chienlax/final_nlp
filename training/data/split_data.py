@@ -164,6 +164,17 @@ def main():
         default=0.8,
         help='Training set ratio'
     )
+    parser.add_argument(
+        '--sample_ratio',
+        type=float,
+        default=1.0,
+        help='Fraction of data to sample (0.0-1.0) for dev testing'
+    )
+    parser.add_argument(
+        '--preprocess',
+        action='store_true',
+        help='Run preprocessing before splitting'
+    )
     
     args = parser.parse_args()
     
@@ -174,8 +185,23 @@ def main():
         logger.error(f"Manifest not found: {manifest_path}")
         return 1
     
-    # Load and split
+    # Load manifest
     df = load_manifest(manifest_path)
+    
+    # Preprocess if requested
+    if args.preprocess:
+        logger.info("Running preprocessing...")
+        from preprocess_manifest import preprocess_manifest
+        df, stats = preprocess_manifest(df)
+        logger.info(f"Preprocessing complete: {stats['original_count']} -> {stats['final_count']} samples")
+    
+    # Sample if requested
+    if args.sample_ratio < 1.0:
+        original_count = len(df)
+        df = df.sample(frac=args.sample_ratio, random_state=args.seed)
+        logger.info(f"Sampled {len(df)}/{original_count} samples ({args.sample_ratio*100:.0f}%)")
+    
+    # Split by video
     train_df, dev_df, test_df = split_by_video(
         df, 
         train_ratio=args.train_ratio,
