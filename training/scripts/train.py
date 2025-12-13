@@ -362,10 +362,10 @@ def train_e2e(config: Dict, resume_from: Optional[str] = None) -> Dict:
     logger.info("Starting training...")
     train_result = trainer.train(resume_from_checkpoint=resume_from)
     
-    # Save final model
-    trainer.save_model()
-    model.get_audio_processor().save_pretrained(output_dir)
-    model.get_tokenizer().save_pretrained(output_dir)
+    # Save final model (includes processor and tokenizer)
+    # NOTE: We must save the underlying model explicitly because Trainer
+    # saves the wrapper, which may not include the full config.json
+    model.save(output_dir)
     
     # Log results
     results = {
