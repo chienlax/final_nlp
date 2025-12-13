@@ -28,17 +28,18 @@ This training pipeline implements **Vietnamese-English Code-Switching Speech Tra
 
 | Architecture | Components | Target Task |
 |--------------|------------|-------------|
-| **Whisper** | `openai/whisper-small` (244M) | ASR + ST (multitask) |
-| **E2E** | `wav2vec2-base` encoder + `mbart-large-50` decoder | Direct Speech Translation |
+| **Whisper** | `openai/whisper-small` (244M) | **ASR only** (code-switch → transcript) |
+| **E2E** | `wav2vec2-base` encoder + `mbart-large-50` decoder | ASR + **Vietnamese translation** |
 
 ### Performance Targets
 
-| Metric | Target | Description |
-|--------|--------|-------------|
-| **WER** | < 15% | Word Error Rate for ASR |
-| **CER** | < 10% | Character Error Rate for ASR |
-| **BLEU** | > 25 | Translation quality |
-| **CHRF** | > 50 | Character-level translation quality |
+| Model | Metric | Target | Description |
+|-------|--------|--------|-------------|
+| Whisper | **WER** | < 20% | Word Error Rate (ASR) |
+| Whisper | **CER** | < 15% | Character Error Rate (ASR) |
+| E2E | **WER** | < 25% | Word Error Rate (ASR) |
+| E2E | **BLEU** | > 20 | Translation quality (Vietnamese) |
+| E2E | **CHRF** | > 40 | Character-level translation |
 
 ---
 
@@ -806,45 +807,49 @@ This script will:
 7. Evaluate both models
 8. Generate charts
 
-### Production (Linux H100) - 2 Hour Constraint
+### Production (Linux H100)
 
 ```bash
 # From project root
 ./training/run_prod.sh
 ```
 
-**Production Settings (Memory Optimized):**
-- **Whisper-small** (244M) instead of medium/large
-- **wav2vec2-base** (94M) instead of xlsr-53 (317M) 
-- **2 epochs** (reduced from 3)
+**Production Settings:**
+- **Whisper-small** (244M): **ASR only**, 4 epochs
+- **wav2vec2-base + mbart-large-50**: ASR + Vietnamese translation, 4 epochs
 - Encoder **frozen** to save VRAM
 - **Batched evaluation** (16 samples/batch Whisper, 8 samples/batch E2E)
 
-**Expected Times:**
-| Model | Training | Evaluation |
-|-------|----------|------------|
-| Whisper-small | ~30 min | ~5 min |
-| E2E (wav2vec2-base) | ~45 min | ~10 min |
-| **Total** | **~1.5-2 hours** | |
+**Metrics per Model:**
+| Model | Metrics |
+|-------|---------|
+| Whisper | WER, CER |
+| E2E | WER, CER, BLEU, CHRF |
 
-### Manual Training
+### Manual Training (One-liner)
+
+```bash
+source training/.venv/bin/activate && python training/scripts/train.py --config training/configs/prod_whisper.yaml && python training/scripts/train.py --config training/configs/prod_e2e.yaml && python training/scripts/run_evaluation.py --model_dir training/outputs/prod_whisper --model_type whisper --output training/outputs/results && python training/scripts/run_evaluation.py --model_dir training/outputs/prod_e2e --model_type e2e --output training/outputs/results
+```
+
+### Manual Training (Step by Step)
 
 ```bash
 # Activate venv
 source training/.venv/bin/activate  # Linux
 training\.venv\Scripts\activate     # Windows
 
-# Train Whisper only
-python training/scripts/train.py --config training/configs/dev_whisper.yaml
+# Train Whisper (ASR only)
+python training/scripts/train.py --config training/configs/prod_whisper.yaml
 
-# Train E2E only
-python training/scripts/train.py --config training/configs/dev_e2e.yaml
+# Train E2E (ASR + Vietnamese translation)
+python training/scripts/train.py --config training/configs/prod_e2e.yaml
 
-# Resume from checkpoint
-python training/scripts/train.py --config training/configs/dev_whisper.yaml --resume training/outputs/dev_whisper/checkpoint-50
+# Evaluate Whisper (WER, CER)
+python training/scripts/run_evaluation.py --model_dir training/outputs/prod_whisper --model_type whisper --output training/outputs/results
 
-# Dry run (validate config)
-python training/scripts/train.py --config training/configs/dev_whisper.yaml --dry_run
+# Evaluate E2E (WER, CER, BLEU, CHRF)
+python training/scripts/run_evaluation.py --model_dir training/outputs/prod_e2e --model_type e2e --output training/outputs/results
 ```
 
 ---
