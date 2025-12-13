@@ -13,9 +13,8 @@ model:
 
 # Training - Conservative for stability
 training:
-  batch_size: 8
-  gradient_accumulation_steps: 4
-  # Effective batch size: 32
+  batch_size: 4  # With multitask (2x), effective = 8
+  gradient_accumulation_steps: 8  # Effective batch = 64
 
   learning_rate: 5.0e-6 # Very conservative for encoder-decoder
   lr_scheduler_type: "cosine" # Smoother for stability

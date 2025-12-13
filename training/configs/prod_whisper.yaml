@@ -12,9 +12,8 @@ model:
 
 # Training - Optimized for H100
 training:
-  batch_size: 24
-  gradient_accumulation_steps: 2
-  # Effective batch size: 48
+  batch_size: 8  # With multitask (2x), effective = 16
+  gradient_accumulation_steps: 4  # Effective batch = 64
 
   learning_rate: 1.0e-5 # Conservative for convergence
   lr_scheduler_type: "linear"

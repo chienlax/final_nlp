@@ -22,7 +22,7 @@ from transformers import (
     WhisperForConditionalGeneration,
     WhisperProcessor,
     SpeechEncoderDecoderModel,
-    Wav2Vec2Processor,
+    Wav2Vec2FeatureExtractor,
     MBart50Tokenizer
 )
 
@@ -52,7 +52,7 @@ def load_e2e_model(model_dir: str):
     """Load trained E2E model."""
     logger.info(f"Loading E2E model from {model_dir}")
     model = SpeechEncoderDecoderModel.from_pretrained(model_dir)
-    processor = Wav2Vec2Processor.from_pretrained(model_dir)
+    processor = Wav2Vec2FeatureExtractor.from_pretrained(model_dir)
     tokenizer = MBart50Tokenizer.from_pretrained(model_dir)
     
     if torch.cuda.is_available():

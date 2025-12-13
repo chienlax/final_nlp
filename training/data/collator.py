@@ -13,7 +13,7 @@ from typing import Dict, List, Any, Optional, Union
 import torch
 from transformers import (
     WhisperProcessor,
-    Wav2Vec2Processor,
+    Wav2Vec2FeatureExtractor,
     MBart50Tokenizer
 )
 
@@ -148,13 +148,13 @@ class E2ECollator:
     - <2translate>: ST task
     
     Args:
-        audio_processor: Wav2Vec2Processor instance
+        audio_processor: Wav2Vec2FeatureExtractor instance
         tokenizer: MBart50Tokenizer instance
         task: "transcribe", "translate", or "both"
         max_input_length: Maximum audio samples (16kHz * seconds)
         max_label_length: Maximum label tokens
     """
-    audio_processor: Wav2Vec2Processor
+    audio_processor: Wav2Vec2FeatureExtractor
     tokenizer: MBart50Tokenizer
     task: str = "both"
     max_input_length: int = 480000  # 30 seconds at 16kHz

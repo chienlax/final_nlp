@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 from transformers import (
     SpeechEncoderDecoderModel,
-    Wav2Vec2Processor,
+    Wav2Vec2FeatureExtractor,
     MBart50Tokenizer,
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer
@@ -113,7 +113,8 @@ class E2EModel:
         logger.info(f"Building E2E model: {encoder_name} + {decoder_name}")
         
         # Load processors
-        self.audio_processor = Wav2Vec2Processor.from_pretrained(encoder_name)
+        # NOTE: Use FeatureExtractor, not Processor, because xlsr-53 doesn't have a tokenizer
+        self.audio_processor = Wav2Vec2FeatureExtractor.from_pretrained(encoder_name)
         self.tokenizer = MBart50Tokenizer.from_pretrained(decoder_name)
         
         # Add special tokens
@@ -193,7 +194,7 @@ class E2EModel:
         """Get the underlying model."""
         return self.model
     
-    def get_audio_processor(self) -> Wav2Vec2Processor:
+    def get_audio_processor(self) -> Wav2Vec2FeatureExtractor:
         """Get audio processor."""
         return self.audio_processor
     
@@ -246,7 +247,7 @@ class E2EModel:
         """Load from saved checkpoint."""
         wrapper = cls.__new__(cls)
         wrapper.model = SpeechEncoderDecoderModel.from_pretrained(path)
-        wrapper.audio_processor = Wav2Vec2Processor.from_pretrained(path)
+        wrapper.audio_processor = Wav2Vec2FeatureExtractor.from_pretrained(path)
         wrapper.tokenizer = MBart50Tokenizer.from_pretrained(path)
         
         # Restore special token IDs
