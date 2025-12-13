@@ -29,12 +29,20 @@ class ExportPreviewResponse(BaseModel):
     estimated_duration_hours: float
 
 
+class ExportRunRequest(BaseModel):
+    """Request body for export run."""
+    workers: int = 8
+    dry_run: bool = False
+
+
 class ExportRunResponse(BaseModel):
     """Response after running export."""
     success: bool
     manifest_path: str
     clips_count: int
     total_hours: float
+    elapsed_seconds: float = 0.0
+    dry_run: bool = False
 
 
 # =============================================================================
@@ -134,6 +142,7 @@ def get_export_preview(
 
 @router.post("/export/run", response_model=ExportRunResponse)
 def run_export(
+    request: ExportRunRequest = None,
     channel_id: Optional[int] = Query(None, description="Filter by channel ID"),
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session)
@@ -141,26 +150,47 @@ def run_export(
     """
     Run the export process.
     
-    Exports all approved chunks with verified segments to a manifest file.
+    Exports all approved chunks with verified segments to individual audio clips.
+    
+    Args:
+        workers: Number of parallel workers (default: 8)
+        dry_run: If True, generate manifest without cutting audio
     """
+    import time
     from backend.operations.exporter import export_all_approved, EXPORT_DIR
     
+    # Handle missing request body
+    if request is None:
+        request = ExportRunRequest()
+    
+    start_time = time.time()
+    
     try:
-        # Run export (currently exports all, TODO: add channel filter)
-        results = export_all_approved()
+        # Run export with new parameters
+        results = export_all_approved(
+            workers=request.workers,
+            dry_run=request.dry_run
+        )
         
+        elapsed = time.time() - start_time
         manifest_path = str(EXPORT_DIR / "manifest.tsv")
         
         return ExportRunResponse(
             success=True,
             manifest_path=manifest_path,
             clips_count=results.segments_exported,
-            total_hours=results.total_hours
+            total_hours=results.total_hours,
+            elapsed_seconds=round(elapsed, 1),
+            dry_run=request.dry_run
         )
     except Exception as e:
+        elapsed = time.time() - start_time
         return ExportRunResponse(
             success=False,
             manifest_path="",
             clips_count=0,
-            total_hours=0.0
+            total_hours=0.0,
+            elapsed_seconds=round(elapsed, 1),
+            dry_run=request.dry_run
         )
+

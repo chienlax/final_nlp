@@ -20,13 +20,19 @@ import {
     Card,
     CardContent,
     Grid,
+    Slider,
+    FormControlLabel,
+    Switch,
+    Tooltip,
 } from '@mui/material'
 import {
     FileDownload,
     Folder,
     CheckCircle,
     Warning,
-    Description
+    Description,
+    Speed,
+    Timer,
 } from '@mui/icons-material'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -48,6 +54,8 @@ interface ExportResult {
     manifest_path: string
     clips_count: number
     total_hours: number
+    elapsed_seconds: number
+    dry_run: boolean
 }
 
 interface ExportPageProps {
@@ -58,6 +66,8 @@ export function ExportPage({ userId: _userId }: ExportPageProps) {
     const [exportScope, setExportScope] = useState<'all' | 'channel'>('all')
     const [selectedChannel, setSelectedChannel] = useState<number | ''>('')
     const [exportResult, setExportResult] = useState<ExportResult | null>(null)
+    const [workers, setWorkers] = useState<number>(8)
+    const [dryRun, setDryRun] = useState<boolean>(false)
 
     // Fetch channels for selection
     const { data: channels = [] } = useQuery<Channel[]>({
@@ -84,9 +94,12 @@ export function ExportPage({ userId: _userId }: ExportPageProps) {
     const exportMutation = useMutation({
         mutationFn: () => {
             const params = exportScope === 'channel' && selectedChannel
-                ? { channel_id: selectedChannel }
-                : {}
-            return api.post('/export/run', params).then(res => res.data)
+                ? `?channel_id=${selectedChannel}`
+                : ''
+            return api.post(`/export/run${params}`, {
+                workers,
+                dry_run: dryRun
+            }).then(res => res.data)
         },
         onSuccess: (data) => setExportResult(data),
     })
@@ -148,17 +161,58 @@ export function ExportPage({ userId: _userId }: ExportPageProps) {
                                 </FormControl>
                             )}
 
+                            {/* Workers Slider */}
+                            <Box sx={{ mb: 2 }}>
+                                <Typography variant="body2" color="text.secondary" gutterBottom>
+                                    <Speed sx={{ fontSize: 16, mr: 0.5, verticalAlign: 'text-bottom' }} />
+                                    Parallel Workers: {workers}
+                                </Typography>
+                                <Slider
+                                    value={workers}
+                                    onChange={(_, value) => setWorkers(value as number)}
+                                    min={1}
+                                    max={32}
+                                    step={1}
+                                    marks={[
+                                        { value: 1, label: '1' },
+                                        { value: 8, label: '8' },
+                                        { value: 16, label: '16' },
+                                        { value: 32, label: '32' },
+                                    ]}
+                                    valueLabelDisplay="auto"
+                                />
+                            </Box>
+
+                            {/* Dry Run Toggle */}
+                            <Tooltip title="Generate manifest without cutting audio files (for testing)">
+                                <FormControlLabel
+                                    control={
+                                        <Switch
+                                            checked={dryRun}
+                                            onChange={(e) => setDryRun(e.target.checked)}
+                                            color="warning"
+                                        />
+                                    }
+                                    label="Dry Run (manifest only)"
+                                    sx={{ mb: 2 }}
+                                />
+                            </Tooltip>
+
                             {/* Export Button */}
                             <Button
                                 variant="contained"
-                                color="success"
+                                color={dryRun ? "warning" : "success"}
                                 size="large"
                                 fullWidth
                                 startIcon={exportMutation.isPending ? <CircularProgress size={20} /> : <FileDownload />}
                                 onClick={() => exportMutation.mutate()}
                                 disabled={!canExport || exportMutation.isPending}
                             >
-                                {exportMutation.isPending ? 'Exporting...' : 'Start Export'}
+                                {exportMutation.isPending
+                                    ? 'Exporting...'
+                                    : dryRun
+                                        ? 'Run Dry Export'
+                                        : 'Start Export'}
                             </Button>
 
                             {!canExport && (
@@ -224,7 +278,10 @@ export function ExportPage({ userId: _userId }: ExportPageProps) {
             {exportMutation.isPending && (
                 <Box sx={{ mt: 3 }}>
                     <Alert severity="info">
-                        <Typography>Exporting dataset... This may take a while.</Typography>
+                        <Typography>
+                            {dryRun ? 'Generating manifest...' : 'Exporting dataset...'}
+                            {' '}Using {workers} parallel workers.
+                        </Typography>
                         <LinearProgress sx={{ mt: 1 }} />
                     </Alert>
                 </Box>
@@ -233,14 +290,26 @@ export function ExportPage({ userId: _userId }: ExportPageProps) {
             {/* Export Result */}
             {exportResult && (
                 <Box sx={{ mt: 3 }}>
-                    <Alert severity="success" icon={<CheckCircle />}>
-                        <Typography variant="h6">Export Complete!</Typography>
+                    <Alert
+                        severity={exportResult.dry_run ? "warning" : "success"}
+                        icon={<CheckCircle />}
+                    >
+                        <Typography variant="h6">
+                            Export Complete! {exportResult.dry_run && '(Dry Run)'}
+                        </Typography>
                         <Typography>
-                            Generated {exportResult.clips_count} clips ({exportResult.total_hours.toFixed(1)} hours)
+                            Generated {exportResult.clips_count.toLocaleString()} clips
+                            ({exportResult.total_hours.toFixed(1)} hours)
                         </Typography>
-                        <Typography variant="body2" sx={{ mt: 1, fontFamily: 'monospace' }}>
-                            Manifest: {exportResult.manifest_path}
-                        </Typography>
+                        <Box sx={{ display: 'flex', gap: 2, mt: 1, alignItems: 'center' }}>
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                                📁 {exportResult.manifest_path}
+                            </Typography>
+                            <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <Timer sx={{ fontSize: 16 }} />
+                                {exportResult.elapsed_seconds}s
+                            </Typography>
+                        </Box>
                     </Alert>
                 </Box>
             )}
