@@ -1,44 +1,45 @@
 # =============================================================================
-# Production Config - E2E Model (H100 SXM 80GB)
+# Production Config - E2E Model (H100 SXM 80GB) - 2 HOUR CONSTRAINT
 # =============================================================================
-# Full-scale training with convergence guarantees
+# Target: Complete in ~60 minutes
 
 # Model
 model:
   type: "e2e"
-  encoder: "facebook/wav2vec2-large-xlsr-53" # Full multilingual encoder
+  encoder: "facebook/wav2vec2-large-xlsr-53"
   decoder: "facebook/mbart-large-50"
   add_adapter: true
   freeze_encoder: false
 
-# Training - Conservative for stability
+# Training - Aggressive for speed
 training:
-  batch_size: 4  # With multitask (2x), effective = 8
-  gradient_accumulation_steps: 8  # Effective batch = 64
+  batch_size: 16  # With multitask (2x), effective = 32
+  gradient_accumulation_steps: 2  # Effective batch = 64
 
-  learning_rate: 5.0e-6 # Very conservative for encoder-decoder
-  lr_scheduler_type: "cosine" # Smoother for stability
-  warmup_ratio: 0.15 # 15% warmup
+  learning_rate: 1.0e-5  # Higher for faster convergence
+  lr_scheduler_type: "linear"  # Simpler scheduler
+  warmup_ratio: 0.05  # Shorter warmup
   weight_decay: 0.01
   max_grad_norm: 1.0
 
-  num_train_epochs: 3
+  num_train_epochs: 2  # Reduced from 3
   max_steps: -1
 
   bf16: true
-  gradient_checkpointing: false # Disabled: causes issues with multitask batch doubling
+  gradient_checkpointing: false
+  tf32: true
 
-  eval_steps: 300
-  save_steps: 300
+  eval_steps: 99999  # Skip eval during training
+  save_steps: 99999  # Save only at end
   logging_steps: 50
 
-  # Encoder freezing strategy
+  # Encoder freezing - freeze feature encoder only
   freeze_feature_encoder: true
-  freeze_encoder_epochs: 1 # Unfreeze after epoch 1
+  freeze_encoder_epochs: 0  # Never unfreeze (saves time)
 
 # DataLoader
 dataloader:
-  num_workers: 24
+  num_workers: 16
   pin_memory: true
   prefetch_factor: 4
   persistent_workers: true
@@ -47,3 +48,4 @@ dataloader:
 output:
   dir: "training/outputs/prod_e2e"
   experiment_name: "e2e_large_prod"
+

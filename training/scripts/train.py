@@ -162,6 +162,7 @@ def create_training_args(config: Dict, output_dir: str) -> Seq2SeqTrainingArgume
         # Precision
         fp16=fp16,
         bf16=bf16,
+        tf32=train_config.get('tf32', False),  # H100 TensorFloat-32 acceleration
         
         # Checkpointing
         gradient_checkpointing=train_config.get('gradient_checkpointing', False),
