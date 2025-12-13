@@ -181,7 +181,7 @@ WHERE status = 'PROCESSING';
 
 ### Step 1: Delete all failed/completed job records
 ```sql
-DELETE FROM processing_jobs WHERE status IN ('COMPLETED', 'FAILED');
+DELETE FROM processing_jobs WHERE status IN ('FAILED');
 ```
 
 ### Step 2: Reset any stuck PROCESSING chunks to PENDING
