@@ -28,8 +28,8 @@ This training pipeline implements **Vietnamese-English Code-Switching Speech Tra
 
 | Architecture | Components | Target Task |
 |--------------|------------|-------------|
-| **Whisper** | `openai/whisper-tiny` → `whisper-medium` | ASR + ST (multitask) |
-| **E2E** | `wav2vec2` encoder + `mbart` decoder | Direct Speech Translation |
+| **Whisper** | `openai/whisper-small` (244M) | ASR + ST (multitask) |
+| **E2E** | `wav2vec2-base` encoder + `mbart-large-50` decoder | Direct Speech Translation |
 
 ### Performance Targets
 
@@ -123,9 +123,10 @@ Effective batch size is **2x** nominal batch size.
 | Large-XLSR-53 | 317M | `facebook/wav2vec2-large-xlsr-53` | Production |
 
 ```python
-from transformers import Wav2Vec2Processor
+from transformers import Wav2Vec2FeatureExtractor
 
-processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
+# NOTE: Use FeatureExtractor, NOT Processor (wav2vec2-base has no tokenizer)
+processor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/wav2vec2-base")
 
 # Feature Extractor: Wav2Vec2FeatureExtractor
 #   - Converts raw audio → normalized waveform
@@ -805,18 +806,26 @@ This script will:
 7. Evaluate both models
 8. Generate charts
 
-### Production (Linux, H100)
+### Production (Linux H100) - 2 Hour Constraint
 
 ```bash
 # From project root
 ./training/run_prod.sh
 ```
 
-Same pipeline with production configs:
-- Whisper-medium instead of tiny
-- wav2vec2-xlsr-53 instead of base
-- Larger batch sizes
-- More training steps
+**Production Settings (Memory Optimized):**
+- **Whisper-small** (244M) instead of medium/large
+- **wav2vec2-base** (94M) instead of xlsr-53 (317M) 
+- **2 epochs** (reduced from 3)
+- Encoder **frozen** to save VRAM
+- **Batched evaluation** (16 samples/batch Whisper, 8 samples/batch E2E)
+
+**Expected Times:**
+| Model | Training | Evaluation |
+|-------|----------|------------|
+| Whisper-small | ~30 min | ~5 min |
+| E2E (wav2vec2-base) | ~45 min | ~10 min |
+| **Total** | **~1.5-2 hours** | |
 
 ### Manual Training
 
@@ -844,13 +853,15 @@ python training/scripts/train.py --config training/configs/dev_whisper.yaml --dr
 
 | Issue | Solution |
 |-------|----------|
-| CUDA out of memory | Reduce `batch_size` to 1, set `freeze_encoder: true` |
+| CUDA out of memory | Reduce `batch_size` to 1-2, set `freeze_encoder: true`, use `wav2vec2-base` instead of `xlsr-53` |
 | `RuntimeError: backward through graph twice` | **DISABLE** `gradient_checkpointing` (multitask batch doubling is incompatible) |
+| `TypeError: expected str, bytes...NoneType` (E2E) | Use `Wav2Vec2FeatureExtractor` instead of `Wav2Vec2Processor` (xlsr-53 has no tokenizer) |
 | `TypeError: num_items_in_batch` (E2E) | Fixed: `SpeechEncoderDecoderModelWrapper` filters unsupported args |
 | `IndexError: piece id out of range` (E2E eval) | Fixed: Token IDs clipped in `metrics.py` before decoding |
 | `TypeError: shared tensors` (E2E saving) | Fixed: `save_safetensors=False` in training args |
 | `KeyError: 'audio'` | Fixed: `remove_unused_columns=False` in training args |
-| Slow training | Increase `num_workers` in dataloader config |
+| Slow evaluation | Use **batched inference** (16 samples/batch for Whisper, 8 for E2E) |
+| Slow training | Increase `num_workers`, enable `tf32: true` on H100 |
 | Import errors | Delete `training/.venv/` and re-run setup script |
 | WER not improving | Check learning rate (try 1e-5), verify data quality |
 | High WER/BLEU despite correct output | Fixed: Evaluation normalization strips punctuation/case |

@@ -22,7 +22,7 @@ training:
   weight_decay: 0.01
   max_grad_norm: 1.0
 
-  num_train_epochs: 2
+  num_train_epochs: 4
   max_steps: -1
 
   bf16: true
@@ -31,7 +31,7 @@ training:
 
   eval_steps: 99999
   save_steps: 99999
-  logging_steps: 50
+  logging_steps: 10
 
   # Freeze encoder completely (no gradients = less VRAM)
   freeze_feature_encoder: true

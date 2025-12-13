@@ -252,12 +252,17 @@ def evaluate_model(
     
     # Generate predictions for both tasks
     if model_type == "whisper":
+        # ASR: Vietnamese audio → Vietnamese transcript
         asr_preds, asr_refs, asr_latencies = generate_whisper_predictions(
             model, processor, dataset, task="transcribe"
         )
-        st_preds, st_refs, st_latencies = generate_whisper_predictions(
-            model, processor, dataset, task="translate"
-        )
+        # NOTE: Whisper's "translate" task always outputs ENGLISH.
+        # If your translation references are Vietnamese, skip ST evaluation.
+        # For now, we use ASR predictions for both to get meaningful WER.
+        st_preds = asr_preds  # Use same predictions
+        st_refs = asr_refs    # Use same references
+        st_latencies = asr_latencies
+        logger.warning("Whisper ST evaluation skipped (translate outputs English, refs are Vietnamese)")
     else:
         asr_preds, asr_refs, asr_latencies = generate_e2e_predictions(
             model, processor, tokenizer, dataset, task="transcribe"
@@ -266,17 +271,33 @@ def evaluate_model(
             model, processor, tokenizer, dataset, task="translate"
         )
     
-    # Compute metrics
+    # Compute metrics based on model type
     metrics_computer = MetricsComputer()
-    metrics = metrics_computer.compute_all(
-        asr_predictions=asr_preds,
-        asr_references=asr_refs,
-        st_predictions=st_preds,
-        st_references=st_refs
-    )
     
-    # Add latency stats
-    avg_latency = (sum(asr_latencies) + sum(st_latencies)) / (2 * len(dataset))
+    if model_type == "whisper":
+        # Whisper: ASR metrics only (WER, CER)
+        metrics = metrics_computer.compute_asr_only(
+            predictions=asr_preds,
+            references=asr_refs
+        )
+        avg_latency = sum(asr_latencies) / len(dataset)
+        predictions_data = {
+            'asr': list(zip(asr_preds, asr_refs))
+        }
+    else:
+        # E2E: Full metrics (WER, CER, BLEU, CHRF)
+        metrics = metrics_computer.compute_all(
+            asr_predictions=asr_preds,
+            asr_references=asr_refs,
+            st_predictions=st_preds,
+            st_references=st_refs
+        )
+        avg_latency = (sum(asr_latencies) + sum(st_latencies)) / (2 * len(dataset))
+        predictions_data = {
+            'asr': list(zip(asr_preds, asr_refs)),
+            'st': list(zip(st_preds, st_refs))
+        }
+    
     metrics['avg_latency_ms'] = avg_latency * 1000
     
     logger.info("Evaluation Results:")
@@ -287,15 +308,12 @@ def evaluate_model(
         'model_type': model_type,
         'model_dir': model_dir,
         'metrics': metrics,
-        'predictions': {
-            'asr': list(zip(asr_preds, asr_refs)),
-            'st': list(zip(st_preds, st_refs))
-        }
+        'predictions': predictions_data
     }
 
 
 def save_results(results: Dict, output_dir: str, model_name: str) -> None:
-    """Save evaluation results."""
+    """Save evaluation results (separate files per model)."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -309,15 +327,20 @@ def save_results(results: Dict, output_dir: str, model_name: str) -> None:
     predictions_file = output_dir / f"{model_name}_predictions.csv"
     
     rows = []
-    for i, (asr_pred, asr_ref) in enumerate(results['predictions']['asr']):
-        st_pred, st_ref = results['predictions']['st'][i]
-        rows.append({
+    predictions = results['predictions']
+    has_st = 'st' in predictions
+    
+    for i, (asr_pred, asr_ref) in enumerate(predictions['asr']):
+        row = {
             'id': i,
             'asr_prediction': asr_pred,
-            'asr_reference': asr_ref,
-            'st_prediction': st_pred,
-            'st_reference': st_ref
-        })
+            'asr_reference': asr_ref
+        }
+        if has_st:
+            st_pred, st_ref = predictions['st'][i]
+            row['st_prediction'] = st_pred
+            row['st_reference'] = st_ref
+        rows.append(row)
     
     df = pd.DataFrame(rows)
     df.to_csv(predictions_file, index=False)

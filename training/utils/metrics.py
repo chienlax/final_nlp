@@ -165,6 +165,28 @@ class MetricsComputer:
         
         return result['score']
     
+    def compute_asr_only(
+        self,
+        predictions: List[str],
+        references: List[str]
+    ) -> Dict[str, float]:
+        """
+        Compute ASR metrics only (WER, CER).
+        
+        Used for Whisper which only does transcription.
+        
+        Args:
+            predictions: ASR predictions
+            references: ASR references
+        
+        Returns:
+            Dictionary with WER and CER
+        """
+        return {
+            'wer': self.compute_wer(predictions, references),
+            'cer': self.compute_cer(predictions, references)
+        }
+    
     def compute_all(
         self,
         asr_predictions: List[str],
@@ -173,7 +195,9 @@ class MetricsComputer:
         st_references: List[str]
     ) -> Dict[str, float]:
         """
-        Compute all metrics.
+        Compute all metrics (ASR + Translation).
+        
+        Used for E2E model.
         
         Args:
             asr_predictions: ASR predictions
