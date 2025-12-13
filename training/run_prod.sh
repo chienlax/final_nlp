@@ -35,11 +35,12 @@ nvidia-smi --query-gpu=name,memory.total --format=csv
 echo ""
 
 # =============================================================================
-# ENVIRONMENT SETUP - Creates isolated venv OUTSIDE project to avoid uvicorn conflict
+# ENVIRONMENT SETUP - Creates isolated venv in training/.venv/
 # =============================================================================
 
-# Use venv outside project dir (uvicorn --reload watches project, causes conflict)
-VENV_DIR="$HOME/.training_venvs/final_nlp"
+# Virtual environment inside training folder (self-contained)
+SCRIPT_DIR="$(dirname "$0")"
+VENV_DIR="$SCRIPT_DIR/.venv"
 REQUIREMENTS_FLAG="$VENV_DIR/.requirements_installed"
 
 # Create virtual environment if it doesn't exist
@@ -65,17 +66,24 @@ echo "[INFO] Python path: $(which python)"
 # DEPENDENCY INSTALLATION
 # =============================================================================
 
-echo ""
-echo "[1/6] Installing dependencies..."
-
-echo "[1/6a] Upgrading pip..."
-python -m pip install --upgrade pip -q
-
-echo "[1/6b] Installing PyTorch with CUDA 12.4..."
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 -q
-
-echo "[1/6c] Installing remaining dependencies..."
-pip install -r training/requirements.txt -q
+if [ ! -f "$REQUIREMENTS_FLAG" ]; then
+    echo ""
+    echo "[1/6] Installing dependencies..."
+    
+    echo "[1/6a] Upgrading pip..."
+    python -m pip install --upgrade pip -q
+    
+    echo "[1/6b] Installing PyTorch with CUDA 12.4..."
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 -q
+    
+    echo "[1/6c] Installing remaining dependencies..."
+    pip install -r training/requirements.txt -q
+    
+    touch "$REQUIREMENTS_FLAG"
+    echo "[1/6] Dependencies installed successfully!"
+else
+    echo "[1/6] Dependencies already installed"
+fi
 
 # Verify PyTorch installation
 echo ""
