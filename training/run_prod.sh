@@ -95,7 +95,22 @@ python -c "import torch; print(f'[INFO] PyTorch: {torch.__version__}'); print(f'
 
 echo ""
 echo "[2/6] Preparing data..."
-python training/data/split_data.py --manifest data/export/manifest.tsv --output_dir data/splits
+
+# Step 1: Preprocess manifest (clean text, filter by duration)
+if [ ! -f "data/export/manifest_clean.tsv" ]; then
+    echo "[2/6a] Preprocessing manifest..."
+    python training/data/preprocess_manifest.py \
+        --input data/export/manifest.tsv \
+        --output data/export/manifest_clean.tsv
+else
+    echo "[2/6a] Preprocessed manifest already exists"
+fi
+
+# Step 2: Split data
+echo "[2/6b] Splitting data..."
+python training/data/split_data.py \
+    --manifest data/export/manifest_clean.tsv \
+    --output_dir data/splits
 
 # Check data sizes
 echo ""

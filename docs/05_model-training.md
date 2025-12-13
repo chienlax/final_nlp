@@ -192,7 +192,9 @@ model.enc_to_dec_proj = nn.Linear(encoder_dim, decoder_dim)
 
 ```
 [1/6] Install dependencies (PyTorch + CUDA)
-[2/6] Split data (train/val/test)
+[2/6] Prepare data
+      [2a] Preprocess manifest (clean text, filter durations)
+      [2b] Split data (train/val/test by video)
 [3/6] Train Whisper
 [4/6] Train E2E
 [5/6] Evaluate on test set
@@ -213,11 +215,12 @@ training/
 │   ├── __init__.py
 │   ├── dataset.py             # VietEngDataset class
 │   ├── collator.py            # WhisperCollator, E2ECollator
-│   └── split_data.py          # Train/val/test splitter
+│   ├── split_data.py          # Train/val/test splitter
+│   └── preprocess_manifest.py # NEW: Manifest cleaning
 ├── models/                     # Model wrappers
 │   ├── __init__.py
 │   ├── whisper_wrapper.py     # WhisperWrapper class
-│   └── e2e_model.py           # E2EModel class
+│   └── e2e_model.py           # E2EModel + SpeechEncoderDecoderModelWrapper
 ├── scripts/                    # Training scripts
 │   ├── __init__.py
 │   ├── train.py               # Unified training script
@@ -227,7 +230,7 @@ training/
 │   ├── __init__.py
 │   ├── callbacks.py           # Custom Trainer callbacks
 │   ├── logger.py              # Training logger
-│   └── metrics.py             # WER, BLEU, CHRF metrics
+│   └── metrics.py             # WER, BLEU, CHRF + normalize_for_eval
 ├── requirements.txt           # Training dependencies
 ├── run_dev.bat                # Windows development script
 └── run_prod.sh                # Linux production script
@@ -237,7 +240,31 @@ training/
 
 ## 4. Data Pipeline
 
-### Dataset: VietEngDataset
+### 4.1 Data Preprocessing (NEW)
+
+**Source**: `training/data/preprocess_manifest.py`
+
+Before training, the raw manifest must be cleaned:
+
+```bash
+# Clean manifest (removes markdown, empty rows, filters by duration)
+python training/data/preprocess_manifest.py \
+    --input data/export/manifest.tsv \
+    --output data/export/manifest_clean.tsv
+```
+
+**Cleaning Steps**:
+
+| Step | Action | Example |
+|------|--------|---------|
+| Strip markdown | Remove `[laughter]`, `[music]`, `[cười]` | `[cười] Xin chào` → `Xin chào` |
+| Strip emphasis | Remove `**bold**`, `*italics*` | `**Hello**` → `Hello` |
+| Normalize whitespace | Collapse multiple spaces, strip NBSP | `Hello  world` → `Hello world` |
+| Filter empty | Remove rows with empty transcript/translation | - |
+| Filter too short | Remove audio < 0.5s | - |
+| Cap too long | Truncate duration > 30s to 30s | - |
+
+### 4.2 Dataset: VietEngDataset
 
 **Source**: `training/data/dataset.py`
 
@@ -437,7 +464,7 @@ training:
   max_steps: 100            # Quick test run
   
   fp16: true                # Mixed precision
-  gradient_checkpointing: true  # VRAM saver (essential for 4GB)
+  gradient_checkpointing: false  # DISABLED: causes issues with multitask batch doubling
   
   eval_steps: 25
   save_steps: 50
@@ -470,7 +497,7 @@ training:
   warmup_ratio: 0.15
   
   fp16: true
-  gradient_checkpointing: true
+  gradient_checkpointing: false  # DISABLED: causes backward graph issues with batch doubling
   
   freeze_feature_encoder: true   # Freeze CNN layers
   freeze_encoder_epochs: 999     # Never unfreeze during dev
@@ -817,11 +844,16 @@ python training/scripts/train.py --config training/configs/dev_whisper.yaml --dr
 
 | Issue | Solution |
 |-------|----------|
-| CUDA out of memory | Reduce `batch_size` to 1, enable `gradient_checkpointing`, set `freeze_encoder: true` |
+| CUDA out of memory | Reduce `batch_size` to 1, set `freeze_encoder: true` |
+| `RuntimeError: backward through graph twice` | **DISABLE** `gradient_checkpointing` (multitask batch doubling is incompatible) |
+| `TypeError: num_items_in_batch` (E2E) | Fixed: `SpeechEncoderDecoderModelWrapper` filters unsupported args |
+| `IndexError: piece id out of range` (E2E eval) | Fixed: Token IDs clipped in `metrics.py` before decoding |
+| `TypeError: shared tensors` (E2E saving) | Fixed: `save_safetensors=False` in training args |
+| `KeyError: 'audio'` | Fixed: `remove_unused_columns=False` in training args |
 | Slow training | Increase `num_workers` in dataloader config |
 | Import errors | Delete `training/.venv/` and re-run setup script |
 | WER not improving | Check learning rate (try 1e-5), verify data quality |
-| BLEU score low | Translation task may need more data or epochs |
+| High WER/BLEU despite correct output | Fixed: Evaluation normalization strips punctuation/case |
 
 ---
 

@@ -27,7 +27,7 @@ training:
   max_steps: -1
 
   bf16: true
-  gradient_checkpointing: true # Still useful for this large model
+  gradient_checkpointing: false # Disabled: causes issues with multitask batch doubling
 
   eval_steps: 300
   save_steps: 300
