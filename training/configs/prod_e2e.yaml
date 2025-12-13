@@ -1,51 +1,52 @@
 # =============================================================================
-# Production Config - E2E Model (H100 SXM 80GB) - 2 HOUR CONSTRAINT
+# Production Config - E2E Model (H100 SXM 80GB) - MEMORY OPTIMIZED
 # =============================================================================
-# Target: Complete in ~60 minutes
+# Using smaller encoder to fit in 80GB with mbart-large decoder
 
-# Model
+# Model - SMALLER ENCODER
 model:
   type: "e2e"
-  encoder: "facebook/wav2vec2-large-xlsr-53"
-  decoder: "facebook/mbart-large-50"
+  encoder: "facebook/wav2vec2-base"  # 94M params (was xlsr-53 317M)
+  decoder: "facebook/mbart-large-50"  # 611M params
   add_adapter: true
-  freeze_encoder: false
+  freeze_encoder: true  # FREEZE entire encoder to save memory
 
-# Training - Aggressive for speed
+# Training - Memory-conscious
 training:
-  batch_size: 16  # With multitask (2x), effective = 32
-  gradient_accumulation_steps: 2  # Effective batch = 64
+  batch_size: 2  # Very small batch (multitask 2x = 4)
+  gradient_accumulation_steps: 16  # Effective batch = 64
 
-  learning_rate: 1.0e-5  # Higher for faster convergence
-  lr_scheduler_type: "linear"  # Simpler scheduler
-  warmup_ratio: 0.05  # Shorter warmup
+  learning_rate: 1.0e-5
+  lr_scheduler_type: "linear"
+  warmup_ratio: 0.05
   weight_decay: 0.01
   max_grad_norm: 1.0
 
-  num_train_epochs: 2  # Reduced from 3
+  num_train_epochs: 2
   max_steps: -1
 
   bf16: true
-  gradient_checkpointing: false
+  gradient_checkpointing: false  # Keep disabled for multitask
   tf32: true
 
-  eval_steps: 99999  # Skip eval during training
-  save_steps: 99999  # Save only at end
+  eval_steps: 99999
+  save_steps: 99999
   logging_steps: 50
 
-  # Encoder freezing - freeze feature encoder only
+  # Freeze encoder completely (no gradients = less VRAM)
   freeze_feature_encoder: true
-  freeze_encoder_epochs: 0  # Never unfreeze (saves time)
+  freeze_encoder_epochs: 999  # Never unfreeze
 
 # DataLoader
 dataloader:
-  num_workers: 16
+  num_workers: 8  # Reduced to save memory
   pin_memory: true
-  prefetch_factor: 4
-  persistent_workers: true
+  prefetch_factor: 2
+  persistent_workers: false  # Disable to save memory
 
 # Output
 output:
   dir: "training/outputs/prod_e2e"
-  experiment_name: "e2e_large_prod"
+  experiment_name: "e2e_base_prod"
+
 

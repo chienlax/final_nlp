@@ -66,23 +66,25 @@ def generate_whisper_predictions(
     model,
     processor,
     dataset: VietEngDataset,
-    task: str = "transcribe"
+    task: str = "transcribe",
+    batch_size: int = 16  # Process 16 samples at a time
 ) -> tuple:
     """
-    Generate predictions with Whisper model.
+    Generate predictions with Whisper model (BATCHED for speed).
     
     Args:
         model: Whisper model
         processor: Whisper processor
         dataset: Test dataset
         task: "transcribe" or "translate"
+        batch_size: Number of samples per batch
     
     Returns:
         Tuple of (predictions, references, latencies)
     """
     predictions = []
     references = []
-    latencies = []
+    total_latency = 0.0
     
     device = next(model.parameters()).device
     
@@ -91,14 +93,25 @@ def generate_whisper_predictions(
         task=task
     )
     
-    for i in tqdm(range(len(dataset)), desc=f"Whisper {task}"):
-        sample = dataset[i]
+    # Process in batches
+    num_samples = len(dataset)
+    for batch_start in tqdm(range(0, num_samples, batch_size), desc=f"Whisper {task}"):
+        batch_end = min(batch_start + batch_size, num_samples)
         
-        # Process audio
+        # Collect batch samples
+        batch_audio = []
+        batch_refs = []
+        for i in range(batch_start, batch_end):
+            sample = dataset[i]
+            batch_audio.append(sample['audio'].numpy())
+            batch_refs.append(sample['transcript'] if task == 'transcribe' else sample['translation'])
+        
+        # Process batch
         inputs = processor(
-            sample['audio'].numpy(),
+            batch_audio,
             sampling_rate=16000,
-            return_tensors="pt"
+            return_tensors="pt",
+            padding=True
         ).input_features.to(device)
         
         # Generate
@@ -110,13 +123,17 @@ def generate_whisper_predictions(
                 max_length=256
             )
         latency = time.perf_counter() - start_time
+        total_latency += latency
         
-        # Decode
-        pred_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        # Decode batch
+        pred_texts = processor.batch_decode(generated_ids, skip_special_tokens=True)
         
-        predictions.append(pred_text)
-        references.append(sample['transcript'] if task == 'transcribe' else sample['translation'])
-        latencies.append(latency)
+        predictions.extend(pred_texts)
+        references.extend(batch_refs)
+    
+    # Return average latency per sample
+    avg_latency = total_latency / num_samples
+    latencies = [avg_latency] * num_samples
     
     return predictions, references, latencies
 
@@ -126,10 +143,11 @@ def generate_e2e_predictions(
     processor,
     tokenizer,
     dataset: VietEngDataset,
-    task: str = "transcribe"
+    task: str = "transcribe",
+    batch_size: int = 8  # Smaller batch for E2E (larger model)
 ) -> tuple:
     """
-    Generate predictions with E2E model.
+    Generate predictions with E2E model (BATCHED for speed).
     
     Args:
         model: E2E model
@@ -137,25 +155,36 @@ def generate_e2e_predictions(
         tokenizer: Text tokenizer
         dataset: Test dataset
         task: "transcribe" or "translate"
+        batch_size: Number of samples per batch
     
     Returns:
         Tuple of (predictions, references, latencies)
     """
     predictions = []
     references = []
-    latencies = []
+    total_latency = 0.0
     
     device = next(model.parameters()).device
     
     # Task token
     task_token = "<2transcribe>" if task == "transcribe" else "<2translate>"
     
-    for i in tqdm(range(len(dataset)), desc=f"E2E {task}"):
-        sample = dataset[i]
+    # Process in batches
+    num_samples = len(dataset)
+    for batch_start in tqdm(range(0, num_samples, batch_size), desc=f"E2E {task}"):
+        batch_end = min(batch_start + batch_size, num_samples)
         
-        # Process audio
+        # Collect batch samples
+        batch_audio = []
+        batch_refs = []
+        for i in range(batch_start, batch_end):
+            sample = dataset[i]
+            batch_audio.append(sample['audio'].numpy())
+            batch_refs.append(sample['transcript'] if task == 'transcribe' else sample['translation'])
+        
+        # Process batch
         inputs = processor(
-            sample['audio'].numpy(),
+            batch_audio,
             sampling_rate=16000,
             return_tensors="pt",
             padding=True
@@ -168,19 +197,23 @@ def generate_e2e_predictions(
             generated_ids = model.generate(
                 input_values,
                 max_length=256,
-                num_beams=4
+                num_beams=1  # Greedy decoding for speed (was 4)
             )
         latency = time.perf_counter() - start_time
+        total_latency += latency
         
-        # Decode
-        pred_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        # Decode batch
+        pred_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
         
-        # Remove task token if present
-        pred_text = pred_text.replace(task_token, '').strip()
+        # Remove task tokens
+        pred_texts = [p.replace(task_token, '').strip() for p in pred_texts]
         
-        predictions.append(pred_text)
-        references.append(sample['transcript'] if task == 'transcribe' else sample['translation'])
-        latencies.append(latency)
+        predictions.extend(pred_texts)
+        references.extend(batch_refs)
+    
+    # Return average latency per sample
+    avg_latency = total_latency / num_samples
+    latencies = [avg_latency] * num_samples
     
     return predictions, references, latencies
 
