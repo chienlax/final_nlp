@@ -1,6 +1,6 @@
 # Utils module
 from .logger import setup_logger, TrainingLogger
-from .metrics import MetricsComputer, create_compute_metrics_fn
+from .metrics import MetricsComputer, create_compute_metrics_fn, normalize_for_eval
 from .callbacks import (
     LoggingCallback,
     EncoderUnfreezeCallback,

@@ -5,12 +5,46 @@ Provides WER, CER, BLEU, and CHRF metrics.
 """
 
 import logging
+import re
 from typing import Dict, List, Tuple, Any
 
 import evaluate
 from jiwer import wer, cer
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_for_eval(text: str) -> str:
+    """
+    Normalize text for fair evaluation.
+    
+    Apply to BOTH predictions and references before scoring.
+    This ensures punctuation/casing differences don't inflate error rates.
+    
+    Steps:
+        1. Lowercase
+        2. Strip punctuation: ,.?!;:"-()[]{}
+        3. Collapse whitespace
+    
+    Args:
+        text: Input text
+        
+    Returns:
+        Normalized text
+    """
+    if not text or not isinstance(text, str):
+        return ""
+    
+    # Lowercase
+    text = text.lower()
+    
+    # Strip punctuation
+    text = re.sub(r'[,.?!;:\"\'\-\(\)\[\]\{\}]', '', text)
+    
+    # Collapse whitespace
+    text = re.sub(r'\s+', ' ', text)
+    
+    return text.strip()
 
 
 class MetricsComputer:
@@ -158,13 +192,14 @@ class MetricsComputer:
         }
 
 
-def create_compute_metrics_fn(tokenizer, metric_type: str = "asr"):
+def create_compute_metrics_fn(tokenizer, metric_type: str = "asr", normalize: bool = True):
     """
     Create a compute_metrics function for HuggingFace Trainer.
     
     Args:
         tokenizer: Model tokenizer
         metric_type: "asr" for WER/CER, "st" for BLEU/CHRF
+        normalize: Whether to normalize text before computing metrics
     
     Returns:
         Callable for Trainer
@@ -185,9 +220,26 @@ def create_compute_metrics_fn(tokenizer, metric_type: str = "asr"):
         # Replace -100 with pad token
         labels[labels == -100] = tokenizer.pad_token_id
         
-        # Decode
-        pred_strs = tokenizer.batch_decode(predictions, skip_special_tokens=True)
-        label_strs = tokenizer.batch_decode(labels, skip_special_tokens=True)
+        # Clip predictions to valid token IDs (handles out-of-range from added special tokens)
+        # This prevents SentencePiece "piece id is out of range" errors
+        vocab_size = len(tokenizer)
+        predictions = predictions.clip(0, vocab_size - 1)
+        labels = labels.clip(0, vocab_size - 1)
+        
+        # Decode with error handling
+        try:
+            pred_strs = tokenizer.batch_decode(predictions, skip_special_tokens=True)
+            label_strs = tokenizer.batch_decode(labels, skip_special_tokens=True)
+        except Exception as e:
+            logger.warning(f"Tokenizer decode error: {e}. Using empty strings.")
+            pred_strs = [""] * len(predictions)
+            label_strs = [""] * len(labels)
+        
+        # Apply normalization for fair evaluation
+        # This ensures punctuation/casing differences don't inflate metrics
+        if normalize:
+            pred_strs = [normalize_for_eval(s) for s in pred_strs]
+            label_strs = [normalize_for_eval(s) for s in label_strs]
         
         if metric_type == "asr":
             return {

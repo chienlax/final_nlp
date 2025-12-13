@@ -176,6 +176,9 @@ def create_training_args(config: Dict, output_dir: str) -> Seq2SeqTrainingArgume
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         
+        # Use pytorch format for E2E model (mBART has shared tensors that safetensors can't handle)
+        save_safetensors=False,
+        
         # Logging
         logging_steps=train_config.get('logging_steps', 50),
         logging_dir=f"{output_dir}/logs",
@@ -184,6 +187,9 @@ def create_training_args(config: Dict, output_dir: str) -> Seq2SeqTrainingArgume
         # DataLoader
         dataloader_num_workers=dataloader_config.get('num_workers', 4),
         dataloader_pin_memory=dataloader_config.get('pin_memory', True),
+        
+        # CRITICAL: Do not remove custom dataset columns before collation
+        remove_unused_columns=False,
         
         # Generation (for Seq2Seq)
         predict_with_generate=True,

@@ -26,7 +26,7 @@ training:
   max_steps: 100 # Quick test run
 
   fp16: true
-  gradient_checkpointing: true # Essential for 4GB
+  gradient_checkpointing: false # Disabled: RTX 3060 12GB has enough VRAM
 
   eval_steps: 25
   save_steps: 50
