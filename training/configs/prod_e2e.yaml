@@ -9,16 +9,16 @@ model:
   encoder: "facebook/wav2vec2-base"  # 94M params (was xlsr-53 317M)
   decoder: "facebook/mbart-large-50"  # 611M params
   add_adapter: true
-  freeze_encoder: true  # FREEZE entire encoder to save memory
+  freeze_encoder: false  # DON'T freeze - we need to fine-tune for Vietnamese!
 
 # Training - Memory-conscious
 training:
-  batch_size: 2  # Very small batch (multitask 2x = 4)
-  gradient_accumulation_steps: 16  # Effective batch = 64
+  batch_size: 1  # Reduced: encoder trainable needs more VRAM
+  gradient_accumulation_steps: 32  # Effective batch = 64
 
-  learning_rate: 1.0e-5
+  learning_rate: 5.0e-5  # INCREASED: faster learning since encoder is trainable
   lr_scheduler_type: "linear"
-  warmup_ratio: 0.05
+  warmup_ratio: 0.1  # INCREASED: longer warmup for stability
   weight_decay: 0.01
   max_grad_norm: 1.0
 
@@ -26,16 +26,16 @@ training:
   max_steps: -1
 
   bf16: true
-  gradient_checkpointing: false  # Keep disabled for multitask
+  gradient_checkpointing: false  # Keep disabled for multitask (causes backward issues)
   tf32: true
 
   eval_steps: 99999
   save_steps: 99999
   logging_steps: 10
 
-  # Freeze encoder completely (no gradients = less VRAM)
-  freeze_feature_encoder: true
-  freeze_encoder_epochs: 999  # Never unfreeze
+  # Freeze only the CNN feature extractor (first few layers), not the transformer
+  freeze_feature_encoder: true  # Freeze CNN, but transformer is trainable
+  freeze_encoder_epochs: 1  # Freeze transformer for 1 epoch warmup, then unfreeze
 
 # DataLoader
 dataloader:

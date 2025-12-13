@@ -346,11 +346,11 @@ def save_results(results: Dict, output_dir: str, model_name: str) -> None:
     
     # Save metrics
     metrics_file = output_dir / f"{model_name}_metrics.json"
-    with open(metrics_file, 'w') as f:
-        json.dump(results['metrics'], f, indent=2)
+    with open(metrics_file, 'w', encoding='utf-8') as f:
+        json.dump(results['metrics'], f, indent=2, ensure_ascii=False)
     logger.info(f"Saved metrics to {metrics_file}")
     
-    # Save predictions
+    # Save predictions CSV
     predictions_file = output_dir / f"{model_name}_predictions.csv"
     
     rows = []
@@ -370,8 +370,38 @@ def save_results(results: Dict, output_dir: str, model_name: str) -> None:
         rows.append(row)
     
     df = pd.DataFrame(rows)
-    df.to_csv(predictions_file, index=False)
+    df.to_csv(predictions_file, index=False, encoding='utf-8')
     logger.info(f"Saved predictions to {predictions_file}")
+    
+    # === Export RAW text files for easy inspection ===
+    
+    # ASR predictions
+    asr_pred_file = output_dir / f"{model_name}_asr_predictions.txt"
+    with open(asr_pred_file, 'w', encoding='utf-8') as f:
+        for pred, _ in predictions['asr']:
+            f.write(pred + '\n')
+    
+    # ASR references (ground truth)
+    asr_ref_file = output_dir / f"{model_name}_asr_references.txt"
+    with open(asr_ref_file, 'w', encoding='utf-8') as f:
+        for _, ref in predictions['asr']:
+            f.write(ref + '\n')
+    
+    logger.info(f"Saved ASR raw files: {asr_pred_file.name}, {asr_ref_file.name}")
+    
+    # ST predictions and references (if available)
+    if has_st:
+        st_pred_file = output_dir / f"{model_name}_st_predictions.txt"
+        with open(st_pred_file, 'w', encoding='utf-8') as f:
+            for pred, _ in predictions['st']:
+                f.write(pred + '\n')
+        
+        st_ref_file = output_dir / f"{model_name}_st_references.txt"
+        with open(st_ref_file, 'w', encoding='utf-8') as f:
+            for _, ref in predictions['st']:
+                f.write(ref + '\n')
+        
+        logger.info(f"Saved ST raw files: {st_pred_file.name}, {st_ref_file.name}")
 
 
 def main():
