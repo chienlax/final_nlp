@@ -71,6 +71,8 @@ class MetricsComputer:
         """
         Compute Word Error Rate.
         
+        Normalizes text before computing to ignore punctuation/case.
+        
         Args:
             predictions: List of predicted transcripts
             references: List of reference transcripts
@@ -78,9 +80,10 @@ class MetricsComputer:
         Returns:
             WER as percentage (0-100)
         """
-        # Filter empty strings
+        # Normalize and filter empty strings
         valid_pairs = [
-            (p, r) for p, r in zip(predictions, references)
+            (normalize_for_eval(p), normalize_for_eval(r)) 
+            for p, r in zip(predictions, references)
             if r.strip()
         ]
         
@@ -98,6 +101,8 @@ class MetricsComputer:
         """
         Compute Character Error Rate.
         
+        Normalizes text before computing to ignore punctuation/case.
+        
         Args:
             predictions: List of predicted transcripts
             references: List of reference transcripts
@@ -105,8 +110,10 @@ class MetricsComputer:
         Returns:
             CER as percentage (0-100)
         """
+        # Normalize and filter empty strings
         valid_pairs = [
-            (p, r) for p, r in zip(predictions, references)
+            (normalize_for_eval(p), normalize_for_eval(r))
+            for p, r in zip(predictions, references)
             if r.strip()
         ]
         
@@ -124,6 +131,8 @@ class MetricsComputer:
         """
         Compute BLEU score.
         
+        Normalizes text before computing.
+        
         Args:
             predictions: List of predicted translations
             references: List of reference translations
@@ -131,11 +140,15 @@ class MetricsComputer:
         Returns:
             BLEU score (0-100)
         """
+        # Normalize texts
+        norm_preds = [normalize_for_eval(p) for p in predictions]
+        norm_refs = [normalize_for_eval(r) for r in references]
+        
         # sacrebleu expects references as list of lists
-        refs_formatted = [[r] for r in references]
+        refs_formatted = [[r] for r in norm_refs]
         
         result = self.bleu_metric.compute(
-            predictions=predictions,
+            predictions=norm_preds,
             references=refs_formatted
         )
         
@@ -149,6 +162,8 @@ class MetricsComputer:
         """
         Compute CHRF score.
         
+        Normalizes text before computing.
+        
         Args:
             predictions: List of predicted translations
             references: List of reference translations
@@ -156,10 +171,14 @@ class MetricsComputer:
         Returns:
             CHRF score (0-100)
         """
-        refs_formatted = [[r] for r in references]
+        # Normalize texts
+        norm_preds = [normalize_for_eval(p) for p in predictions]
+        norm_refs = [normalize_for_eval(r) for r in references]
+        
+        refs_formatted = [[r] for r in norm_refs]
         
         result = self.chrf_metric.compute(
-            predictions=predictions,
+            predictions=norm_preds,
             references=refs_formatted
         )
         

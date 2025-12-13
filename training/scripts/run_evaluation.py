@@ -128,6 +128,16 @@ def generate_whisper_predictions(
         # Decode batch
         pred_texts = processor.batch_decode(generated_ids, skip_special_tokens=True)
         
+        # Log first 3 samples for sanity check
+        if batch_start == 0:
+            logger.info("=" * 50)
+            logger.info("SAMPLE PREDICTIONS (first 3):")
+            for i in range(min(3, len(pred_texts))):
+                logger.info(f"  Sample {i+1}:")
+                logger.info(f"    Pred: {pred_texts[i][:100]}...")
+                logger.info(f"    Ref:  {batch_refs[i][:100]}...")
+            logger.info("=" * 50)
+        
         predictions.extend(pred_texts)
         references.extend(batch_refs)
     
@@ -191,13 +201,20 @@ def generate_e2e_predictions(
         )
         input_values = inputs.input_values.to(device)
         
-        # Generate
+        # Get Vietnamese language token for mBART
+        # This forces the decoder to output Vietnamese
+        forced_bos_token_id = tokenizer.lang_code_to_id.get("vi_VN", None)
+        
+        # Generate with proper params
         start_time = time.perf_counter()
         with torch.no_grad():
             generated_ids = model.generate(
                 input_values,
                 max_length=256,
-                num_beams=1  # Greedy decoding for speed (was 4)
+                num_beams=1,  # Greedy for speed
+                forced_bos_token_id=forced_bos_token_id,
+                early_stopping=True,
+                no_repeat_ngram_size=3,  # Prevent repetition
             )
         latency = time.perf_counter() - start_time
         total_latency += latency
@@ -207,6 +224,16 @@ def generate_e2e_predictions(
         
         # Remove task tokens
         pred_texts = [p.replace(task_token, '').strip() for p in pred_texts]
+        
+        # Log first 3 samples for sanity check
+        if batch_start == 0:
+            logger.info("=" * 50)
+            logger.info("SAMPLE PREDICTIONS (first 3):")
+            for i in range(min(3, len(pred_texts))):
+                logger.info(f"  Sample {i+1}:")
+                logger.info(f"    Pred: {pred_texts[i][:100]}...")
+                logger.info(f"    Ref:  {batch_refs[i][:100]}...")
+            logger.info("=" * 50)
         
         predictions.extend(pred_texts)
         references.extend(batch_refs)
