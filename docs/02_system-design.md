@@ -512,13 +512,19 @@ python -m backend.operations.denoiser --status
 
 ### 7.3 Exporter (`backend/operations/exporter.py`)
 
-**Overlap Resolution Algorithm**:
+**300-Second Guillotine Rule**:
 
-When chunk N ends at 305s and chunk N+1 starts at 0s (absolute 300s), segments in the 300-305s zone may appear in both. Resolution:
-1. Convert all timestamps to absolute time
-2. Sort by start time
-3. For segments with >50% overlap, keep the version from the later chunk
-4. For partial overlaps, trim the earlier segment's end time
+To prevent duplicate data from chunk overlaps (5-second overlap zone at 300-305s), the exporter uses a simple cutoff:
+- Segments are clipped at the 300-second boundary
+- Each segment is exported as an **individual audio clip** (not a reference to full chunks)
+- Audio data is cached in RAM for efficient slicing (~29MB per 5-min WAV, supports 600+ chunks in 20GB RAM)
+
+**Processing Pipeline**:
+1. Query all approved chunks with verified segments
+2. Load chunk audio into cache (one-time per chunk)
+3. Slice individual segments using numpy array operations
+4. Write 16kHz mono WAV files to `data/export/segments/`
+5. Generate `manifest.tsv` with metadata
 
 **Output**: `data/export/manifest.tsv`
 
@@ -526,12 +532,13 @@ When chunk N ends at 305s and chunk N+1 starts at 0s (absolute 300s), segments i
 |--------|-------------|
 | id | Segment ID |
 | video_id | Source video |
-| audio_path | Relative path to chunk |
-| start | Absolute start time |
-| end | Absolute end time |
-| duration | Segment length |
-| transcript | Original text |
+| audio_path | Relative path to individual segment clip |
+| duration | Segment length in seconds |
+| transcript | Original code-switched text |
 | translation | Vietnamese translation |
+
+> [!NOTE]
+> No start/end columns - each clip is self-contained (audio already sliced).
 
 ---
 
