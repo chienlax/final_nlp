@@ -56,7 +56,6 @@ database_data/
 /data/
 frontend/node_modules/
 frontend/package-lock.json
-docs/*.pdf
 docs/*.html
 .hintrc
 frontend/.vite 
