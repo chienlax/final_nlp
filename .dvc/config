@@ -1,6 +1,0 @@
-[core]
-    remote = my_gdrive
-['remote "my_gdrive"']
-    url = gdrive://1bn9HIlEzbBX_Vofb5Y3gp530_kH938wr
-    gdrive_use_service_account = true
-    gdrive_service_account_json_file_path = ../.secrets/datafactory-vast-ca02db8e3e05.json
